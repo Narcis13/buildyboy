@@ -7,6 +7,7 @@ import { nextStatus } from './status.ts';
 import { parseTranscriptLine } from './transcript.ts';
 import { supersedeOnEvent } from '../control/pending.ts';
 import { indexText } from '../search.ts';
+import { rulesFor } from '../redaction.ts';
 
 export const OUTPUT_CAP = 64 * 1024;
 const PATCH_CAP = 64 * 1024;
@@ -210,6 +211,12 @@ export function estimateCost(model: string | null, t: { input: number; output: n
   return (t.input * p[0] + t.output * p[1] + t.cacheRead * p[2] + t.cacheWrite * p[3]) / 1e6;
 }
 
+/** BUILDYBOY_JOB_ID, but only if that job was sent to this machine. */
+function ownJob(ctx: Ctx, machineId: string, envVars: Record<string, string>): string | null {
+  const id = envVars.BUILDYBOY_JOB_ID;
+  return id && ctx.db.get('SELECT 1 FROM jobs WHERE id = ? AND machine_id = ?', id, machineId) ? id : null;
+}
+
 export interface IngestResult {
   duplicate: boolean;
   sessionId: string;
@@ -223,7 +230,8 @@ export function ingestEnvelope(ctx: Ctx, machineId: string, env: HookEnvelope): 
   if (!raw || typeof raw !== 'object' || typeof raw.session_id !== 'string' || !raw.session_id || typeof raw.hook_event_name !== 'string') {
     throw new IngestError(400, 'event.session_id and event.hook_event_name are required');
   }
-  const e = redactHookEvent(raw);
+  const rules = rulesFor(ctx);
+  const e = redactHookEvent(raw, rules);
   const sid = e.session_id;
   const now = Date.now();
   const ts = typeof env.ts === 'number' && env.ts > 0 ? env.ts : now;
@@ -274,22 +282,23 @@ export function ingestEnvelope(ctx: Ctx, machineId: string, env: HookEnvelope): 
       db.run(
         `INSERT INTO sessions (id, machine_id, project_id, cwd, source, transcript_path, job_id, status, started_at, last_event_at, remote_control, parent_session_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?, ?)`,
-        sid, machineId, projectId, cwd, sourceFrom(envVars), str(e.transcript_path), envVars.BUILDYBOY_JOB_ID ?? null, ts, ts,
+        sid, machineId, projectId, cwd, sourceFrom(envVars), str(e.transcript_path), ownJob(ctx, machineId, envVars), ts, ts,
         envVars.CLAUDE_CODE_BRIDGE_SESSION_ID ?? null, null,
       );
       s = { status: 'idle', start_sha: null, waiting_since: null, source: sourceFrom(envVars), started_at: ts, last_event_at: ts };
-      if (envVars.BUILDYBOY_JOB_ID) {
-        db.run("UPDATE jobs SET session_id = COALESCE(session_id, ?), status = CASE WHEN status IN ('queued','starting') THEN 'running' ELSE status END WHERE id = ?", sid, envVars.BUILDYBOY_JOB_ID);
+      const jobId = ownJob(ctx, machineId, envVars);
+      if (jobId) {
+        db.run("UPDATE jobs SET session_id = COALESCE(session_id, ?), status = CASE WHEN status IN ('queued','starting') THEN 'running' ELSE status END WHERE id = ?", sid, jobId);
       }
       indexText(db, 'session', sid, sid, `${sid} ${cwd ?? ''}`);
     }
 
     if (!duplicate) applyEvent(ctx, sid, e, ts, env, cwd, projectId, s);
 
-    for (const t of env.transcripts ?? []) applyTranscript(ctx, sid, t.lines, t.agentId ?? null);
+    for (const t of env.transcripts ?? []) applyTranscript(ctx, sid, t.lines, t.agentId ?? null, rules);
 
     if (env.progress && typeof env.progress.content === 'string') {
-      db.run('INSERT OR IGNORE INTO progress_docs (session_id, ts, hash, content) VALUES (?, ?, ?, ?)', sid, ts, env.progress.hash, redactValue(env.progress.content).slice(0, 32 * 1024));
+      db.run('INSERT OR IGNORE INTO progress_docs (session_id, ts, hash, content) VALUES (?, ?, ?, ?)', sid, ts, env.progress.hash, redactValue(env.progress.content, rules).slice(0, 32 * 1024));
     }
 
     if (!duplicate && env.git) applyGit(ctx, sid, projectId, name, ts, env, s.start_sha);
@@ -316,7 +325,7 @@ function applyEvent(
   let status = s.status;
   if (inOrder) {
     // inside a subagent, only permission prompts change the parent's state; everything else proves it's working
-    status = isSub && name !== 'PermissionRequest' ? (s.status === 'waiting' ? 'waiting' : nextStatus(s.status, 'PostToolUse')) : nextStatus(s.status, name, e);
+    status = isSub && name !== 'PermissionRequest' ? (s.status === 'waiting' || s.status === 'idle' || s.status === 'ended' ? s.status : nextStatus(s.status, 'PostToolUse')) : nextStatus(s.status, name, e);
   }
   let waitingSince = s.waiting_since;
   let waitAdd = 0;
@@ -333,16 +342,18 @@ function applyEvent(
      activity = COALESCE(?, activity), cwd = COALESCE(cwd, ?), project_id = COALESCE(project_id, ?),
      permission_mode = COALESCE(?, permission_mode), effort = COALESCE(?, effort), transcript_path = COALESCE(transcript_path, ?),
      model = COALESCE(?, model), name = COALESCE(name, ?), remote_control = COALESCE(?, remote_control),
-     job_id = COALESCE(job_id, ?) WHERE id = ?`,
+     job_id = COALESCE(job_id, ?) WHERE id = ?`, // job_id is set (machine-checked) when the session is created
     ts, status, name === 'StopFailure' ? summarize(e, cwd) : name === 'Notification' ? str(e.message) : null, waitingSince, waitAdd,
     activity, cwd, projectId,
     isSub ? null : str(e.permission_mode), str(e.effort), str(e.transcript_path),
     str(e.model), str(e.session_title), env.env?.CLAUDE_CODE_BRIDGE_SESSION_ID ?? null,
-    env.env?.BUILDYBOY_JOB_ID ?? null, sid,
+    null, sid,
   );
   if (name === 'SessionStart' && e.source === 'resume') db.run('UPDATE sessions SET ended_at = NULL, end_reason = NULL WHERE id = ?', sid);
   if (name === 'SessionEnd') db.run('UPDATE sessions SET ended_at = ?, end_reason = ?, activity = NULL WHERE id = ?', ts, str(e.reason) ?? 'other', sid);
   if (name === 'PreCompact') db.run('UPDATE sessions SET compactions = compactions + 1 WHERE id = ?', sid);
+  // a Stop pressed for an earlier turn must not kill a new one
+  if (!isSub && (name === 'UserPromptSubmit' || name === 'SessionStart' || name === 'SessionEnd')) db.run('UPDATE sessions SET kill_requested = 0 WHERE id = ? AND kill_requested = 1', sid);
 
   // tool calls
   if (tool && tuid) {
@@ -370,7 +381,8 @@ function applyEvent(
         `INSERT INTO tool_calls (tool_use_id, session_id, agent_id, tool_name, mcp_server, input_json, output_text, output_len, status, started_at, ended_at, duration_ms, file_path, command, exit_code)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(tool_use_id) DO UPDATE SET output_text = excluded.output_text, output_len = excluded.output_len, status = excluded.status,
-         ended_at = excluded.ended_at, duration_ms = COALESCE(excluded.duration_ms, excluded.ended_at - tool_calls.started_at), exit_code = excluded.exit_code`,
+         ended_at = excluded.ended_at, duration_ms = COALESCE(excluded.duration_ms, excluded.ended_at - tool_calls.started_at), exit_code = excluded.exit_code
+         WHERE tool_calls.session_id = excluded.session_id`,
         tuid, sid, str(e.agent_id), tool, mcp, JSON.stringify(input), cap(out.text), out.text.length, st, dur != null ? ts - dur : ts, ts, dur, filePath, command, exitCode,
       );
       if (!failed) {
@@ -454,20 +466,20 @@ function applyGit(ctx: Ctx, sid: string, projectId: number | null, trigger: stri
     const c = g.lastCommit;
     db.run(
       'INSERT INTO commits (sha, project_id, session_id, ts, message, author, files, added, removed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(sha) DO NOTHING',
-      c.sha, projectId, sid, c.ts || ts, redactValue(c.message), c.author, c.files, c.added, c.removed,
+      c.sha, projectId, sid, c.ts || ts, redactValue(c.message, rulesFor(ctx)), c.author, c.files, c.added, c.removed,
     );
   }
   if (g.prUrl) linkPr(ctx, sid, projectId, g.prUrl);
 }
 
 /** Parses transcript JSONL lines into messages and session patches. Deduplicated by uuid. */
-export function applyTranscript(ctx: Ctx, sid: string, lines: string[], agentId: string | null) {
+export function applyTranscript(ctx: Ctx, sid: string, lines: string[], agentId: string | null, rules = rulesFor(ctx)) {
   const { db } = ctx;
   const envIds = new Set<string>();
   let usageChanged = false;
   for (const rawLine of lines) {
     if (!rawLine.trim()) continue;
-    const line = redactTranscriptLine(rawLine, envIds);
+    const line = redactTranscriptLine(rawLine, envIds, rules);
     const { message: m, patch } = parseTranscriptLine(line, agentId);
     if (m) {
       const r = db.run(

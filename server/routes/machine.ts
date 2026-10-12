@@ -34,6 +34,7 @@ export function machineRoutes(ctx: Ctx) {
     const list: unknown[] = Array.isArray(body) ? body : Array.isArray(body?.envelopes) ? body.envelopes : body ? [body] : [];
     let accepted = 0;
     let duplicates = 0;
+    let rejected = 0;
     const touched = new Set<string>();
     for (const item of list) {
       const parsed = envelopeSchema.safeParse(item);
@@ -44,12 +45,13 @@ export function machineRoutes(ctx: Ctx) {
         else accepted++;
         touched.add(r.sessionId);
       } catch (e) {
-        if (e instanceof IngestError && e.status === 403) return c.json({ error: e.message }, 403);
+        // one bad or foreign event must not block the rest of the batch (or the hook's spool)
+        rejected++;
         if (!(e instanceof IngestError)) console.error('[ingest]', e);
       }
     }
     for (const sid of touched) publishSession(ctx, sid);
-    const res: IngestResponse = { ok: true, accepted, duplicates, control: controlStateFor(ctx, machineId) };
+    const res: IngestResponse = { ok: true, accepted, duplicates, rejected, control: controlStateFor(ctx, machineId) };
     return c.json(res);
   });
 
@@ -119,7 +121,7 @@ export function machineRoutes(ctx: Ctx) {
   /** /bb-walk on|off|<N>m: walk mode for this session (or the whole machine when no session id is known). */
   app.post('/api/machine/walk', auth, async (c) => {
     const machineId = c.get('machineId');
-    const b = z.object({ sessionId: z.string().optional(), on: z.boolean(), stopWaitMin: z.number().min(0).max(60).optional() }).safeParse(await c.req.json().catch(() => null));
+    const b = z.object({ sessionId: z.string().optional(), on: z.boolean(), stopWaitMin: z.number().min(0).max(9).optional() }).safeParse(await c.req.json().catch(() => null));
     if (!b.success) return c.json({ error: 'on required' }, 400);
     const { sessionId, on, stopWaitMin } = b.data;
     const s = sessionId ? ctx.db.get<{ machine_id: string }>('SELECT machine_id FROM sessions WHERE id = ?', sessionId) : undefined;

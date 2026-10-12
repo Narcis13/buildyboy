@@ -1,5 +1,6 @@
 import type { Ctx } from './context.ts';
 import { runWatchers } from './watchers.ts';
+import { expireOrphans } from './control/pending.ts';
 import { startGithubPoller } from './github/poller.ts';
 import { startJobScheduler } from './jobs/scheduler.ts';
 
@@ -19,6 +20,7 @@ export function startBackground(ctx: Ctx): () => void {
   };
 
   every(60_000, () => runWatchers(ctx));
+  every(30_000, () => expireOrphans(ctx));
   every(6 * 3600_000, () => purgeOld(ctx));
 
   const stopJobs = startJobScheduler(ctx);

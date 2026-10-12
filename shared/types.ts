@@ -98,6 +98,8 @@ export interface IngestResponse {
   ok: true;
   accepted: number;
   duplicates: number;
+  /** events skipped (invalid, or a session owned by another machine) */
+  rejected: number;
   control: ControlState;
 }
 

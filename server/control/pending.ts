@@ -170,3 +170,17 @@ export function supersedeOnEvent(ctx: Ctx, sessionId: string, e: HookInput) {
     if (sup) finish(ctx, r.id, 'superseded', null, 'local');
   }
 }
+
+/**
+ * Pending rows nobody waits on anymore (server restarted, or past their expiry) are timed out, so the Inbox never shows
+ * requests whose hook is gone and the compose box never "answers" a dead Stop hold.
+ */
+export function expireOrphans(ctx: Ctx, all = false, now = Date.now()): number {
+  const rows = ctx.db.all<{ id: string; kind: string; expires_at: number | null }>("SELECT id, kind, expires_at FROM pending_actions WHERE status = 'pending'");
+  let n = 0;
+  for (const r of rows) {
+    if (ctx.waiters.has(r.id) || (r.kind === 'pause' && !all)) continue;
+    if (all || (r.expires_at != null && r.expires_at < now - 5_000)) n += finish(ctx, r.id, 'timeout', null, all ? 'restart' : 'expired') ? 1 : 0;
+  }
+  return n;
+}

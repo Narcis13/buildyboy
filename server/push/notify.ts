@@ -53,7 +53,9 @@ export async function deliver(ctx: Ctx, n: Notification): Promise<{ push: number
   const payload: Record<string, unknown> = { title: n.title, body: n.body, url: n.url ?? '/', sessionId: n.sessionId, actionId: n.actionId, type: n.type };
   if (n.actions && n.actionId) {
     const token = randomBytes(18).toString('base64url');
-    actionTokens.set(token, { actionId: n.actionId, exp: Date.now() + 15 * 60_000 });
+    const now = Date.now();
+    for (const [k, v] of actionTokens) if (v.exp < now) actionTokens.delete(k);
+    actionTokens.set(token, { actionId: n.actionId, exp: now + 15 * 60_000 });
     payload.actionToken = token;
   }
   let sent = 0;

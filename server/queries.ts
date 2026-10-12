@@ -1,7 +1,7 @@
 import type { Ctx } from './context.ts';
 import type { AttentionSummary, JobOptions, JobStatus, JobView, MachineSummary, QueuedMessageView, SessionDetail, SessionSummary, TimelineItem, TimelinePage, ToolToken } from '../shared/types.ts';
 import { json } from './db.ts';
-import { sessionWalk, machineWalk } from './control/state.ts';
+import { sessionWalk } from './control/state.ts';
 import { isStale } from './ingest/status.ts';
 
 const ONLINE_MS = 5 * 60 * 1000;
@@ -202,10 +202,6 @@ export function listMachines(ctx: Ctx): MachineSummary[] {
       walkMode: m.walk_mode == null ? null : m.walk_mode === 1,
       revoked: !!m.revoked,
     }));
-}
-
-export function effectiveMachineWalk(ctx: Ctx, id: string) {
-  return machineWalk(ctx, id);
 }
 
 export function queuedMessages(ctx: Ctx, sid: string): QueuedMessageView[] {

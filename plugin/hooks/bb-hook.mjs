@@ -9,7 +9,7 @@
 //
 // Fail open, always: if anything goes wrong, print nothing and exit 0.
 
-import { readFileSync, writeFileSync, appendFileSync, mkdirSync, statSync, renameSync, openSync, readSync, closeSync, existsSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, statSync, renameSync, openSync, readSync, closeSync, existsSync, unlinkSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { homedir, hostname, userInfo, arch } from 'node:os';
@@ -29,6 +29,7 @@ const GIT_EVENTS = new Set(['SessionStart', 'Stop', 'SessionEnd']);
 const args = process.argv.slice(2);
 const CONTROL = args.includes('--control');
 const LEAN = args.includes('--lean');
+const SYNC = args.includes('--sync');
 const waitIdx = args.indexOf('--wait');
 const WAIT_MS = waitIdx >= 0 ? Number(args[waitIdx + 1]) * 1000 : 590_000;
 
@@ -278,7 +279,23 @@ function spoolAppend(envelopes) {
 }
 
 /** Claims the spool for sending by renaming it, so concurrent hooks don't send it twice. */
+/** A hook killed mid-send leaves its claimed spool behind; after a minute, put those events back. */
+function recoverStaleClaims() {
+  try {
+    for (const f of readdirSync(HOME)) {
+      if (!/^spool\.jsonl\.\d+\.sending$/.test(f)) continue;
+      const path = join(HOME, f);
+      if (Date.now() - statSync(path).mtimeMs < 60_000) continue;
+      appendFileSync(P.spool, readFileSync(path, 'utf8'));
+      unlinkSync(path);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 function spoolClaim() {
+  recoverStaleClaims();
   if (!spoolSize()) return null;
   const claimed = `${P.spool}.${process.pid}.sending`;
   try {
@@ -298,27 +315,41 @@ function spoolClaim() {
   }
 }
 
+/**
+ * POSTs JSON. Errors carry `kind`: 'network' (unreachable, 5xx, garbage: retry later), 'rejected' (4xx: the server
+ * will never take it, so don't retry) or 'late' (the server answered but the long-poll outlived our wait).
+ */
 async function post(url, token, body, headersMs, totalMs) {
+  const fail = (e, kind) => Object.assign(e instanceof Error ? e : new Error(String(e)), { kind });
   const ac = new AbortController();
   const t1 = setTimeout(() => ac.abort(), headersMs);
+  let res;
   try {
-    const res = await fetch(url, {
+    res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
       signal: ac.signal,
     });
-    clearTimeout(t1);
-    const t2 = setTimeout(() => ac.abort(), totalMs);
-    try {
-      const text = await res.text();
-      if (!res.ok) throw new Error(`http ${res.status}`);
-      return JSON.parse(text);
-    } finally {
-      clearTimeout(t2);
-    }
+  } catch (e) {
+    throw fail(e, 'network');
   } finally {
     clearTimeout(t1);
+  }
+  const t2 = setTimeout(() => ac.abort(), totalMs);
+  let text;
+  try {
+    text = await res.text();
+  } catch (e) {
+    throw fail(e, res.ok ? 'late' : 'network');
+  } finally {
+    clearTimeout(t2);
+  }
+  if (!res.ok) throw fail(new Error(`http ${res.status}`), res.status >= 500 ? 'network' : 'rejected');
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw fail(e, 'network');
   }
 }
 
@@ -351,7 +382,7 @@ async function main() {
   const name = e.hook_event_name;
 
   if (CONTROL && LEAN && !needsServer(e, readJson(P.control))) return;
-  if (breakerOpen() && CONTROL) return;
+  if (breakerOpen() && CONTROL && LEAN) return;
 
   try {
     mkdirSync(P.offsets, { recursive: true });
@@ -416,14 +447,21 @@ async function main() {
   if (!LEAN) writeJsonAtomic(statePath, state);
 
   if (CONTROL) {
+    if (breakerOpen()) {
+      // server recently unreachable: don't wait on it, but keep the event for later
+      spoolAppend([envelope]);
+      return;
+    }
     try {
       const res = await post(`${url}/api/hook/${encodeURIComponent(name)}`, token, envelope, CONNECT_MS, WAIT_MS);
       resetBreaker();
       if (res && res.control) writeJsonAtomic(P.control, res.control);
       if (res && res.output) output = JSON.stringify(res.output);
-    } catch {
-      tripBreaker();
-      if (!LEAN) spoolAppend([envelope]);
+    } catch (err) {
+      if (err.kind === 'network') {
+        tripBreaker();
+        if (!LEAN) spoolAppend([envelope]);
+      }
     }
     return;
   }
@@ -433,7 +471,8 @@ async function main() {
     spoolAppend([envelope]);
     return;
   }
-  const spooled = spoolClaim();
+  // SessionEnd (--sync) has a short budget: send just this event; the next session flushes the spool
+  const spooled = SYNC ? null : spoolClaim();
   const batch = [];
   let bytes = 0;
   const rest = [];
@@ -447,13 +486,17 @@ async function main() {
   }
   batch.push(envelope);
   try {
-    const res = await post(`${url}/api/ingest`, token, { envelopes: batch }, CONNECT_MS * 3, 10_000);
+    const res = await post(`${url}/api/ingest`, token, { envelopes: batch }, SYNC ? CONNECT_MS : CONNECT_MS * 3, SYNC ? 2500 : 10_000);
     resetBreaker();
     if (res && res.control) writeJsonAtomic(P.control, res.control);
     if (rest.length) spoolAppend(rest);
-  } catch {
-    tripBreaker();
-    spoolAppend([...batch, ...rest]);
+  } catch (err) {
+    if (err.kind === 'rejected') {
+      if (rest.length) spoolAppend(rest); // the server refused this batch; retrying it would block the spool forever
+    } else {
+      tripBreaker();
+      spoolAppend([...batch, ...rest]);
+    }
   } finally {
     if (spooled) {
       try {

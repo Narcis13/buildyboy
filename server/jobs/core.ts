@@ -2,6 +2,7 @@
 // The server owns the queue; runners re-check limits and answer `queued` when busy (see runner/main.ts).
 import { randomUUID } from 'node:crypto';
 import type { Ctx } from '../context.ts';
+import { rulesFor } from '../redaction.ts';
 import type { JobStatus, RunnerCommand, RunnerEvent } from '../../shared/types.ts';
 import { json } from '../db.ts';
 import { jobView } from '../queries.ts';
@@ -151,6 +152,7 @@ function notifyEnd(ctx: Ctx, id: string) {
 
 /** Applies a batch of runner events to one of this machine's jobs. */
 export function applyRunnerEvents(ctx: Ctx, machineId: string, jobId: string, events: RunnerEvent[]) {
+  const rules = rulesFor(ctx);
   const { db } = ctx;
   const j = db.get<{ machine_id: string; status: JobStatus; output_lines: number; options_json: string }>('SELECT machine_id, status, output_lines, options_json FROM jobs WHERE id = ?', jobId);
   if (!j || j.machine_id !== machineId) throw new JobError(404, 'job not found');
@@ -163,12 +165,12 @@ export function applyRunnerEvents(ctx: Ctx, machineId: string, jobId: string, ev
       if (ev.type === 'output') {
         const base = Number(db.get<{ n: number }>('SELECT output_lines n FROM jobs WHERE id = ?', jobId)!.n);
         const room = Math.max(0, OUTPUT_CAP - base);
-        ev.lines.slice(0, room).forEach((line, i) => db.run('INSERT OR IGNORE INTO job_output (job_id, seq, ts, line_json) VALUES (?, ?, ?, ?)', jobId, base + i, now, redactText(String(line))));
+        ev.lines.slice(0, room).forEach((line, i) => db.run('INSERT OR IGNORE INTO job_output (job_id, seq, ts, line_json) VALUES (?, ?, ?, ?)', jobId, base + i, now, redactText(String(line), rules)));
         if (room > 0 && ev.lines.length > room) db.run('INSERT OR IGNORE INTO job_output (job_id, seq, ts, line_json) VALUES (?, ?, ?, ?)', jobId, OUTPUT_CAP, now, JSON.stringify({ type: 'buildyboy_truncated', note: `output capped at ${OUTPUT_CAP} lines` }));
         db.run('UPDATE jobs SET output_lines = output_lines + ? WHERE id = ?', ev.lines.length, jobId);
         output = true;
       } else if (ev.type === 'verify') {
-        db.run('UPDATE jobs SET verify_json = ? WHERE id = ?', JSON.stringify({ ranAt: now, results: ev.results.map((r) => ({ ...r, output: redactText(String(r.output ?? '')).slice(0, 64 * 1024) })) }), jobId);
+        db.run('UPDATE jobs SET verify_json = ? WHERE id = ?', JSON.stringify({ ranAt: now, results: ev.results.map((r) => ({ ...r, output: redactText(String(r.output ?? ''), rules).slice(0, 64 * 1024) })) }), jobId);
       } else if (ev.type === 'status') {
         // a finished job stays finished; only a job we gave up on (lost) may still report its real end
         if (TERMINAL.includes(status) && status !== 'lost') continue;

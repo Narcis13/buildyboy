@@ -92,8 +92,12 @@ describe('idempotency and auth', () => {
     expect(bad.status).toBe(401);
     const other = createMachine(srv.ctx, 'intruder');
     const env = { v: 1, ts: Date.now(), env: {}, event: { session_id: S1, hook_event_name: 'Stop' } };
-    const r = await fetch(`${srv.url}/api/ingest`, { method: 'POST', headers: { authorization: `Bearer ${other.token}`, 'content-type': 'application/json' }, body: JSON.stringify(env) });
-    expect(r.status).toBe(403);
+    const r = await fetch(`${srv.url}/api/ingest`, { method: 'POST', headers: { authorization: `Bearer ${other.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ envelopes: [env, { ...env, event: { session_id: 'other-own-1', hook_event_name: 'SessionStart' } }] }) });
+    // the foreign event is skipped, the rest of the batch still lands
+    expect(await r.json()).toMatchObject({ accepted: 1, rejected: 1 });
+    expect(srv.ctx.db.get<{ machine_id: string }>('SELECT machine_id FROM sessions WHERE id = ?', S1)!.machine_id).not.toBe(other.id);
+    const hook = await fetch(`${srv.url}/api/hook/Stop`, { method: 'POST', headers: { authorization: `Bearer ${other.token}`, 'content-type': 'application/json' }, body: JSON.stringify(env) });
+    expect(hook.status).toBe(403);
   });
 
   it('requires login and CSRF for web routes', async () => {

@@ -105,6 +105,8 @@ export function jobsRoutes(ctx: Ctx) {
       await stream.writeSSE({ event: 'hello', data: JSON.stringify({ machineId }) });
       dispatch(ctx, machineId);
       while (!stream.aborted) {
+        // a revoked machine loses its live connection too, not just new requests
+        if (db.get<{ revoked: number }>('SELECT revoked FROM machines WHERE id = ?', machineId)?.revoked) break;
         while (queue.length && !stream.aborted) await stream.writeSSE({ event: 'command', data: JSON.stringify(queue.shift()) });
         await new Promise<void>((r) => {
           const t = setTimeout(r, 25_000);

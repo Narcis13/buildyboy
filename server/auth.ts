@@ -50,6 +50,7 @@ export function ensureSetupToken(ctx: Ctx): string | null {
 const attempts = new Map<string, number[]>();
 function recent(key: string, windowMs: number): number[] {
   const now = Date.now();
+  if (attempts.size > 10_000) for (const [k, list] of attempts) if (!list.some((t) => now - t < windowMs)) attempts.delete(k);
   const list = (attempts.get(key) ?? []).filter((t) => now - t < windowMs);
   attempts.set(key, list);
   return list;

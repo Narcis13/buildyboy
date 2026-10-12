@@ -3,6 +3,7 @@
 import type { Ctx } from '../context.ts';
 import { applyTranscript, mcpServerOf, sourceFrom, OUTPUT_CAP } from './derive.ts';
 import { redactTranscriptLine } from '../../shared/redact.ts';
+import { rulesFor } from '../redaction.ts';
 import { diffLines, diffStats, unifiedDiff } from '../../shared/diff.ts';
 
 export interface ImportChunk {
@@ -65,10 +66,11 @@ export function importChunk(ctx: Ctx, machineId: string, chunk: ImportChunk): { 
 function synthesizeTools(ctx: Ctx, sid: string, lines: string[]) {
   const { db } = ctx;
   const envIds = new Set<string>();
+  const rules = rulesFor(ctx);
   for (const raw of lines) {
     let o: any;
     try {
-      o = JSON.parse(redactTranscriptLine(raw, envIds));
+      o = JSON.parse(redactTranscriptLine(raw, envIds, rules));
     } catch {
       continue;
     }

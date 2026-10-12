@@ -3,8 +3,12 @@ import type { ActionAnswer, HookEnvelope, PendingActionView, PermissionSuggestio
 import { createPending, matchKey, waitFor } from './pending.ts';
 import { pauseAll, sessionWalk } from './state.ts';
 import { redactValue } from '../../shared/redact.ts';
+import { rulesFor } from '../redaction.ts';
 
 type Out = Record<string, unknown> | null;
+
+/** The Stop hook gives up after 590 s (hooks.json); hold well inside that so a late reply still reaches it. */
+export const MAX_STOP_WAIT_MS = 9 * 60_000;
 
 interface SessionCtl {
   kill_requested: number;
@@ -113,7 +117,8 @@ export async function decide(ctx: Ctx, env: HookEnvelope, signal?: AbortSignal):
   const sid = e.session_id;
   const name = e.hook_event_name;
   const s = sessionCtl(ctx, sid);
-  const input = (redactValue(e.tool_input ?? {}) as Record<string, unknown>);
+  const rules = rulesFor(ctx);
+  const input = redactValue(e.tool_input ?? {}, rules) as Record<string, unknown>;
   const tool = e.tool_name ?? null;
 
   if (name === 'PreToolUse') {
@@ -133,13 +138,14 @@ export async function decide(ctx: Ctx, env: HookEnvelope, signal?: AbortSignal):
       }
     }
     if (tool === 'AskUserQuestion' && sessionWalk(ctx, sid)) {
-      const id = createPending(ctx, { sessionId: sid, kind: 'question', toolName: tool, matchKey: matchKey(tool, e.tool_input), request: context(ctx, sid, s, { toolInput: input }), waitMs: ctx.config.permissionWaitMs });
+      const id = createPending(ctx, { sessionId: sid, kind: 'question', toolName: tool, matchKey: matchKey(tool, input), request: context(ctx, sid, s, { toolInput: input }), waitMs: ctx.config.permissionWaitMs });
       const ans = (await waitFor(ctx, id, ctx.config.permissionWaitMs, signal)) as ActionAnswer | null;
       if (ans?.type === 'answers') {
         return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...(e.tool_input ?? {}), answers: ans.answers } } };
       }
       if (ans?.type === 'deny') return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: ans.message || 'Declined from Buildyboy' } };
     }
+    if (signal?.aborted) return null;
     const now = takeQueued(ctx, sid, ['now'], 'pre_tool_use');
     if (now.length) return { hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: `Message from the user (sent via Buildyboy):\n${now.join('\n\n')}` } };
     return null;
@@ -150,7 +156,7 @@ export async function decide(ctx: Ctx, env: HookEnvelope, signal?: AbortSignal):
     const kind = tool === 'ExitPlanMode' ? 'plan' : tool === 'AskUserQuestion' ? 'question' : 'permission';
     const suggestions = Array.isArray(e.permission_suggestions) ? (e.permission_suggestions as PermissionSuggestion[]) : undefined;
     const id = createPending(ctx, {
-      sessionId: sid, kind, toolName: tool, matchKey: matchKey(tool, e.tool_input),
+      sessionId: sid, kind, toolName: tool, matchKey: matchKey(tool, input),
       request: context(ctx, sid, s, { toolInput: input, permissionSuggestions: suggestions }), waitMs: ctx.config.permissionWaitMs,
     });
     const ans = (await waitFor(ctx, id, ctx.config.permissionWaitMs, signal)) as ActionAnswer | null;
@@ -162,13 +168,14 @@ export async function decide(ctx: Ctx, env: HookEnvelope, signal?: AbortSignal):
     const queued = takeQueued(ctx, sid, ['after_turn', 'now'], 'stop');
     if (queued.length) return { decision: 'block', reason: queued.join('\n\n') };
     if (!sessionWalk(ctx, sid)) return null;
-    const mins = s?.stop_wait_min ?? ctx.config.stopWaitMin;
+    const mins = s?.stop_wait_min ?? ctx.db.getSetting<number | null>('stop_wait_min', null) ?? ctx.config.stopWaitMin;
     if (mins <= 0) return null;
-    const waitMs = mins * 60_000;
-    const last = typeof e.last_assistant_message === 'string' ? (redactValue(e.last_assistant_message) as string) : null;
+    const waitMs = Math.min(mins * 60_000, MAX_STOP_WAIT_MS);
+    const last = typeof e.last_assistant_message === 'string' ? redactValue(e.last_assistant_message, rules) : null;
     const id = createPending(ctx, { sessionId: sid, kind: 'stop_wait', request: context(ctx, sid, s, { lastAssistantMessage: last ?? lastAssistantText(ctx, sid) }), waitMs });
     const ans = (await waitFor(ctx, id, waitMs, signal)) as ActionAnswer | null;
     if (ans?.type === 'reply' && ans.text.trim()) return { decision: 'block', reason: ans.text };
+    if (signal?.aborted) return null;
     // a message queued while we waited also counts
     const late = takeQueued(ctx, sid, ['after_turn', 'now'], 'stop');
     if (late.length) return { decision: 'block', reason: late.join('\n\n') };

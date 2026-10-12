@@ -176,7 +176,9 @@ describe('runner jobs', () => {
   });
 
   it('cancels a queued job without a runner round trip', async () => {
-    srv.ctx.db.run("INSERT INTO jobs (id, machine_id, cwd, prompt_text, options_json, status, created_at) VALUES ('q-1', ?, ?, 'x', '{\"maxBudgetUsd\":1}', 'queued', ?)", machine.id, repoA, Date.now());
+    // on a machine with no runner, so nothing can pick the job up before the stop
+    const idle = createMachine(srv.ctx, 'no-runner');
+    srv.ctx.db.run("INSERT INTO jobs (id, machine_id, cwd, prompt_text, options_json, status, created_at) VALUES ('q-1', ?, ?, 'x', '{\"maxBudgetUsd\":1}', 'queued', ?)", idle.id, repoA, Date.now());
     await web.post('/api/jobs/q-1/stop');
     expect((await job('q-1')).status).toBe('stopped');
   });
@@ -228,8 +230,14 @@ describe('runner jobs', () => {
     const r2 = await rawCall('POST', `/api/jobs/${first}/verify`, { commands: [ok], confirmed: 'yes' });
     expect(r2.status).toBe(400);
     expect((await job(first)).verify).toBeNull();
-    await web.post(`/api/jobs/${first}/verify`, { commands: [ok, no], confirmed: true });
-    const j = await waitFor(async () => (await job(first)).verify, 'verify results');
+    // the runner refuses commands the job itself never named
+    await web.post(`/api/jobs/${first}/verify`, { commands: [ok], confirmed: true });
+    const refused = await waitFor(async () => (await job(first)).verify, 'verify refusal');
+    expect(refused.results[0]).toMatchObject({ ok: false, output: expect.stringContaining('refused') });
+    const own = await launch('Say hello', repoA, { verify: [ok, no] });
+    await waitStatus(own, 'succeeded');
+    await web.post(`/api/jobs/${own}/verify`, { commands: [ok, no], confirmed: true });
+    const j = await waitFor(async () => (await job(own)).verify, 'verify results');
     expect(j.results.map((x: { ok: boolean }) => x.ok)).toEqual([true, false]);
     expect(j.results[1].exitCode).toBe(3);
     expect(j.results[1].output).toContain('nope');

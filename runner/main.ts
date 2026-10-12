@@ -37,6 +37,7 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
   const jobs = new Map<string, RunningJob>();
   /** where finished jobs ran, for Verify (most recent 200) */
   const places = new Map<string, string>();
+  const verifiable = new Map<string, Set<string>>();
   const ac = new AbortController();
   const timers: NodeJS.Timeout[] = [];
   let claudeVersion: string | null = null;
@@ -74,6 +75,9 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
     }
     const j = startJob(job, args, bin, { cwd: where.cwd, root, sessionId }, { cfg, api, log });
     jobs.set(job.id, j);
+    // verify may only run commands this job itself named (its Done when / verify list), never new ones from the server
+    verifiable.set(job.id, new Set([...(job.options.verify ?? []), ...[...job.promptText.matchAll(/`([^`\n]+)`/g)].map((m) => m[1])].map((c) => c.trim())));
+    if (verifiable.size > 200) verifiable.delete(verifiable.keys().next().value!);
     void j.done.then(() => {
       jobs.delete(job.id);
       places.set(job.id, j.workDir());
@@ -88,6 +92,11 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
     const candidates = [places.get(cmd.jobId), cmd.cwd].filter((p): p is string => !!p);
     const where = candidates.map((p) => checkCwd(p, cfg.allowedRoots)).find((w) => w.ok);
     const commands = Array.isArray(cmd.commands) ? cmd.commands.filter((c) => typeof c === 'string' && c.trim()).slice(0, 30) : [];
+    const allowed = verifiable.get(cmd.jobId);
+    const refused = commands.filter((c) => !allowed?.has(c.trim()));
+    if (refused.length) {
+      return void report(cmd.jobId, [{ type: 'verify', results: refused.map((c) => ({ command: c, ok: false, exitCode: null, output: allowed ? 'refused: not one of this job\'s own Done-when commands' : 'refused: this runner did not run the job (verify on the machine that ran it, before it restarts)' })) }]);
+    }
     if (!where || !where.ok) return void report(cmd.jobId, [{ type: 'verify', results: [{ command: '(verify)', ok: false, exitCode: null, output: 'job directory is not inside the allowed roots' }] }]);
     log(`job ${cmd.jobId}: verify ${commands.length} command(s) in ${where.cwd}`);
     const results = await runVerify(commands, where.cwd);

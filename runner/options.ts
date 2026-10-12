@@ -26,10 +26,11 @@ export const OUTPUT_SCHEMAS = {
 export const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'] as const;
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
-const MODEL_RE = /^[\w.:[\]-]{1,100}$/;
+// values never start with '-', so none can be read as a flag
+const MODEL_RE = /^\w[\w.:[\]-]{0,99}$/;
 const TOOL_RE = /^[\w*][\w*().:, -]{0,199}$/;
 const WORKTREE_RE = /^[\w.-]{1,64}$/;
-const SESSION_RE = /^[0-9a-zA-Z-]{8,64}$/;
+const SESSION_RE = /^[0-9a-zA-Z][0-9a-zA-Z-]{7,63}$/;
 
 export class OptionError extends Error {}
 

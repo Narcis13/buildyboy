@@ -42,6 +42,33 @@ describe('redaction', () => {
     expect(out).not.toContain('SECRET_THING');
   });
 
+  it('masks the secrets the review found missing', () => {
+    const cases: [string, string][] = [
+      ['stripe sk_live_abcdefghijklmnop', 'stripe [REDACTED]'],
+      ['postgres://admin:hunter2@db.local:5432/app', 'postgres://admin:[REDACTED]@db.local:5432/app'],
+      ['xoxb-1234567890-abcdefghij', '[REDACTED]'],
+      ['npm_abcdefghijklmnopqrstuvwxyz0123456789', '[REDACTED]'],
+      ['AIzaSyA1234567890abcdefghijklmnopqrstu', '[REDACTED]'],
+      ['mysql -u root --password hunter2 db', 'mysql -u root --password [REDACTED] db'],
+      ['STRIPE_KEY=whsec_123 next', 'STRIPE_KEY=[REDACTED] next'],
+    ];
+    for (const [input, want] of cases) expect(redactText(input), input).toBe(want);
+  });
+
+  it('drops .env content even when the Read and its result arrive in different batches', () => {
+    const line = JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'other-batch', content: 'DB_URL=postgres://u:p@h/db\nX=1' }] }, toolUseResult: { file: { filePath: '/repo/.env', content: 'DB_URL=postgres://u:p@h/db' } } });
+    const out = redactTranscriptLine(line, new Set());
+    expect(out).not.toContain('DB_URL');
+    expect(out).toContain('.env file content not stored');
+  });
+
+  it('never stores what is written to .env files', () => {
+    const e = redactHookEvent({ session_id: 's', hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: 'C:\\app\\.env.local', content: 'TOKEN_X=abc' } });
+    expect(JSON.stringify(e)).not.toContain('abc');
+    const t = redactTranscriptLine(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't9', name: 'Edit', input: { file_path: '/a/.env', old_string: 'A=1', new_string: 'A=2' } }] } }), new Set());
+    expect(t).not.toContain('A=2');
+  });
+
   it('supports extra rules', () => {
     const rules = compileRules([{ name: 'acme', pattern: 'ACME-\\d{4}', flags: 'g' }]);
     expect(redactText('id ACME-1234', rules)).toBe('id [REDACTED]');

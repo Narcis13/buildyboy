@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import type { Ctx } from '../context.ts';
 import { requireMachine } from '../auth.ts';
+import { rulesFor } from '../redaction.ts';
+import { redactValue } from '../../shared/redact.ts';
 
 // OTLP/HTTP JSON receiver for Claude Code's OpenTelemetry exporter
 // (OTEL_EXPORTER_OTLP_PROTOCOL=http/json, OTEL_EXPORTER_OTLP_ENDPOINT=<server>, headers Authorization=Bearer <machine token>).
@@ -76,6 +78,7 @@ export function otlpRoutes(ctx: Ctx) {
     const machineId = c.get('machineId');
     const body = (await c.req.json().catch(() => null)) as { resourceLogs?: any[] } | null;
     const touched = new Set<string>();
+    const rules = rulesFor(ctx);
     let n = 0;
     ctx.db.tx(() => {
       for (const rl of body?.resourceLogs ?? []) {
@@ -87,6 +90,7 @@ export function otlpRoutes(ctx: Ctx) {
             const sid = sessionFor(ctx, machineId, a);
             // prompt/response bodies are only present if the user opted in; never store them
             delete a.prompt;
+            Object.assign(a, redactValue(a, rules));
             ctx.db.run('INSERT INTO otel_events (ts, session_id, name, attrs_json) VALUES (?, ?, ?, ?)', nanoToMs(r.timeUnixNano ?? r.observedTimeUnixNano), sid, name.startsWith('claude_code.') ? name : `claude_code.${name}`, JSON.stringify(a));
             if (sid) touched.add(sid);
             n++;

@@ -371,3 +371,69 @@ describe('slash command CLI (bb-cli.mjs)', () => {
     expect(await cli(['status'], { BUILDYBOY_URL: 'http://127.0.0.1:9' })).toContain('NOT reachable');
   });
 });
+
+describe('review regressions', () => {
+  it('a rejected (4xx) batch is dropped, not re-spooled forever', async () => {
+    const other = createMachine(srv.ctx, 'other-owner');
+    const sid = newSid();
+    await telemetry(sid);
+    // the same session id from another machine: the server skips it
+    const r = await runHook([], { ...base(sid), hook_event_name: 'Notification', message: 'x' }, { BUILDYBOY_TOKEN: other.token });
+    expect(r.code).toBe(0);
+    expect(existsSync(join(home, 'spool.jsonl')) ? readFileSync(join(home, 'spool.jsonl'), 'utf8') : '').toBe('');
+    // a bad token is a 401: dropped too, and the breaker stays closed
+    await runHook([], { ...base(sid), hook_event_name: 'Notification', message: 'y' }, { BUILDYBOY_TOKEN: 'bbm_nope' });
+    expect(existsSync(join(home, 'breaker'))).toBe(false);
+    expect(existsSync(join(home, 'spool.jsonl')) ? readFileSync(join(home, 'spool.jsonl'), 'utf8') : '').toBe('');
+  });
+
+  it('control events are spooled, not lost, while the breaker is open', async () => {
+    const sid = newSid();
+    writeFileSync(join(home, 'breaker'), String(Date.now()));
+    const r = await runHook(['--control'], { ...base(sid), hook_event_name: 'UserPromptSubmit', prompt: 'while down' });
+    expect(r.stdout).toBe('');
+    expect(r.ms).toBeLessThan(1500);
+    expect(readFileSync(join(home, 'spool.jsonl'), 'utf8')).toContain('while down');
+  });
+
+  it('a Stop pressed on an idle session does not kill the next turn', async () => {
+    await web.post('/api/global/walk', { on: false });
+    const sid = newSid();
+    await telemetry(sid);
+    await web.post(`/api/sessions/${sid}/stop`);
+    await telemetry(sid, 'UserPromptSubmit', { prompt: 'new turn' });
+    expect(srv.ctx.db.get<{ k: number }>('SELECT kill_requested k FROM sessions WHERE id = ?', sid)!.k).toBe(0);
+  });
+
+  it('a request whose input contains a secret is still superseded when answered locally', async () => {
+    const sid = newSid();
+    await telemetry(sid);
+    const input = { command: 'curl -H "Authorization: Bearer abcdefghijklmnop" https://x' };
+    const run = runHook(['--control'], { ...base(sid), hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: input });
+    const p = await waitPending(sid);
+    expect(JSON.stringify(p.request.toolInput)).not.toContain('abcdefghijklmnop');
+    await telemetry(sid, 'PostToolUse', { tool_name: 'Bash', tool_input: input, tool_use_id: 'toolu_sec1', tool_response: { stdout: '' } });
+    expect((await run).stdout).toBe('');
+    const { history } = await web.get<{ history: PendingActionView[] }>('/api/inbox');
+    expect(history.find((h) => h.id === p.id)?.status).toBe('superseded');
+  });
+
+  it('a subagent finishing after the turn ended leaves the session idle', async () => {
+    const sid = newSid();
+    await telemetry(sid);
+    await runHook(['--control'], { ...base(sid), hook_event_name: 'Stop', stop_hook_active: false });
+    await web.post('/api/global/walk', { on: false });
+    await telemetry(sid, 'SubagentStop', { agent_id: 'late-agent', agent_type: 'general-purpose' });
+    expect((await web.get<any>(`/api/sessions/${sid}`)).status).toBe('idle');
+  });
+
+  it('pending requests left over from a restart are expired', async () => {
+    const { expireOrphans, createPending } = await import('../server/control/pending.ts');
+    const sid = newSid();
+    await telemetry(sid);
+    const id = createPending(srv.ctx, { sessionId: sid, kind: 'stop_wait', request: {}, waitMs: 1 });
+    expect(expireOrphans(srv.ctx, false, Date.now() + 10_000)).toBeGreaterThanOrEqual(1);
+    const { history } = await web.get<{ history: PendingActionView[] }>('/api/inbox');
+    expect(history.find((h) => h.id === id)?.status).toBe('timeout');
+  });
+});

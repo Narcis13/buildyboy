@@ -78,6 +78,7 @@ export function webRoutes(ctx: Ctx) {
     if (!verifyPassword(String(body?.current ?? ''), db.getSetting<string | null>('password_hash', null))) return c.json({ error: 'wrong password' }, 401);
     if (String(body?.next ?? '').length < 8) return c.json({ error: 'password must be at least 8 characters' }, 400);
     setPassword(ctx, String(body.next));
+    db.run('DELETE FROM web_sessions WHERE id != ?', webUser(ctx, c)!.sessionId);
     db.audit('web', 'password_changed');
     return c.json({ ok: true });
   });
@@ -128,6 +129,7 @@ export function webRoutes(ctx: Ctx) {
           setTimeout(r, 25_000);
         });
         wake = null;
+        if (!webUser(ctx, c)) break;
         if (!queue.length && !stream.aborted) await stream.writeSSE({ event: 'ping', data: String(Date.now()) });
       }
       unsub();
@@ -240,7 +242,7 @@ export function webRoutes(ctx: Ctx) {
     } else if (action === 'walk') {
       const on = body?.on === null || body?.on === undefined ? null : body.on ? 1 : 0;
       db.run('UPDATE sessions SET walk_mode = ? WHERE id = ?', on, sid);
-      if (typeof body?.stopWaitMin === 'number') db.run('UPDATE sessions SET stop_wait_min = ? WHERE id = ?', Math.max(0, Math.min(60, body.stopWaitMin)), sid);
+      if (typeof body?.stopWaitMin === 'number') db.run('UPDATE sessions SET stop_wait_min = ? WHERE id = ?', Math.max(0, Math.min(9, body.stopWaitMin)), sid);
     } else if (action === 'mute') {
       const muted = new Set(db.getSetting<string[]>('push_muted_sessions', []));
       if (body?.on) muted.add(sid);
@@ -293,7 +295,10 @@ export function webRoutes(ctx: Ctx) {
     let out: Record<string, unknown> = { ok: true };
     if (action === 'walk') db.run('UPDATE machines SET walk_mode = ? WHERE id = ?', body?.on === null || body?.on === undefined ? null : body.on ? 1 : 0, id);
     else if (action === 'rotate') out = { ok: true, token: rotateMachineToken(ctx, id) };
-    else if (action === 'revoke') db.run('UPDATE machines SET revoked = 1 WHERE id = ?', id);
+    else if (action === 'revoke') {
+      db.run('UPDATE machines SET revoked = 1 WHERE id = ?', id);
+      ctx.runners.get(id)?.({ type: 'ping' });
+    }
     else if (action === 'rename' && typeof body?.name === 'string' && body.name.trim()) db.run('UPDATE machines SET name = ? WHERE id = ?', body.name.trim().slice(0, 80), id);
     db.audit('web', `machine_${action}`, id);
     bus.publish('machines', 'changed');

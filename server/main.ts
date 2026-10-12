@@ -9,6 +9,7 @@ import type { Ctx, ServerConfig } from './context.ts';
 import { ensureSetupToken, hasPassword, setPassword } from './auth.ts';
 import { startBackground } from './background.ts';
 import { createNotifier } from './push/notify.ts';
+import { expireOrphans } from './control/pending.ts';
 
 export const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -55,6 +56,8 @@ export interface RunningServer {
 export async function startServer(over: Partial<ServerConfig> = {}, opts: { dbPath?: string; background?: boolean; quiet?: boolean } = {}): Promise<RunningServer> {
   const config = configFromEnv(over);
   const ctx = createContext(config, opts.dbPath);
+  // a restart drops every long-poll: requests still marked pending have no hook waiting anymore
+  expireOrphans(ctx, true);
   const initial = process.env.BUILDYBOY_INITIAL_PASSWORD;
   if (initial && !hasPassword(ctx)) setPassword(ctx, initial);
   const app = createApp(ctx);

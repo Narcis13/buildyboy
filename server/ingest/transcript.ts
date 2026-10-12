@@ -161,7 +161,3 @@ export function parseTranscriptLine(line: string, agentId: string | null = null)
   }
 }
 
-/** Splits a chunk into complete JSONL lines, dropping blanks. */
-export function splitLines(chunk: string): string[] {
-  return chunk.split(/\r?\n/).filter((l) => l.trim() !== '');
-}
