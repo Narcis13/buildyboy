@@ -1,5 +1,6 @@
 import type { Ctx } from './context.ts';
 import { STALE_AFTER_MS } from './ingest/status.ts';
+import { startJobScheduler } from './jobs/scheduler.ts';
 
 /** Periodic jobs: stale detection, retention. Returns a stop function. */
 export function startBackground(ctx: Ctx): () => void {
@@ -19,7 +20,12 @@ export function startBackground(ctx: Ctx): () => void {
   every(60_000, () => markStale(ctx));
   every(6 * 3600_000, () => purgeOld(ctx));
 
-  return () => timers.forEach(clearInterval);
+  const stopJobs = startJobScheduler(ctx);
+
+  return () => {
+    timers.forEach(clearInterval);
+    stopJobs();
+  };
 }
 
 export function markStale(ctx: Ctx, now = Date.now()) {

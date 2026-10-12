@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { existsSync, readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import type { Ctx } from './context.ts';
 import { machineRoutes } from './routes/machine.ts';
 import { webRoutes } from './routes/web.ts';
@@ -28,7 +28,7 @@ export function createApp(ctx: Ctx) {
   app.all('/api/*', (c) => c.json({ error: 'not found' }, 404));
 
   // PWA (web/dist), with SPA fallback to index.html
-  const dist = join(ctx.config.rootDir, 'web', 'dist');
+  const dist = process.env.BUILDYBOY_WEB_DIST ? resolve(process.env.BUILDYBOY_WEB_DIST) : join(ctx.config.rootDir, 'web', 'dist');
   const root = relative(process.cwd(), dist) || '.';
   app.use('/*', serveStatic({ root }));
   app.get('/*', (c) => {
