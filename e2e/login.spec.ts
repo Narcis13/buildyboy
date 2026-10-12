@@ -1,0 +1,13 @@
+import { test, expect, login, trackConsoleErrors } from './fixtures.ts';
+
+test('logging in', async ({ page }) => {
+  const errors = trackConsoleErrors(page);
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Log in' })).toBeVisible();
+  await page.getByLabel('Password').fill('wrong-password');
+  await page.getByRole('button', { name: 'Log in' }).click();
+  await expect(page.getByRole('alert')).toContainText('wrong password');
+  await login(page);
+  await expect(page.getByTestId('attention-bar')).toBeVisible();
+  expect(errors.filter((e) => !e.includes('401'))).toEqual([]);
+});

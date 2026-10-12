@@ -1,0 +1,250 @@
+@import "tailwindcss";
+
+/* Industrial blueprint: dark-first, with a paper-blueprint light theme. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  --bb-bg: #0a1626;
+  --bb-bg-2: #0f2036;
+  --bb-panel: #11253f;
+  --bb-panel-2: #163052;
+  --bb-line: #1f3d63;
+  --bb-grid: rgba(92, 200, 255, 0.07);
+  --bb-text: #dceaf7;
+  --bb-muted: #8aa4c0;
+  --bb-accent: #5cc8ff;
+  --bb-accent-ink: #04121f;
+  --bb-working: #3ddc84;
+  --bb-waiting: #ffb020;
+  --bb-idle: #4da3ff;
+  --bb-ended: #6b7a8f;
+  --bb-error: #ff5c5c;
+  --bb-tool-read: #4da3ff;
+  --bb-tool-edit: #a78bfa;
+  --bb-tool-bash: #ff9f43;
+  --bb-tool-web: #2dd4bf;
+  --bb-tool-mcp: #f472b6;
+  --bb-tool-agent: #facc15;
+  --bb-tool-other: #94a3b8;
+  --bb-add-bg: rgba(61, 220, 132, 0.12);
+  --bb-del-bg: rgba(255, 92, 92, 0.12);
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bb-bg: #eef3f8;
+  --bb-bg-2: #e4ecf5;
+  --bb-panel: #ffffff;
+  --bb-panel-2: #f2f6fb;
+  --bb-line: #c3d3e6;
+  --bb-grid: rgba(30, 90, 160, 0.08);
+  --bb-text: #0d2340;
+  --bb-muted: #4f6884;
+  --bb-accent: #0b6fb8;
+  --bb-accent-ink: #ffffff;
+  --bb-working: #16a34a;
+  --bb-waiting: #d97706;
+  --bb-idle: #2563eb;
+  --bb-ended: #64748b;
+  --bb-error: #dc2626;
+  --bb-add-bg: rgba(22, 163, 74, 0.12);
+  --bb-del-bg: rgba(220, 38, 38, 0.1);
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-bg: var(--bb-bg);
+  --color-bg-2: var(--bb-bg-2);
+  --color-panel: var(--bb-panel);
+  --color-panel-2: var(--bb-panel-2);
+  --color-line: var(--bb-line);
+  --color-ink: var(--bb-text);
+  --color-muted: var(--bb-muted);
+  --color-accent: var(--bb-accent);
+  --color-accent-ink: var(--bb-accent-ink);
+  --color-working: var(--bb-working);
+  --color-waiting: var(--bb-waiting);
+  --color-idle: var(--bb-idle);
+  --color-ended: var(--bb-ended);
+  --color-error: var(--bb-error);
+  --color-tool-read: var(--bb-tool-read);
+  --color-tool-edit: var(--bb-tool-edit);
+  --color-tool-bash: var(--bb-tool-bash);
+  --color-tool-web: var(--bb-tool-web);
+  --color-tool-mcp: var(--bb-tool-mcp);
+  --color-tool-agent: var(--bb-tool-agent);
+  --color-tool-other: var(--bb-tool-other);
+  --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+html,
+body {
+  background: var(--bb-bg);
+  color: var(--bb-text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+/* blueprint grid */
+.bb-grid {
+  background-color: var(--bb-bg);
+  background-image:
+    linear-gradient(var(--bb-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bb-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* status lamps */
+.bb-lamp {
+  border-radius: 9999px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 30%, transparent), 0 0 12px color-mix(in srgb, currentColor 55%, transparent);
+  background: currentColor;
+}
+.bb-lamp-working {
+  color: var(--bb-working);
+  animation: bb-pulse 1.6s ease-in-out infinite;
+}
+.bb-lamp-waiting {
+  color: var(--bb-waiting);
+  animation: bb-pulse 0.9s ease-in-out infinite;
+}
+.bb-lamp-idle,
+.bb-lamp-compacting {
+  color: var(--bb-idle);
+}
+.bb-lamp-compacting {
+  animation: bb-pulse 2.4s ease-in-out infinite;
+}
+.bb-lamp-ended {
+  color: var(--bb-ended);
+  box-shadow: none;
+}
+.bb-lamp-error {
+  color: var(--bb-error);
+}
+.bb-lamp-stale {
+  color: var(--bb-waiting);
+  background: repeating-linear-gradient(45deg, var(--bb-waiting) 0 4px, var(--bb-ended) 4px 8px);
+}
+
+@keyframes bb-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.88);
+  }
+}
+
+@keyframes bb-slide-in {
+  from {
+    transform: translateX(14px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.bb-slide-in {
+  animation: bb-slide-in 0.35s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* markdown */
+.bb-md {
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.bb-md p,
+.bb-md ul,
+.bb-md ol,
+.bb-md pre,
+.bb-md table,
+.bb-md blockquote {
+  margin: 0.4em 0;
+}
+.bb-md ul {
+  list-style: disc;
+  padding-left: 1.3em;
+}
+.bb-md ol {
+  list-style: decimal;
+  padding-left: 1.3em;
+}
+.bb-md code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--bb-panel-2);
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+}
+.bb-md pre {
+  background: var(--bb-bg-2);
+  border: 1px solid var(--bb-line);
+  border-radius: 6px;
+  padding: 0.6em 0.8em;
+  overflow-x: auto;
+}
+.bb-md pre code {
+  background: none;
+  padding: 0;
+}
+.bb-md h1,
+.bb-md h2,
+.bb-md h3 {
+  font-weight: 650;
+  margin: 0.7em 0 0.3em;
+}
+.bb-md h1 {
+  font-size: 1.25em;
+}
+.bb-md h2 {
+  font-size: 1.12em;
+}
+.bb-md a {
+  color: var(--bb-accent);
+  text-decoration: underline;
+}
+.bb-md table {
+  border-collapse: collapse;
+}
+.bb-md td,
+.bb-md th {
+  border: 1px solid var(--bb-line);
+  padding: 0.2em 0.5em;
+}
+.bb-md blockquote {
+  border-left: 3px solid var(--bb-line);
+  padding-left: 0.7em;
+  color: var(--bb-muted);
+}
+
+/* React Flow theming */
+.react-flow {
+  --xy-background-color: transparent;
+  --xy-node-background-color: transparent;
+  --xy-node-border: none;
+  --xy-controls-button-background-color: var(--bb-panel);
+  --xy-controls-button-color: var(--bb-text);
+  --xy-controls-button-border-color: var(--bb-line);
+  --xy-minimap-background-color: var(--bb-bg-2);
+}
