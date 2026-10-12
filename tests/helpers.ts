@@ -15,6 +15,8 @@ export interface WebClient {
   get<T = any>(path: string): Promise<T>;
   post<T = any>(path: string, body?: unknown): Promise<T>;
   put<T = any>(path: string, body?: unknown): Promise<T>;
+  /** GET returning the raw text body */
+  text(path: string): Promise<string>;
 }
 
 export const TEST_PASSWORD = 'correct-horse-battery';
@@ -39,7 +41,12 @@ export async function startTestServer(over: Partial<ServerConfig> = {}): Promise
         if (!r.ok) throw new Error(`${method} ${path} -> ${r.status} ${text}`);
         return text ? JSON.parse(text) : null;
       };
-      return { get: (p) => call('GET', p), post: (p, b) => call('POST', p, b ?? {}), put: (p, b) => call('PUT', p, b ?? {}) };
+      return {
+        get: (p) => call('GET', p),
+        post: (p, b) => call('POST', p, b ?? {}),
+        put: (p, b) => call('PUT', p, b ?? {}),
+        text: async (p) => (await fetch(`${s.url}${p}`, { headers })).text(),
+      };
     },
     async stop() {
       await s.close();

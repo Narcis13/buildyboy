@@ -6,6 +6,7 @@ import { requireMachine } from '../auth.ts';
 import { ingestEnvelope, IngestError } from '../ingest/derive.ts';
 import { decide } from '../control/control.ts';
 import { controlStateFor } from '../control/state.ts';
+import { importChunk } from '../ingest/import.ts';
 
 const envelopeSchema = z
   .object({
@@ -96,6 +97,15 @@ export function machineRoutes(ctx: Ctx) {
       },
     });
     return new Response(stream, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+  });
+
+  /** Backfill: `bb import` uploads transcripts in chunks. Sessions are tagged imported. */
+  app.post('/api/import', auth, async (c) => {
+    const b = z.object({ sessionId: z.string().min(1).max(200), path: z.string().max(2000).optional(), lines: z.array(z.string()).max(20000) }).safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: 'sessionId and lines required' }, 400);
+    const r = importChunk(ctx, c.get('machineId'), b.data);
+    if (r.created) ctx.bus.publish('floor', 'session', { id: b.data.sessionId });
+    return c.json({ ok: true, ...r });
   });
 
   app.post('/api/statusline', auth, async (c) => {
