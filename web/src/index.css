@@ -78,13 +78,19 @@
   --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 
+/* 16px root keeps rem-based sizes standard (min-h-11 = 44px touch targets); body text is 15px */
 html,
 body {
   background: var(--bb-bg);
   color: var(--bb-text);
   font-family: var(--font-sans);
-  font-size: 15px;
   -webkit-tap-highlight-color: transparent;
+}
+html {
+  font-size: 16px;
+}
+body {
+  font-size: 15px;
 }
 
 body {

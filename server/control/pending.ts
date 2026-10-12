@@ -132,6 +132,13 @@ export function answerPending(ctx: Ctx, id: string, response: Record<string, unk
   const row = ctx.db.get<{ session_id: string; created_at: number; kind: string; tool_name: string | null }>('SELECT session_id, created_at, kind, tool_name FROM pending_actions WHERE id = ?', id);
   const ok = finish(ctx, id, 'answered', response, by);
   if (ok && row) {
+    // the session stops waiting on me as soon as I answer (released turns go idle)
+    const next = response.type === 'release' ? 'idle' : 'working';
+    ctx.db.run(
+      `UPDATE sessions SET status = ?, wait_ms = wait_ms + CASE WHEN waiting_since IS NULL THEN 0 ELSE MAX(0, ? - waiting_since) END, waiting_since = NULL
+       WHERE id = ? AND status IN ('waiting', 'idle')`,
+      next, Date.now(), row.session_id,
+    );
     const secs = Math.round((Date.now() - row.created_at) / 1000);
     const verb = response.type === 'allow' ? 'Allowed' : response.type === 'deny' ? 'Denied' : response.type === 'answers' ? 'Answered' : response.type === 'reply' ? 'Replied' : 'Released';
     const summary = `${verb}${row.tool_name ? ` ${row.tool_name}` : ''} by ${by} after ${secs}s`;
