@@ -152,6 +152,40 @@ async function main() {
     check(existsSync(join(repo2, 'approved.txt')) && readFileSync(join(repo2, 'approved.txt'), 'utf8').includes('yes'), 'approved.txt exists after the remote approval');
     const decision = db.get<{ summary: string }>("SELECT summary FROM events WHERE session_id = ? AND event = 'Decision'", r2.out?.session_id ?? '');
     check(!!decision, `the decision is on the timeline (${decision?.summary})`);
+
+    // ---- run 3 (opt-in, --runner): a real cheap job launched from the web API through bb runner ----
+    if (process.argv.includes('--runner')) {
+      db.setSetting('walk_mode', false);
+      const repo3 = tempRepo();
+      const runnerHome = mkdtempSync(join(tmpdir(), 'bb-smoke-runner-'));
+      writeFileSync(join(runnerHome, 'config.json'), JSON.stringify({ url: srv.url, token: machine.token, machineId: machine.id }));
+      writeFileSync(join(runnerHome, 'runner.json'), JSON.stringify({ allowedRoots: [repo3], idleExitSeconds: 3, pluginDirs: [join(ROOT, 'plugin')] }));
+      const runner = spawn(process.execPath, [join(ROOT, 'cli', 'bb.ts'), 'runner'], { env: cleanEnv({ BUILDYBOY_HOME: runnerHome }), stdio: ['ignore', 'pipe', 'pipe'] });
+      let runnerLog = '';
+      runner.stdout.on('data', (d) => (runnerLog += d));
+      runner.stderr.on('data', (d) => (runnerLog += d));
+      try {
+        await poll(() => db.get("SELECT 1 FROM machines WHERE id = ? AND runner_online = 1", machine.id), 20_000);
+        const web = await login(srv.url);
+        const res = await fetch(`${srv.url}/api/jobs`, {
+          method: 'POST',
+          headers: web,
+          body: JSON.stringify({ machineId: machine.id, cwd: repo3, title: 'smoke job', promptText: 'Create a file job.txt containing exactly the word ok. Then reply with the single word done.', options: { model: MODEL, maxBudgetUsd: Number(BUDGET), permissionMode: 'acceptEdits' } }),
+        });
+        const { id: jobId } = (await res.json()) as { id: string };
+        const job = await poll(() => db.get<{ status: string; cost_usd: number | null; session_id: string | null }>("SELECT status, cost_usd, session_id FROM jobs WHERE id = ? AND status IN ('succeeded','failed','stopped','lost')", jobId), 240_000);
+        console.log(`run 3: job ${jobId} ${job?.status}, cost $${job?.cost_usd}, session ${job?.session_id}`);
+        if (typeof job?.cost_usd === 'number') totalCost += job.cost_usd;
+        check(job?.status === 'succeeded', 'the runner job succeeded');
+        check(existsSync(join(repo3, 'job.txt')), 'job.txt was written by the job');
+        const linked = job?.session_id ? db.get<{ job_id: string | null }>('SELECT job_id FROM sessions WHERE id = ?', job.session_id) : undefined;
+        check(linked?.job_id === jobId, 'the hooks linked the session to the job (BUILDYBOY_JOB_ID)');
+        check((db.get<{ n: number }>('SELECT COUNT(*) n FROM job_output WHERE job_id = ?', jobId)?.n ?? 0) > 0, 'the stream-json output was stored');
+      } finally {
+        runner.kill();
+        if (failures) console.log(runnerLog.slice(-3000));
+      }
+    }
   } finally {
     console.log(`total cost: $${totalCost.toFixed(4)}`);
     await srv.close();

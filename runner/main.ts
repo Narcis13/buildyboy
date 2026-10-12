@@ -59,7 +59,7 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
     let args: string[];
     let bin: Exe;
     try {
-      args = buildClaudeArgs(job.options, { sessionId, title: job.title });
+      args = [...buildClaudeArgs(job.options, { sessionId, title: job.title }), ...cfg.pluginDirs.flatMap((d) => ['--plugin-dir', d])];
       bin = exe();
     } catch (e) {
       return fail((e as Error).message);

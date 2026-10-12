@@ -7,6 +7,8 @@ export interface RunnerConfig {
   allowedRoots: string[];
   concurrency: number;
   claudePath?: string;
+  /** extra `--plugin-dir` directories for every job (machine-local, e.g. a dev checkout of the plugin) */
+  pluginDirs: string[];
   /** close stdin this long after a `result` with no follow-up, so the job can finish (default 120) */
   idleExitSeconds: number;
   /** after a stop, kill the process tree if it is still alive after this (default 10) */
@@ -29,6 +31,7 @@ export function loadConfig(configPath?: string): RunnerConfig {
     allowedRoots: roots,
     concurrency: Math.floor(n(raw.concurrency, 2)),
     claudePath: typeof raw.claudePath === 'string' && raw.claudePath ? raw.claudePath : undefined,
+    pluginDirs: Array.isArray(raw.pluginDirs) ? raw.pluginDirs.filter((d): d is string => typeof d === 'string' && d.trim() !== '').map((d) => resolve(d)) : [],
     idleExitSeconds: n(raw.idleExitSeconds, 120),
     stopGraceSeconds: n(raw.stopGraceSeconds, 10),
     url: client.url.replace(/\/$/, ''),
