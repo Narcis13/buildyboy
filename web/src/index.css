@@ -107,6 +107,14 @@ body {
   background-size: 24px 24px;
 }
 
+/* horizontally scrolling chip/tab rows: swipeable, no desktop scrollbar (code blocks keep theirs) */
+div.overflow-x-auto {
+  scrollbar-width: none;
+}
+div.overflow-x-auto::-webkit-scrollbar {
+  display: none;
+}
+
 /* status lamps */
 .bb-lamp {
   border-radius: 9999px;

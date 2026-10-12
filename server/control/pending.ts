@@ -136,8 +136,9 @@ export function answerPending(ctx: Ctx, id: string, response: Record<string, unk
     const next = response.type === 'release' ? 'idle' : 'working';
     ctx.db.run(
       `UPDATE sessions SET status = ?, wait_ms = wait_ms + CASE WHEN waiting_since IS NULL THEN 0 ELSE MAX(0, ? - waiting_since) END, waiting_since = NULL
-       WHERE id = ? AND status IN ('waiting', 'idle')`,
-      next, Date.now(), row.session_id,
+       WHERE id = ? AND status IN ('waiting', 'idle')
+         AND NOT EXISTS (SELECT 1 FROM pending_actions WHERE session_id = ? AND status = 'pending' AND kind != 'pause')`,
+      next, Date.now(), row.session_id, row.session_id,
     );
     const secs = Math.round((Date.now() - row.created_at) / 1000);
     const verb = response.type === 'allow' ? 'Allowed' : response.type === 'deny' ? 'Denied' : response.type === 'answers' ? 'Answered' : response.type === 'reply' ? 'Replied' : 'Released';

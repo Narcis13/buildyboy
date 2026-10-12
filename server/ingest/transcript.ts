@@ -31,6 +31,8 @@ export interface SessionPatch {
   linesRemoved?: number;
   prUrl?: string;
   entrypoint?: string;
+  /** Claude Code version that wrote the line */
+  version?: string;
   permissionMode?: string;
   compaction?: boolean;
 }
@@ -99,6 +101,7 @@ export function parseTranscriptLine(line: string, agentId: string | null = null)
   };
   const patch: SessionPatch = {};
   if (typeof o.entrypoint === 'string') patch.entrypoint = o.entrypoint;
+  if (typeof o.version === 'string') patch.version = o.version;
 
   switch (type) {
     case 'user': {

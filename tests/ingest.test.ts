@@ -21,6 +21,7 @@ describe('ingestion of the fixture scenario', () => {
     const sessions = await web.get<SessionSummary[]>('/api/sessions');
     expect(sessions.map((s) => s.id).sort()).toEqual([S1, S2, S3].sort());
     expect(new Set(sessions.map((s) => s.machineId)).size).toBe(2);
+    expect((await web.get<any[]>('/api/machines')).find((m) => m.name === 'devbox-win')?.claudeVersion).toBe('2.1.296');
     const machines = await web.get<any[]>('/api/machines');
     expect(machines.map((m) => m.name).sort()).toEqual(['devbox-win', 'wsl-ubuntu']);
   });

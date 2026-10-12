@@ -489,6 +489,7 @@ export function applyTranscript(ctx: Ctx, sid: string, lines: string[], agentId:
         const p = db.get<{ project_id: number | null }>('SELECT project_id FROM sessions WHERE id = ?', sid);
         linkPr(ctx, sid, p?.project_id ?? null, patch.prUrl);
       }
+      if (patch.version) db.run('UPDATE machines SET claude_version = ? WHERE id = (SELECT machine_id FROM sessions WHERE id = ?)', patch.version, sid);
       if (patch.entrypoint) {
         const src = sourceFromEntrypoint(patch.entrypoint);
         if (src) db.run("UPDATE sessions SET source = ? WHERE id = ? AND source = 'unknown'", src, sid);
