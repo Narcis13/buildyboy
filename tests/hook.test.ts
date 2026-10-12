@@ -344,3 +344,30 @@ describe('transcript deltas and PROGRESS.md', () => {
     expect(offsets.offsets[tp]).toBe(Buffer.byteLength(`${line(1)}\n${line(2)}\n`));
   });
 });
+
+describe('slash command CLI (bb-cli.mjs)', () => {
+  const cli = (args: string[], env: Record<string, string>) =>
+    new Promise<string>((resolve) => {
+      const p = spawn(process.execPath, [join(import.meta.dirname, '..', 'plugin', 'hooks', 'bb-cli.mjs'), ...args], {
+        env: { ...process.env, BUILDYBOY_HOME: home, BUILDYBOY_URL: srv.url, BUILDYBOY_TOKEN: token, ...env },
+      });
+      let out = '';
+      p.stdout.on('data', (d) => (out += d));
+      p.on('close', () => resolve(out));
+    });
+
+  it('/bb-walk 5m turns walk on for the session and /bb-status shows it', async () => {
+    await web.post('/api/global/walk', { on: false });
+    const sid = newSid();
+    await telemetry(sid);
+    expect(await cli(['walk', '5m'], { CLAUDE_CODE_SESSION_ID: sid })).toContain('Walk mode ON for this session; at the end of a turn Claude waits up to 5 min');
+    const d = await web.get<any>(`/api/sessions/${sid}`);
+    expect(d).toMatchObject({ walkMode: true, stopWaitMin: 5 });
+    expect(JSON.parse(readFileSync(join(home, 'control.json'), 'utf8')).sessions[sid].walk).toBe(true);
+    const status = await cli(['status'], { CLAUDE_CODE_SESSION_ID: sid });
+    expect(status).toContain('(reachable)');
+    expect(status).toContain('ON for this session');
+    expect(await cli(['link'], { CLAUDE_CODE_SESSION_ID: sid })).toContain(`/s/${sid}`);
+    expect(await cli(['status'], { BUILDYBOY_URL: 'http://127.0.0.1:9' })).toContain('NOT reachable');
+  });
+});

@@ -5,7 +5,7 @@ import type { HookEnvelope, HookResponse, IngestResponse } from '../../shared/ty
 import { requireMachine } from '../auth.ts';
 import { ingestEnvelope, IngestError } from '../ingest/derive.ts';
 import { decide } from '../control/control.ts';
-import { controlStateFor } from '../control/state.ts';
+import { controlStateFor, machineWalk, sessionWalk } from '../control/state.ts';
 import { importChunk } from '../ingest/import.ts';
 
 const envelopeSchema = z
@@ -97,6 +97,40 @@ export function machineRoutes(ctx: Ctx) {
       },
     });
     return new Response(stream, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+  });
+
+  /** /bb-status: what the server knows about this machine and (optionally) a session. */
+  app.get('/api/machine/status', auth, (c) => {
+    const machineId = c.get('machineId');
+    const m = ctx.db.get<{ name: string; spool_bytes: number | null; last_seen: number | null }>('SELECT name, spool_bytes, last_seen FROM machines WHERE id = ?', machineId)!;
+    const sid = c.req.query('session');
+    const s = sid ? ctx.db.get<{ machine_id: string }>('SELECT machine_id FROM sessions WHERE id = ?', sid) : undefined;
+    return c.json({
+      machineId,
+      name: m.name,
+      lastSeen: m.last_seen,
+      spoolBytes: m.spool_bytes,
+      machineWalk: machineWalk(ctx, machineId),
+      session: s && s.machine_id === machineId ? { id: sid, walk: sessionWalk(ctx, sid!), url: `${ctx.config.publicUrl}/s/${sid}` } : null,
+    });
+  });
+
+  /** /bb-walk on|off|<N>m: walk mode for this session (or the whole machine when no session id is known). */
+  app.post('/api/machine/walk', auth, async (c) => {
+    const machineId = c.get('machineId');
+    const b = z.object({ sessionId: z.string().optional(), on: z.boolean(), stopWaitMin: z.number().min(0).max(60).optional() }).safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: 'on required' }, 400);
+    const { sessionId, on, stopWaitMin } = b.data;
+    const s = sessionId ? ctx.db.get<{ machine_id: string }>('SELECT machine_id FROM sessions WHERE id = ?', sessionId) : undefined;
+    if (s && s.machine_id === machineId) {
+      ctx.db.run('UPDATE sessions SET walk_mode = ?, stop_wait_min = COALESCE(?, stop_wait_min) WHERE id = ?', on ? 1 : 0, stopWaitMin ?? null, sessionId!);
+      publishSession(ctx, sessionId!);
+    } else {
+      ctx.db.run('UPDATE machines SET walk_mode = ? WHERE id = ?', on ? 1 : 0, machineId);
+      ctx.bus.publish('machines', 'changed');
+    }
+    ctx.db.audit('machine', 'walk', sessionId ?? machineId, { on, stopWaitMin });
+    return c.json({ ok: true, scope: s ? 'session' : 'machine', control: controlStateFor(ctx, machineId) });
   });
 
   /** Backfill: `bb import` uploads transcripts in chunks. Sessions are tagged imported. */
