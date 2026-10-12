@@ -219,7 +219,7 @@ export function webRoutes(ctx: Ctx) {
     return c.json({ ok: true });
   });
 
-  app.post('/api/sessions/:id/:action{stop|pause|resume|walk}', auth, async (c) => {
+  app.post('/api/sessions/:id/:action{stop|pause|resume|walk|mute}', auth, async (c) => {
     const sid = c.req.param('id');
     const action = c.req.param('action');
     const s = db.get<{ job_id: string | null; machine_id: string }>('SELECT job_id, machine_id FROM sessions WHERE id = ?', sid);
@@ -241,6 +241,11 @@ export function webRoutes(ctx: Ctx) {
       const on = body?.on === null || body?.on === undefined ? null : body.on ? 1 : 0;
       db.run('UPDATE sessions SET walk_mode = ? WHERE id = ?', on, sid);
       if (typeof body?.stopWaitMin === 'number') db.run('UPDATE sessions SET stop_wait_min = ? WHERE id = ?', Math.max(0, Math.min(60, body.stopWaitMin)), sid);
+    } else if (action === 'mute') {
+      const muted = new Set(db.getSetting<string[]>('push_muted_sessions', []));
+      if (body?.on) muted.add(sid);
+      else muted.delete(sid);
+      db.setSetting('push_muted_sessions', [...muted]);
     }
     db.audit('web', `session_${action}`, sid, body);
     bus.publish('floor', 'session', { id: sid });

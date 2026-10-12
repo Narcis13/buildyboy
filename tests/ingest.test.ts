@@ -102,3 +102,15 @@ describe('idempotency and auth', () => {
     expect(login.status).toBe(401);
   });
 });
+
+describe('per-session notification mute', () => {
+  it('mutes and unmutes push for one session', async () => {
+    await web.post(`/api/sessions/${S1}/mute`, { on: true });
+    expect((await web.get<SessionDetail>(`/api/sessions/${S1}`)).pushMuted).toBe(true);
+    const { shouldNotify } = await import('../server/push/notify.ts');
+    expect(shouldNotify(srv.ctx, { type: 'pending', title: 't', body: 'b', sessionId: S1 })).toBe(false);
+    expect(shouldNotify(srv.ctx, { type: 'pending', title: 't', body: 'b', sessionId: S2 })).toBe(true);
+    await web.post(`/api/sessions/${S1}/mute`, { on: false });
+    expect((await web.get<SessionDetail>(`/api/sessions/${S1}`)).pushMuted).toBe(false);
+  });
+});

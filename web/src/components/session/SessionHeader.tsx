@@ -35,7 +35,7 @@ export function SessionHeader({ s, side, now, compact }: { s: SessionDetail; sid
   const [expanded, setExpanded] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
   const act = useMutation({
-    mutationFn: ({ action, body }: { action: 'stop' | 'pause' | 'resume' | 'walk'; body?: unknown }) => api.post(`/api/sessions/${s.id}/${action}`, body ?? {}),
+    mutationFn: ({ action, body }: { action: 'stop' | 'pause' | 'resume' | 'walk' | 'mute'; body?: unknown }) => api.post(`/api/sessions/${s.id}/${action}`, body ?? {}),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['session', s.id] });
       qc.invalidateQueries({ queryKey: ['sessions'] });
@@ -140,6 +140,9 @@ export function SessionHeader({ s, side, now, compact }: { s: SessionDetail; sid
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {!ended && (
               <Toggle label="Walk mode" on={s.walkMode} disabled={act.isPending} onChange={(on) => act.mutate({ action: 'walk', body: { on } })} />
+            )}
+            {!ended && (
+              <Toggle label="Notify" on={!s.pushMuted} disabled={act.isPending} onChange={(on) => act.mutate({ action: 'mute', body: { on: !on } })} />
             )}
             {!ended &&
               (s.paused ? (

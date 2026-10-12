@@ -104,6 +104,7 @@ export function sessionDetail(ctx: Ctx, id: string): SessionDetail | null {
     killRequested: !!r.kill_requested,
     stopWaitMin: r.stop_wait_min ?? ctx.config.stopWaitMin,
     platform: r.platform,
+    pushMuted: ctx.db.getSetting<string[]>('push_muted_sessions', []).includes(r.id),
   };
 }
 

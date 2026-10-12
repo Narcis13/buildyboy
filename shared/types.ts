@@ -180,6 +180,8 @@ export interface SessionDetail extends SessionSummary {
   killRequested: boolean;
   stopWaitMin: number;
   platform: string | null;
+  /** push notifications muted for this session */
+  pushMuted: boolean;
 }
 
 export type TimelineItem =
