@@ -14,6 +14,7 @@ import { Outputs } from '../components/composer/Outputs.tsx';
 import { Preview } from '../components/composer/Preview.tsx';
 import { SlotField } from '../components/composer/SlotField.tsx';
 import { specToExtra, SpecAttach, type SpecMode } from '../components/composer/SpecAttach.tsx';
+import { Specify, type SpecifyResult } from '../components/composer/Specify.tsx';
 import { TemplatePicker } from '../components/composer/TemplatePicker.tsx';
 import { Versions } from '../components/composer/Versions.tsx';
 
@@ -118,6 +119,13 @@ export default function Composer({ promptId }: { promptId?: string }) {
     setDirty(true);
     setNote('');
   };
+  const applySpecify = (r: SpecifyResult) => {
+    setValues((cur) => ({ ...cur, Goal: r.goal, 'Done when': r.doneWhen.join('\n'), Scope: r.scope }));
+    setSpecMode('md');
+    setSpecMd(r.spec);
+    setDirty(true);
+    setNote('Spec-ify filled Goal, Done when, Scope and the spec. Review them, then save.');
+  };
   const restore = (v: PromptVersion) => {
     load({ slots: v.slots, extraMd: v.extraMd });
     setDirty(true);
@@ -202,6 +210,10 @@ export default function Composer({ promptId }: { promptId?: string }) {
           {promptId && saved.error && <p className="mb-3 text-error">Could not load this prompt: {errorText(saved.error)}</p>}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
             <div className={`space-y-4 ${pane === 'edit' ? '' : 'hidden lg:block'}`}>
+              <Section title="Spec-ify (optional)">
+                <Specify onResult={applySpecify} />
+              </Section>
+
               <Section title="Template">
                 <TemplatePicker
                   templates={templates.data ?? []}

@@ -6,6 +6,7 @@ import type { Ctx } from '../context.ts';
 import { json } from '../db.ts';
 import { requireWeb } from '../auth.ts';
 import { indexText } from '../search.ts';
+import { createJob, JobError } from '../jobs/core.ts';
 import { parseTemplate, renderTemplate, type PromptStats, type PromptVersion, type PromptView, type TemplateDetail, type TemplateInfo, type Values } from '../../shared/harness.ts';
 
 const HARNESS = 'harness';
@@ -197,6 +198,37 @@ export function promptsRoutes(ctx: Ctx) {
     });
     db.audit('web', 'prompt_update', String(id), { title, version: cur.version + 1 });
     return c.json(load(id));
+  });
+
+  /** Spec-ify: a runner job (Opus, structured output) turns a rough idea into Goal / Done when / Scope and a draft spec. */
+  app.post('/api/prompts/specify', auth, async (c) => {
+    const b = z.object({ idea: z.string().min(3).max(20_000), machineId: z.string().min(1), cwd: z.string().min(1), model: z.string().max(100).optional(), maxBudgetUsd: z.number().positive().max(20).optional() }).safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: 'idea, machineId and cwd are required' }, 400);
+    const promptText = [
+      'You are helping write the task prompt for an unattended Claude Code run in this repository.',
+      'Look around the repository as much as you need (read-only: do not change any files). Then turn the rough idea below into:',
+      '- goal: what to build, in one or two sentences;',
+      '- doneWhen: 3 to 8 checks that prove it is done, each a runnable command in backticks or an observable result;',
+      '- scope: the files or directories that may change;',
+      '- spec: a concise draft spec in Markdown (behavior, constraints, edge cases, non-goals).',
+      '',
+      'Rough idea:',
+      b.data.idea,
+    ].join('\n');
+    try {
+      const id = createJob(ctx, {
+        machineId: b.data.machineId,
+        cwd: b.data.cwd,
+        title: `Spec-ify: ${b.data.idea.split('\n')[0].slice(0, 60)}`,
+        promptText,
+        options: { model: b.data.model ?? 'opus', maxBudgetUsd: b.data.maxBudgetUsd ?? 1, permissionMode: 'default', walkMode: false, outputSchema: 'specify' },
+      });
+      db.audit('web', 'specify', id, { machineId: b.data.machineId, cwd: b.data.cwd });
+      return c.json({ jobId: id });
+    } catch (e) {
+      if (e instanceof JobError) return c.json({ error: e.message }, 400);
+      throw e;
+    }
   });
 
   app.post('/api/prompts/:id/duplicate', auth, (c) => {

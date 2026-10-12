@@ -167,7 +167,7 @@ export function startJob(
       send.push({
         type: 'status', status, exitCode: code, costUsd: cost, sessionId: sessionId ?? undefined,
         result: {
-          ...(r ? { subtype: r.subtype, is_error: r.is_error, num_turns: r.num_turns, duration_ms: r.duration_ms, session_id: r.session_id, result: typeof r.result === 'string' ? r.result.slice(0, 4000) : undefined, permission_denials: Array.isArray(r.permission_denials) ? r.permission_denials.length : undefined } : {}),
+          ...(r ? { subtype: r.subtype, is_error: r.is_error, num_turns: r.num_turns, duration_ms: r.duration_ms, session_id: r.session_id, result: typeof r.result === 'string' ? r.result.slice(0, 4000) : undefined, permission_denials: Array.isArray(r.permission_denials) ? r.permission_denials.length : undefined, structured_output: r.structured_output && JSON.stringify(r.structured_output).length < 64_000 ? r.structured_output : undefined } : {}),
           ...(reason && status !== 'succeeded' ? { reason } : {}),
           ...(status === 'failed' && stderrTail ? { stderr: stderrTail.slice(-2000) } : {}),
         },

@@ -5,7 +5,23 @@ import type { JobOptions } from '../shared/types.ts';
 export interface StoredJobOptions extends JobOptions {
   limitMinutes?: number;
   resumeSessionId?: string;
+  /** id of a built-in structured-output schema (passed as --json-schema); arbitrary schemas are not accepted */
+  outputSchema?: keyof typeof OUTPUT_SCHEMAS;
 }
+
+/** Structured-output schemas jobs may ask for, by id. `specify` turns a rough idea into harness slots + a draft spec. */
+export const OUTPUT_SCHEMAS = {
+  specify: {
+    type: 'object',
+    properties: {
+      goal: { type: 'string', description: 'what to build, in one or two sentences' },
+      doneWhen: { type: 'array', items: { type: 'string' }, description: 'runnable checks, one per item, with backticked commands' },
+      scope: { type: 'string', description: 'files or directories that may change' },
+      spec: { type: 'string', description: 'a draft spec in Markdown' },
+    },
+    required: ['goal', 'doneWhen', 'scope', 'spec'],
+  },
+} as const;
 
 export const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'] as const;
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
@@ -49,6 +65,7 @@ export function checkOptions(o: unknown): StoredJobOptions {
   if (typeof r.worktree === 'boolean') worktree = r.worktree || undefined;
   else worktree = str(r.worktree, 'worktree name', WORKTREE_RE);
   if (r.walkMode !== undefined && typeof r.walkMode !== 'boolean') throw new OptionError('walkMode must be true or false');
+  if (r.outputSchema !== undefined && !Object.hasOwn(OUTPUT_SCHEMAS, String(r.outputSchema))) throw new OptionError(`unknown outputSchema: ${JSON.stringify(r.outputSchema)}`);
   if (r.verify !== undefined && (!Array.isArray(r.verify) || r.verify.some((c) => typeof c !== 'string' || c.length > 2000) || r.verify.length > 30)) throw new OptionError('verify must be a list of commands');
   const out: StoredJobOptions = {
     model: str(r.model, 'model', MODEL_RE),
@@ -64,6 +81,7 @@ export function checkOptions(o: unknown): StoredJobOptions {
     verify: r.verify as string[] | undefined,
     limitMinutes: num(r.limitMinutes, 'limitMinutes', false, 7 * 24 * 60),
     resumeSessionId: str(r.resumeSessionId, 'resumeSessionId', SESSION_RE),
+    outputSchema: r.outputSchema as StoredJobOptions['outputSchema'],
   };
   for (const k of Object.keys(out) as (keyof StoredJobOptions)[]) if (out[k] === undefined) delete out[k];
   return out;
@@ -92,6 +110,7 @@ export function buildClaudeArgs(raw: unknown, opts: { sessionId: string; title: 
   // the tool flags are variadic, so a fixed flag always follows them
   if (o.allowedTools) a.push('--allowedTools', ...o.allowedTools);
   if (o.disallowedTools) a.push('--disallowedTools', ...o.disallowedTools);
+  if (o.outputSchema) a.push('--json-schema', JSON.stringify(OUTPUT_SCHEMAS[o.outputSchema]));
   a.push('--max-budget-usd', String(o.maxBudgetUsd));
   return a;
 }

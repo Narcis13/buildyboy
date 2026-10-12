@@ -41,13 +41,15 @@ const fill = (s) => s.replaceAll('{{SESSION_ID}}', sessionId).replaceAll('{{CWD}
 const fixture = readFileSync(join(here, 'stream-json', 'basic.jsonl'), 'utf8').split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(fill(l)));
 const init = { ...fixture[0], fake_argv: argv, fake_job_id: process.env.BUILDYBOY_JOB_ID ?? null };
 
+// with --json-schema, results carry a canned structured_output (Spec-ify)
+const structured = argv.includes('--json-schema') ? { structured_output: { goal: 'Fake goal', doneWhen: ['`npm test` passes'], scope: 'src/', spec: '# Draft spec' } } : {};
 let cost = 0;
 let turns = 0;
 let mode = 'normal';
 const result = (text, isError = false) => {
   cost += 0.0123;
   turns++;
-  out({ type: 'result', subtype: isError ? 'error_during_execution' : 'success', is_error: isError, duration_ms: 50, num_turns: turns, result: text, session_id: sessionId, total_cost_usd: Number(cost.toFixed(4)), permission_denials: [] });
+  out({ type: 'result', subtype: isError ? 'error_during_execution' : 'success', is_error: isError, duration_ms: 50, num_turns: turns, result: text, session_id: sessionId, total_cost_usd: Number(cost.toFixed(4)), permission_denials: [], ...structured });
 };
 const say = (text) => out({ type: 'assistant', message: { id: `msg_fake_${Date.now()}`, type: 'message', role: 'assistant', model: 'claude-fake-1', content: [{ type: 'text', text }] }, parent_tool_use_id: null, session_id: sessionId });
 
@@ -80,7 +82,7 @@ rl.on('line', (line) => {
       if (mode === 'stubborn') setInterval(() => {}, 1000);
     } else {
       for (const l of fixture.slice(1, -1)) out(l);
-      out(fixture[fixture.length - 1]);
+      out({ ...fixture[fixture.length - 1], ...structured });
       cost = fixture[fixture.length - 1].total_cost_usd;
       turns = 2;
     }

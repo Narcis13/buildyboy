@@ -125,6 +125,17 @@ describe('runner jobs', () => {
     expect(list.map((x: { id: string }) => x.id)).toContain(first);
   });
 
+  it('Spec-ify runs an Opus job with the specify schema and returns structured output', async () => {
+    const { jobId } = await web.post('/api/prompts/specify', { idea: 'add CSV export', machineId: machine.id, cwd: repoA });
+    const j = await waitStatus(jobId, 'succeeded', 'failed');
+    expect(j.status).toBe('succeeded');
+    expect(j.result.structured_output).toEqual({ goal: 'Fake goal', doneWhen: ['`npm test` passes'], scope: 'src/', spec: '# Draft spec' });
+    const argv: string[] = (await initOf(jobId)).fake_argv;
+    expect(argv[argv.indexOf('--model') + 1]).toBe('opus');
+    expect(JSON.parse(argv[argv.indexOf('--json-schema') + 1]).required).toEqual(['goal', 'doneWhen', 'scope', 'spec']);
+    await expect(web.post('/api/jobs', { machineId: machine.id, cwd: repoA, promptText: 'x', options: { maxBudgetUsd: 1, outputSchema: 'anything' } })).rejects.toThrow(/outputSchema/);
+  });
+
   it('delivers follow-up messages over stdin', async () => {
     const id = await launch('WAIT for me', repoB);
     await waitOutput(id, 'Waiting for a follow-up');
