@@ -19,7 +19,7 @@ export function AttentionBar() {
     <Link
       to="/inbox"
       data-testid="attention-bar"
-      className={`sticky top-0 z-40 flex min-h-11 items-center justify-center gap-3 px-4 text-center text-[15px] font-medium ${urgent ? 'bg-waiting text-[#1d1300]' : 'bg-panel-2 text-ink border-b border-line'}`}
+      className={`sticky top-0 z-40 flex min-h-[44px] items-center justify-center gap-3 px-4 text-center text-[15px] font-medium ${urgent ? 'bg-waiting text-[#1d1300]' : 'bg-panel-2 text-ink border-b border-line'}`}
     >
       {urgent && <span className="inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-[#1d1300]" />}
       <span>{[...parts, ...flags].join(' · ')}</span>

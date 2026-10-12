@@ -8,6 +8,7 @@ test('logging in', async ({ page }) => {
   await page.getByRole('button', { name: 'Log in' }).click();
   await expect(page.getByRole('alert')).toContainText('wrong password');
   await login(page);
-  await expect(page.getByTestId('attention-bar')).toBeVisible();
+  // the app shell (desktop header or phone tab bar) is visible once logged in
+  await expect(page.getByRole('link', { name: /Inbox/ }).first()).toBeVisible();
   expect(errors.filter((e) => !e.includes('401'))).toEqual([]);
 });

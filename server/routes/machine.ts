@@ -7,6 +7,7 @@ import { ingestEnvelope, IngestError } from '../ingest/derive.ts';
 import { decide } from '../control/control.ts';
 import { controlStateFor, machineWalk, sessionWalk } from '../control/state.ts';
 import { importChunk } from '../ingest/import.ts';
+import { checkRateLimits } from '../watchers.ts';
 
 const envelopeSchema = z
   .object({
@@ -158,6 +159,7 @@ export function machineRoutes(ctx: Ctx) {
       cost, cost, cost, pct, b?.rate_limits ? JSON.stringify(b.rate_limits) : null, typeof b?.model?.display_name === 'string' ? b.model.display_name : null, sid,
     );
     if (b?.rate_limits) ctx.db.run('INSERT INTO otel_points (ts, session_id, name, value, attrs_json) VALUES (?, ?, ?, ?, ?)', Date.now(), sid, 'statusline.rate_limits', Number(b.rate_limits?.five_hour?.used_percentage ?? 0), JSON.stringify(b.rate_limits));
+    checkRateLimits(ctx, sid, b?.rate_limits);
     publishSession(ctx, sid);
     return c.json({ ok: true });
   });

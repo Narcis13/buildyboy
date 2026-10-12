@@ -28,7 +28,7 @@ const variants: Record<Variant, string> = {
 };
 
 export function Button({ variant = 'ghost', className = '', size = 'md', ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: 'sm' | 'md' | 'lg' }) {
-  const sz = size === 'lg' ? 'min-h-14 px-5 text-base font-semibold' : size === 'sm' ? 'min-h-9 px-3 text-sm' : 'min-h-11 px-4 text-[15px]';
+  const sz = size === 'lg' ? 'min-h-14 px-5 text-base font-semibold' : size === 'sm' ? 'min-h-[44px] px-3 text-sm md:min-h-9' : 'min-h-[44px] px-4 text-[15px]';
   return <button {...rest} className={`inline-flex items-center justify-center gap-2 rounded-lg font-medium transition disabled:opacity-50 disabled:cursor-not-allowed ${sz} ${variants[variant]} ${className}`} />;
 }
 
@@ -71,7 +71,7 @@ export function Toggle({ on, onChange, label, disabled }: { on: boolean; onChang
       aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!on)}
-      className="inline-flex min-h-11 items-center gap-2 text-[15px] disabled:opacity-50"
+      className="inline-flex min-h-[44px] items-center gap-2 text-[15px] disabled:opacity-50"
     >
       <span className={`relative inline-block h-6 w-11 rounded-full transition ${on ? 'bg-waiting' : 'bg-line'}`}>
         <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${on ? 'left-[22px]' : 'left-0.5'}`} />
@@ -90,7 +90,7 @@ export function Tabs<T extends string>({ tabs, value, onChange, className = '' }
           role="tab"
           aria-selected={value === t.id}
           onClick={() => onChange(t.id)}
-          className={`min-h-11 shrink-0 whitespace-nowrap border-b-2 px-3 text-[15px] ${value === t.id ? 'border-accent text-ink' : 'border-transparent text-muted hover:text-ink'}`}
+          className={`min-h-[44px] shrink-0 whitespace-nowrap border-b-2 px-3 text-[15px] ${value === t.id ? 'border-accent text-ink' : 'border-transparent text-muted hover:text-ink'}`}
         >
           {t.label}
         </button>

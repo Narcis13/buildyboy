@@ -15,7 +15,7 @@
     "start": "node server/main.ts",
     "build": "vite build --config web/vite.config.ts",
     "check": "npm run typecheck && vitest run",
-    "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json && tsc -p e2e/tsconfig.json",
     "test": "vitest run",
     "e2e": "npm run build && playwright test",
     "simulate": "node scripts/simulate.ts",

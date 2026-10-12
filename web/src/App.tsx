@@ -61,7 +61,7 @@ function ThemeToggle() {
     }
   }, [theme]);
   return (
-    <button aria-label="Toggle theme" className="min-h-11 min-w-11 rounded-lg text-muted hover:text-ink" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+    <button aria-label="Toggle theme" className="min-h-[44px] min-w-[44px] rounded-lg text-muted hover:text-ink" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
       {theme === 'dark' ? '☾' : '☀'}
     </button>
   );

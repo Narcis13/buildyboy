@@ -50,13 +50,13 @@ export function Login({ setup = false }: { setup?: boolean }) {
               autoFocus
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="min-h-11 rounded-lg border border-line bg-bg-2 px-3 text-base text-ink outline-none focus:border-accent"
+              className="min-h-[44px] rounded-lg border border-line bg-bg-2 px-3 text-base text-ink outline-none focus:border-accent"
             />
           </label>
           {setup && (
             <label className="flex flex-col gap-1 text-sm text-muted">
               Confirm password
-              <input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className="min-h-11 rounded-lg border border-line bg-bg-2 px-3 text-base text-ink outline-none focus:border-accent" />
+              <input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className="min-h-[44px] rounded-lg border border-line bg-bg-2 px-3 text-base text-ink outline-none focus:border-accent" />
             </label>
           )}
           {error && <p role="alert" className="text-sm text-error">{error}</p>}

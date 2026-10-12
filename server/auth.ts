@@ -46,14 +46,29 @@ export function ensureSetupToken(ctx: Ctx): string | null {
   return t;
 }
 
-// ---- login rate limiting (in memory, per IP) ----
+// ---- rate limiting (in memory, per key) ----
 const attempts = new Map<string, number[]>();
-export function rateLimited(ip: string, max = 10, windowMs = 60_000): boolean {
+function recent(key: string, windowMs: number): number[] {
   const now = Date.now();
-  const list = (attempts.get(ip) ?? []).filter((t) => now - t < windowMs);
-  list.push(now);
-  attempts.set(ip, list);
+  const list = (attempts.get(key) ?? []).filter((t) => now - t < windowMs);
+  attempts.set(key, list);
+  return list;
+}
+
+/** Counts this request and reports whether `key` made more than `max` requests in the window. */
+export function rateLimited(key: string, max = 10, windowMs = 60_000): boolean {
+  const list = recent(key, windowMs);
+  list.push(Date.now());
   return list.length > max;
+}
+
+/** Login limiting counts failures only, so a successful login never locks anyone out. */
+export function tooManyFailures(key: string, max = 10, windowMs = 60_000): boolean {
+  return recent(`fail:${key}`, windowMs).length >= max;
+}
+
+export function noteFailure(key: string) {
+  recent(`fail:${key}`, 60_000).push(Date.now());
 }
 
 export function clientIp(c: Context): string {

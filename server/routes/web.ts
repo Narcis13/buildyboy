@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { Ctx } from '../context.ts';
 import type { ActionAnswer } from '../../shared/types.ts';
 import {
-  clientIp, createPairingCode, createWebSession, destroyWebSession, ensureSetupToken, hasPassword, rateLimited, requireWeb,
+  clientIp, createPairingCode, createWebSession, destroyWebSession, ensureSetupToken, hasPassword, noteFailure, requireWeb, tooManyFailures,
   rotateMachineToken, setPassword, verifyPassword, webUser,
 } from '../auth.ts';
 import { json } from '../db.ts';
@@ -40,9 +40,10 @@ export function webRoutes(ctx: Ctx) {
   });
 
   app.post('/api/auth/login', async (c) => {
-    if (rateLimited(clientIp(c))) return c.json({ error: 'too many attempts, wait a minute' }, 429);
+    if (tooManyFailures(clientIp(c))) return c.json({ error: 'too many attempts, wait a minute' }, 429);
     const body = await c.req.json().catch(() => ({}));
     if (!verifyPassword(String(body?.password ?? ''), db.getSetting<string | null>('password_hash', null))) {
+      noteFailure(clientIp(c));
       db.audit('web', 'login_failed', clientIp(c));
       return c.json({ error: 'wrong password' }, 401);
     }
@@ -52,10 +53,13 @@ export function webRoutes(ctx: Ctx) {
   });
 
   app.post('/api/auth/setup', async (c) => {
-    if (rateLimited(clientIp(c))) return c.json({ error: 'too many attempts' }, 429);
+    if (tooManyFailures(clientIp(c))) return c.json({ error: 'too many attempts' }, 429);
     const body = await c.req.json().catch(() => ({}));
     const token = ensureSetupToken(ctx);
-    if (!token || body?.token !== token) return c.json({ error: 'invalid setup token' }, 403);
+    if (!token || body?.token !== token) {
+      noteFailure(clientIp(c));
+      return c.json({ error: 'invalid setup token' }, 403);
+    }
     const pw = String(body?.password ?? '');
     if (pw.length < 8) return c.json({ error: 'password must be at least 8 characters' }, 400);
     setPassword(ctx, pw);

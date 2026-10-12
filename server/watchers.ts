@@ -103,3 +103,13 @@ export function nextSection(md: string): string {
   }
   return out.join('\n').trim();
 }
+
+/** Rate limits above 80% (from the statusline bridge): one notification per window and limit. */
+export function checkRateLimits(ctx: Ctx, sid: string, limits: Record<string, { used_percentage?: number; resets_at?: string | number }> | null | undefined) {
+  if (!limits || !enabled(ctx, 'budget')) return;
+  for (const [name, l] of Object.entries(limits)) {
+    if (typeof l?.used_percentage === 'number' && l.used_percentage > 80) {
+      fire(ctx, sid, 'budget', `rate:${name}:${l.resets_at ?? ''}`, `Rate limit ${name.replace('_', ' ')} at ${Math.round(l.used_percentage)}%`, 'budget');
+    }
+  }
+}
