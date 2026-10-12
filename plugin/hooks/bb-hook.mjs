@@ -128,25 +128,37 @@ async function gitInfo(e, state) {
   const cwd = e.cwd || process.cwd();
   const name = e.hook_event_name;
   const command = e.tool_input && typeof e.tool_input.command === 'string' ? e.tool_input.command : '';
-  const head = await git(cwd, ['rev-parse', '--show-toplevel', '--abbrev-ref', 'HEAD', 'HEAD', '--git-dir', '--git-common-dir']);
-  if (!head) return undefined;
-  const [root, branch, sha, gitDir, commonDir] = head.split(/\r?\n/);
-  const info = { root, branch, sha, worktree: !!gitDir && !!commonDir && gitDir !== commonDir && !gitDir.endsWith(commonDir) };
-  const jobs = [
-    git(cwd, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD']).then((r) => {
-      if (r) {
-        const [behind, ahead] = r.split(/\s+/).map(Number);
-        info.ahead = ahead;
-        info.behind = behind;
-      }
-    }),
-    git(cwd, ['status', '--porcelain']).then((r) => {
-      if (r !== null) info.dirty = r ? r.split(/\r?\n/).length : 0;
-    }),
-    git(cwd, ['remote', 'get-url', 'origin']).then((r) => {
-      if (r) info.remote = stripCreds(r);
-    }),
-  ];
+  // git calls run in parallel; `status --porcelain=v2 --branch` gives branch, sha, ahead/behind and dirty in one go.
+  // Repo root, worktree and remote don't change during a session, so they're cached in the session state.
+  const info = {};
+  const jobs = [];
+  const status = git(cwd, ['status', '--porcelain=v2', '--branch']).then((r) => {
+    if (r === null) return false;
+    let dirty = 0;
+    for (const l of r.split(/\r?\n/)) {
+      if (l.startsWith('# branch.oid ')) info.sha = l.slice(13) === '(initial)' ? undefined : l.slice(13);
+      else if (l.startsWith('# branch.head ')) info.branch = l.slice(14);
+      else if (l.startsWith('# branch.ab ')) {
+        const [a, b] = l.slice(12).split(' ');
+        info.ahead = Math.abs(Number(a));
+        info.behind = Math.abs(Number(b));
+      } else if (l && !l.startsWith('#')) dirty++;
+    }
+    info.dirty = dirty;
+    return true;
+  });
+  if (!state.git) {
+    jobs.push(
+      Promise.all([
+        git(cwd, ['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir']),
+        git(cwd, ['remote', 'get-url', 'origin']),
+      ]).then(([head, remote]) => {
+        if (!head) return;
+        const [root, gitDir, commonDir] = head.split(/\r?\n/);
+        state.git = { root, worktree: !!gitDir && !!commonDir && gitDir !== commonDir && !gitDir.endsWith(commonDir), remote: remote ? stripCreds(remote) : undefined };
+      }),
+    );
+  }
   if (name === 'Stop' && state.startSha) {
     jobs.push(git(cwd, ['diff', '--shortstat', state.startSha]).then((r) => {
       if (r !== null) info.shortstat = r;
@@ -167,8 +179,8 @@ async function gitInfo(e, state) {
     const m = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/.exec(out);
     if (m) info.prUrl = m[0];
   }
-  await Promise.all(jobs);
-  return info;
+  const [isRepo] = await Promise.all([status, ...jobs]);
+  return isRepo ? { ...state.git, ...info } : undefined;
 }
 
 /** Reads new complete JSONL lines from `path` starting at the stored offset (capped). */
