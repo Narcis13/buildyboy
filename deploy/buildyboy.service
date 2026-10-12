@@ -1,0 +1,39 @@
+# Installed to /etc/systemd/system/buildyboy.service by deploy/deploy-wsl.sh.
+# __PLACEHOLDERS__ are filled in at deploy time.
+[Unit]
+Description=Buildyboy server (Claude Code software factory)
+Documentation=https://github.com/Narcis13/buildyboy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__GROUP__
+WorkingDirectory=__APP_DIR__
+Environment=BUILDYBOY_HOST=127.0.0.1
+Environment=BUILDYBOY_PORT=__PORT__
+Environment=NODE_ENV=production
+# node:sqlite may print an ExperimentalWarning on some 24.x builds; keep it out of the journal
+Environment=NODE_NO_WARNINGS=1
+Environment=BUILDYBOY_DATA=__DATA_DIR__
+Environment=BUILDYBOY_PUBLIC_URL=https://__DOMAIN__
+ExecStart=__NODE__ __APP_DIR__/server/main.ts
+Restart=always
+RestartSec=3
+
+# Hardening. The app and node live under $HOME, so ProtectHome stays read-only
+# and the data dir is re-opened for writing via ReadWritePaths (which is
+# applied after ProtectSystem/ProtectHome and therefore wins).
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__DATA_DIR__
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

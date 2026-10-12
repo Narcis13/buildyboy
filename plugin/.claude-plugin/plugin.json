@@ -1,0 +1,8 @@
+{
+  "name": "buildyboy",
+  "version": "0.1.0",
+  "description": "Streams Claude Code sessions to your Buildyboy server and lets you approve, steer and stop them from your phone.",
+  "author": { "name": "Narcis13" },
+  "homepage": "https://github.com/Narcis13/buildyboy",
+  "license": "MIT"
+}

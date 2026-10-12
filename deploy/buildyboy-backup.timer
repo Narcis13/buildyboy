@@ -1,0 +1,11 @@
+# Installed to /etc/systemd/system/buildyboy-backup.timer by deploy/deploy-wsl.sh.
+[Unit]
+Description=Nightly Buildyboy backup (keeps 14)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

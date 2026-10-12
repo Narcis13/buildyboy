@@ -1,0 +1,12 @@
+{
+  "name": "buildyboy",
+  "description": "Buildyboy: a self-hosted software factory around Claude Code",
+  "owner": { "name": "Narcis13" },
+  "plugins": [
+    {
+      "name": "buildyboy",
+      "source": "./plugin",
+      "description": "Telemetry and remote control (approvals, steering, walk mode) for Claude Code sessions"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+[
+  { "id": "bg-fake-0001-aaaa", "state": "working", "name": "Nightly dependency bump", "cwd": "/tmp/fake-repo", "startedAt": 1760000000000 },
+  { "id": "bg-fake-0002-bbbb", "state": "done", "name": "Refactor logger", "cwd": "/tmp/fake-repo" }
+]
