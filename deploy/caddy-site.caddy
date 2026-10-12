@@ -1,0 +1,21 @@
+# Installed to /etc/caddy/sites/buildyboy.caddy by deploy/deploy-wsl.sh.
+# Pulled in by the main Caddyfile via: import /etc/caddy/sites/*.caddy
+__DOMAIN__ {
+	# Compress only static-ish types; never text/event-stream (SSE).
+	encode zstd gzip {
+		match {
+			header Content-Type text/html*
+			header Content-Type text/css*
+			header Content-Type application/javascript*
+			header Content-Type text/javascript*
+			header Content-Type application/json*
+			header Content-Type image/svg+xml*
+		}
+	}
+
+	# flush_interval -1 turns response buffering off, which SSE (/api/stream,
+	# /api/runner/stream) and the hook long-polls need.
+	reverse_proxy 127.0.0.1:__PORT__ {
+		flush_interval -1
+	}
+}
