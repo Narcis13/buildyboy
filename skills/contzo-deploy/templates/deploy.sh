@@ -244,7 +244,8 @@ preflight() {
   if [ -f "$PROJECT_DIR/package.json" ]; then
     [ -n "$NODE_BIN" ] || die "no node in WSL; install it with nvm (nvm install $NODE_VERSION)"
     info "node: $NODE_BIN/node ($(node -v))"
-    if ! ls "$PROJECT_DIR"/{package-lock.json,pnpm-lock.yaml,yarn.lock,bun.lock,bun.lockb} >/dev/null 2>&1; then
+    # ls of the whole brace list fails if any one is missing, so test each file.
+    if ! for f in package-lock.json pnpm-lock.yaml yarn.lock bun.lock bun.lockb; do [ -f "$PROJECT_DIR/$f" ] && break; false; done; then
       warn "no lockfile: every deploy resolves dependency versions afresh (npm install). Commit one for reproducible builds."
     fi
   fi
