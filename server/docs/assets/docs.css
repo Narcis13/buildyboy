@@ -248,18 +248,21 @@ h3:hover > [data-docs="anchor"],
   text-align: center;
 }
 
-/* Code blocks get a copy button (docs.js) */
+/* Code blocks get a copy button (docs.js). It sits in its own row above the block: a long command scrolls sideways,
+   and a button floating over the block would hide part of it. */
 [data-docs="code"] {
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  margin-block: var(--space-4);
 }
 [data-docs="code"] pre {
   overflow-x: auto;
-  padding-inline-end: var(--space-16);
+  margin-block: 0;
 }
 [data-docs="copy"] {
-  position: absolute;
-  inset-block-start: var(--space-2);
-  inset-inline-end: var(--space-2);
+  order: -1;
+  align-self: flex-end;
+  margin-block-end: var(--space-1);
 }
 
 /* Tables scroll inside themselves on a phone */
