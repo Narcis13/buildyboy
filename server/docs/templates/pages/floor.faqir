@@ -1,0 +1,192 @@
+layout "layout.faqir"
+
+block content
+  p
+    | The
+    strong Floor
+    | is Buildyboy's home screen. It answers one question at a glance: what are all my Claude Code sessions doing right
+    | now, and does any of them need me? Open it with
+    strong Floor
+    | in the top bar (or the first tab at the bottom of a phone).
+  include "partials/shot.faqir" (assets=site.assets file="floor-desktop.png" alt="The Floor in canvas view: a bay per machine, each holding session cards with a lamp, a status, an activity line, three meters and a conveyor belt of tool calls." caption="The canvas view on a computer. Amber cards are waiting for you.")
+
+  h2#attention-bar The attention bar
+  p
+    | The strip at the very top of every page summarises what needs you. It appears only when there is something to say,
+    | and turns amber with a pulsing dot when a session is waiting or a job has failed. It can show:
+  ul
+    li
+      code N waiting for you
+      | : sessions waiting in the last 24 hours, plus open Inbox cards.
+    li
+      code N job(s) failed
+      | : jobs that failed or lost contact in the last 24 hours.
+    li
+      code N stale
+      | : sessions that stopped reporting while working.
+    li
+      code Walk mode on
+      | and
+      code Everything paused
+      | : reminders that these global switches are on.
+  p
+    | Tap the bar to jump to the
+    a(href="/docs/inbox") Inbox
+    | .
+  +callout(variant="muted")
+    @content
+      p
+        | The
+        code Walk mode on
+        | reminder only reflects the global switch in the Inbox. Walk mode turned on for a single machine or a single
+        | session does not show here; that session's own header says
+        strong walk mode
+        | instead.
+
+  h2#bays-and-stations Bays and stations
+  p
+    | Each paired computer is a
+    strong bay
+    | , drawn as a dashed box. Its header shows a green dot when the machine is online (it sent something in the last 5
+    | minutes, or its runner is connected), its name, how many sessions are waiting, and a line with its platform,
+    | whether the runner is online, and how many stations it holds.
+  p
+    | Each session is a
+    strong station
+    | : a card with everything you need to judge it without opening it.
+  ol
+    li
+      strong The lamp
+      | (the coloured circle) shows the status. Green pulsing is working, amber pulsing is waiting on you, steady blue is
+      | idle, slowly pulsing blue is compacting, amber and grey stripes is stale, red is an error and grey is ended. The
+      | whole card glows amber while it waits for you, and ended cards are dimmed.
+    li
+      strong The project
+      | in capitals, and under it the git branch (
+      code ⎇ main
+      | ). An amber dot after the branch means there are uncommitted changes;
+      code no git
+      | means the folder is not a git repository.
+    li
+      strong The status word
+      | on the right, such as
+      code WAITING ON YOU
+      | or
+      code IDLE
+      | .
+    li
+      strong The session name
+      | (or "Untitled session").
+    li
+      strong The activity line
+      | after
+      code ▸
+      | says what it is doing right now, for example
+      code Bash: npm test
+      | ,
+      code Editing server/db.ts
+      | ,
+      code Proposing a plan
+      | or
+      code Waiting for prompt
+      | . While a session waits for you, the line shows Claude Code's own message in amber instead.
+    li
+      strong Three meters.
+      code Context
+      | is a small tank showing how full the conversation's context window is (blue, then amber from 75% and red from 90%;
+      | a dash means unknown).
+      code Cost
+      | is the session's spend so far in dollars.
+      code Time
+      | is how long ago the session started.
+    li
+      strong The conveyor belt
+      | at the bottom shows the last 20 tool calls, oldest on the left. Each block is coloured by kind: blue for reading
+      | and searching files, violet for edits, orange for shell commands, teal for web access, pink for MCP tools, yellow
+      | for subagents and grey for anything else. A block that is still running pulses; a failed, denied or interrupted
+      | one is dimmed with a red outline. Hover a block to see the tool and its result. An empty belt says
+      code belt idle
+      | .
+  p
+    | Small circles marked
+    code ✣
+    | floating above a station are its
+    strong subagents
+    | (helpers Claude started). They fade away shortly after they finish. On the phone list they appear as chips.
+  +callout(variant="info")
+    @content
+      p
+        | The context meter is most accurate with the optional statusline bridge switched on. Without it, many sessions
+        | show a dash. See
+        a(href="/docs/settings#telemetry") Telemetry and statusline
+        | .
+  p
+    | The
+    code Time
+    | meter keeps counting while a session sits idle, so a session you left open this morning can show many hours. That
+    | is time since start, not time spent working.
+
+  h2#views Canvas and list
+  p
+    | Switch between the two views with
+    strong List
+    | and
+    strong Canvas
+    | at the top right. Phones start in the list, larger screens in the canvas. The choice is not remembered between visits.
+  h3#canvas The canvas
+  ul
+    li Drag the background to move around; use the + and − buttons (or your trackpad) to zoom; the frame button fits everything on screen.
+    li Drag a bay to move it, or drag a station inside its bay. Positions are remembered in this browser.
+    li
+      strong Reset layout
+      | (top right) puts everything back in its automatic place.
+    li Click a station, or focus it with Tab and press Enter, to open the session.
+  h3#list The list
+  p
+    | The list groups sessions by machine under a header with the online dot, the machine name and whether its runner is
+    | on. Cards are full width; tap one to open the session.
+  include "partials/shot.faqir" (assets=site.assets file="floor-phone.png" alt="The Floor on a phone: the List view with a machine header and full-width session cards." caption="On a phone the Floor is a list, most urgent first." phone)
+
+  h2#filters Filters
+  p The row under the title narrows what you see. Your choices are remembered in this browser.
+  ul
+    li
+      strong Live
+      | : sessions that have not ended and have done something in the last 24 hours.
+    li
+      strong Today
+      | (the default): sessions with activity since midnight.
+    li
+      strong All
+      | : the 200 most recent sessions, ended ones included.
+    li
+      strong All projects
+      | and
+      strong All machines
+      | : pick one project or one machine.
+  p
+    | The counters next to the title (for example
+    code 2 waiting · 1 working
+    | ) count what is on screen after filtering.
+
+  h2#order How things are ordered
+  p
+    | The most urgent things come first. Bays are ordered by their most urgent session, then by name. Inside a bay, and
+    | in the list, sessions are ordered by status (waiting, then error, then working and compacting, then stale, then
+    | idle, then ended), then by their most recent activity.
+
+  h2#live Keeping up to date
+  p
+    | The Floor updates itself as events arrive, over one live connection to the server. If the connection drops (for
+    | example when your phone sleeps), it reconnects by itself and catches up. It also re-checks every 30 seconds as a
+    | safety net, so you never need to reload the page.
+
+  h2#empty When the Floor is empty
+  p
+    | "No sessions today" usually means one of three things: nothing ran today (try
+    strong All
+    | ), the computer is not paired yet (see
+    a(href="/docs/machines") Pairing machines
+    | ), or the session was started before pairing and so has no plugin (start a new one). More causes are in
+    a(href="/docs/troubleshooting#session-missing") Troubleshooting
+    | .

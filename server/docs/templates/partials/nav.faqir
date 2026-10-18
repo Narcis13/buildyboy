@@ -1,0 +1,9 @@
+//- The manual's contents, grouped by section. Parameters: nav (from catalog.ts), label (the nav's accessible name).
+nav(data-ui="nav" data-variant="vertical" aria-label=label)
+  each section in nav
+    p(data-docs="nav-group") {{ section.title }}
+    each item in section.pages
+      if item.current
+        a(data-part="link" data-state="active" href=item.href aria-current="page") {{ item.title }}
+      else
+        a(data-part="link" href=item.href) {{ item.title }}

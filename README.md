@@ -16,6 +16,10 @@ runs from a prompt composer built on [`harness-prompt.md`](harness-prompt.md).
 - **Insights**: cost and tokens over time, most-used tools, most-failed commands, wait time, job success rates, full-text
   search and `bb import` to backfill months of history.
 
+**The user manual** is built in: open **Docs** in the app, or `/docs` on your server. It is rendered on the server
+with [Faqir UI](https://www.npmjs.com/package/@faqir-ui/template) from the templates in `server/docs/templates`; notes
+for the Faqir UI maintainers are in [FAQIR-UI-UPSTREAM-NOTES.md](FAQIR-UI-UPSTREAM-NOTES.md).
+
 It complements Claude Code's built-in Remote Control (which drives one interactive session from the Claude app): Buildyboy is
 the multi-machine overview, history, approvals hub, factory and analytics. See [SPEC.md](SPEC.md) for the full design and
 [docs/claude-code-notes.md](docs/claude-code-notes.md) for the Claude Code behaviors it relies on.
@@ -60,6 +64,7 @@ Other scripts:
 | `npm run build` | builds the PWA into `web/dist` |
 | `npm run check` | typecheck (server/shared/runner/cli/scripts and the web app) plus all Vitest tests |
 | `npm run e2e` | builds, then runs Playwright at 1280×800 and 390×844 against a temp server with replayed fixtures |
+| `npm run docs:screenshots` | rebuilds the app screenshots in the user manual from the fixtures (needs `npm run build` first) |
 | `npm run smoke:claude` | real `claude -p --plugin-dir ./plugin` runs (cheapest model, small budget) against a temp server: telemetry and remote approval |
 
 Environment variables for the server: `BUILDYBOY_PORT` (7700), `BUILDYBOY_HOST` (127.0.0.1), `BUILDYBOY_DATA` (`./data`),
@@ -80,7 +85,8 @@ blocked or changed, events spool to `~/.buildyboy/spool.jsonl` and are sent late
 ### Repository layout
 
 ```
-server/   main.ts, app.ts, db.ts, migrations/, routes/, ingest/, control/, push/, github/, jobs/, watchers.ts
+server/   main.ts, app.ts, db.ts, migrations/, routes/, ingest/, control/, push/, github/, jobs/, watchers.ts,
+          docs/ (the /docs manual: catalog.ts, engine.ts, templates/*.faqir, assets/)
 web/      Vite + React 19 + Tailwind v4 + TanStack Query + React Flow (src/pages, src/components/…)
 shared/   types.ts (events + API), harness.ts (template parser/renderer/linter), redact.ts, diff.ts
 plugin/   .claude-plugin/plugin.json, hooks/hooks.json, hooks/bb-hook.mjs, hooks/bb-cli.mjs, commands/, statusline/

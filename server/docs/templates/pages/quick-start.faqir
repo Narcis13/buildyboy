@@ -1,0 +1,232 @@
+layout "layout.faqir"
+
+block content
+  p
+    | By the end of this page you will have a password, a paired computer, a Claude Code session showing up live on the
+    strong Floor
+    | , and notifications on your phone. Plan for about fifteen minutes. You do not need to understand how anything
+    | works yet;
+    a(href="/docs/concepts") How it works
+    | explains that afterwards.
+
+  h2#before-you-start Before you start
+  p You need three things:
+  ul
+    li
+      strong A running Buildyboy server.
+      | If you are reading this page on your own server, that part is done: it lives at
+      code {{ site.url }}
+      | . If not, follow
+      a(href="/docs/server") Running the server
+      | first and come back.
+    li
+      strong A computer where you use Claude Code
+      | (Windows, WSL, macOS or Linux) with Node.js installed. The connection pieces are small Node scripts.
+    li
+      strong Your phone,
+      | if you want approvals and notifications away from your desk. This is optional but it is the point of walk mode.
+
+  h2#step-1 Step 1 · Choose your password
+  p
+    | The very first time the server starts it has no password. It prints a one-time setup link in its log, which looks
+    | like this:
+  pre
+    code
+      | [buildyboy] no password set. Open {{ site.url }}/setup?token=Xq3…  (or run: bb set-password)
+  ol
+    li
+      | Find the link. On the standard WSL install, run
+      code journalctl -u buildyboy | grep setup
+      | inside WSL. The deploy script also prints it at the end of a first deploy.
+    li Open the link in your browser. You see a small form titled with the Buildyboy logo and the words "Choose a password to finish setup".
+    li
+      | Type a password of
+      strong at least 8 characters
+      | into both boxes and press
+      strong Set password
+      | . You are logged in and taken to the Floor.
+  p
+    | Lost the link? It stays valid until a password is set, and survives restarts, so the same
+    code journalctl
+    | command finds it again. You can also set the password from the server's shell instead; see
+    a(href="/docs/commands#set-password") bb set-password
+    | .
+  include "partials/shot.faqir" (assets=site.assets file="login-phone.png" alt="The Buildyboy login form on a phone: the logo, a password field and a Log in button." caption="The login screen. Later visits ask only for the password." phone)
+  p
+    | Your login lasts 30 days per browser. After that, or after you log out, you see the same form with a single
+    strong Password
+    | field and a
+    strong Log in
+    | button.
+
+  h2#step-2 Step 2 · Put it on your phone's home screen
+  p
+    | Buildyboy is a web app that can be installed like a phone app (a "PWA"). Installing it gives you a full-screen
+    | window and, on iPhone, is
+    strong required
+    | for push notifications.
+  ul
+    li
+      strong iPhone and iPad (Safari):
+      | open
+      code {{ site.url }}
+      | , tap the Share button, then
+      strong Add to Home Screen
+      | .
+    li
+      strong Android (Chrome):
+      | open the address, tap the ⋮ menu, then
+      strong Add to Home screen
+      | or
+      strong Install app
+      | .
+  p Log in once inside the installed app; it keeps its own login.
+
+  h2#step-3 Step 3 · Pair your first computer
+  p
+    | Pairing installs a small plugin into Claude Code on that computer and gives the computer its own access key. You
+    | do it once per computer.
+  ol
+    li
+      | In Buildyboy, open
+      strong Machines
+      | (in the top bar on a computer; on a phone, use the address
+      code {{ site.url }}/machines
+      | ) and press
+      strong Pair a machine
+      | .
+    li
+      | Optionally type a name such as
+      code work-laptop
+      | , then press
+      strong Create pairing code
+      | . An 8-character code appears with a countdown. It works
+      strong once
+      | and expires after
+      strong 10 minutes
+      | .
+    li
+      | Copy the command for your system with its
+      strong Copy
+      | button and run it in a terminal on the computer you are pairing.
+  include "partials/shot.faqir" (assets=site.assets file="machines-pair-desktop.png" alt="The Pair a machine panel: a large pairing code, an expiry countdown, and one install command for Linux, macOS and WSL and one for Windows PowerShell." caption="Machines → Pair a machine. Each command already contains the code and your server's address.")
+  p The two commands look like this, with your code in place of PAIRCODE:
+  p
+    strong Linux, macOS and WSL
+  pre
+    code
+      | curl -fsSL {{ site.url }}/install.sh | bash -s -- PAIRCODE
+  p
+    strong Windows (PowerShell)
+  pre
+    code
+      | $env:BB_CODE='PAIRCODE'; irm {{ site.url }}/install.ps1 | iex
+  p
+    | The installer prints what it does and ends with "Buildyboy is installed on …". It never edits your Claude Code
+    | settings file.
+  +callout(variant="warning")
+    @content
+      p
+        strong Windows and WSL are two different computers here.
+        | Each keeps its own Claude Code settings, so if you use Claude Code in both, pair both, each with a fresh code.
+        | Give each a name (for example
+        code laptop
+        | and
+        code laptop-wsl
+        | ) so you can tell them apart; otherwise both may get the same name.
+
+  h2#step-4 Step 4 · Start Claude Code and watch it appear
+  ol
+    li
+      | Open a
+      strong new
+      | terminal on the paired computer (sessions that were already running do not have the plugin) and go to any
+      | project folder.
+    li
+      | Start Claude Code as usual with
+      code claude
+      | .
+    li
+      | Type
+      code /bb-status
+      | and press Enter. It should say
+      code Server: … (reachable)
+      | and show the name of this machine.
+    li
+      | Go back to Buildyboy's
+      strong Floor
+      | . Within a second your session appears as a card on your machine's bay.
+  include "partials/shot.faqir" (assets=site.assets file="floor-desktop.png" alt="The Floor on a desktop: two machine bays with session cards; three cards glow amber and say Waiting on you, one is blue and Idle, one is grey and Ended." caption="The Floor. Each dashed box is a computer; each card is a Claude Code session.")
+  p
+    | If nothing shows up, the
+    a(href="/docs/troubleshooting#session-missing") troubleshooting page
+    | walks through the usual causes.
+
+  h2#step-5 Step 5 · Turn on notifications
+  p Do this on your phone (inside the installed app) and on any computer where you want desktop notifications.
+  ol
+    li
+      | Open
+      strong Settings
+      | and find the
+      strong Notifications
+      | section.
+    li
+      | Check the device name (it is pre-filled, for example "Chrome on Android") and press
+      strong Enable notifications on this device
+      | . Your browser asks for permission; allow it.
+    li
+      | Press
+      strong Send test notification
+      | . A notification titled "Buildyboy test notification" should arrive within a few seconds.
+  p
+    | Notifications do not arrive?
+    a(href="/docs/notifications") Notifications
+    | covers iPhone limits, blocked permissions and the
+    strong ntfy
+    | fallback.
+
+  h2#step-6 Step 6 · Try walk mode
+  p
+    | Walk mode is the reason Buildyboy exists. Normally Claude Code asks for permission in your terminal and waits for you
+    | there. With walk mode on, the same question goes to your phone instead, and you answer it with one tap.
+  ol
+    li
+      | Open the
+      strong Inbox
+      | and switch on
+      strong Walk mode
+      | .
+    li
+      | In your Claude Code session, ask for something that needs permission, for example "create a file called
+      | hello.txt".
+    li
+      | Your phone shows a notification. Tap it, or open the Inbox, and press
+      strong Allow once
+      | . Claude continues immediately.
+    li
+      | Back at your desk, switch
+      strong Walk mode
+      | off again, so every finished turn does not wait for a reply.
+  p
+    | The full story, including what happens if you do not answer in time, is in
+    a(href="/docs/walk-mode") Walk mode
+    | .
+
+  h2#next Where to go next
+  ul
+    li
+      a(href="/docs/concepts") How it works
+      | : the handful of ideas behind everything else. Worth five minutes.
+    li
+      a(href="/docs/floor") The Floor
+      | and
+      a(href="/docs/sessions") Following a session
+      | : reading what your sessions are doing.
+    li
+      a(href="/docs/composer") The Composer
+      | and
+      a(href="/docs/jobs") Jobs
+      | : starting unattended work from your phone (needs the
+      a(href="/docs/runner") runner
+      | ).

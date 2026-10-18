@@ -1,0 +1,317 @@
+layout "layout.faqir"
+
+block content
+  p
+    | Click any station on the Floor (or any session link elsewhere) to open its page. It shows everything the session has
+    | done, how much it cost, and the controls to steer it. The address is
+    code {{ site.url }}/s/
+    | followed by the session's id, so you can bookmark or share it.
+  include "partials/shot.faqir" (assets=site.assets file="session-desktop.png" alt="A session page: the timeline on the left with a plan, a Bash command card and Claude's reply; the header card on the right with status, cost, tokens, context, duration and the control buttons." caption="A session on a computer: the timeline on the left, the header and side panels on the right.")
+  p
+    | On a computer the timeline fills the left side and the header with the side panels sits on the right. On a phone
+    | the header comes first (tap
+    strong More ▾
+    | to see all of it) and the rest sits behind tabs:
+    strong Timeline
+    | ,
+    strong Todos
+    | ,
+    strong Files
+    | ,
+    strong Git
+    | ,
+    strong Subagents
+    | ,
+    strong Progress
+    | and
+    strong Raw
+    | .
+
+  h2#header The header
+  p From top to bottom, the header card shows:
+  ul
+    li
+      strong The status
+      | and badges:
+      code paused
+      | ,
+      code walk mode
+      | ,
+      code job · running
+      | (for sessions started as a job) and
+      code stopping
+      | (a stop was requested and has not taken effect yet).
+    li
+      strong The title
+      | and a line with the project, the machine (links to Machines), the branch with its state (
+      code ↑2
+      | commits ahead,
+      code ↓1
+      | behind,
+      code 3 dirty
+      | files, or
+      code clean
+      | ) and the working folder.
+    li
+      strong A waiting banner
+      | when the session needs you, for example "Waiting on you: Bash", with an
+      strong Answer →
+      | link to the Inbox.
+    li
+      strong Badges
+      | for the model, the effort level, the permission mode and where it was started (
+      code cli
+      | ,
+      code desktop
+      | ,
+      code headless
+      | ), plus
+      code imported
+      | for sessions loaded with bb import.
+    li
+      strong Six numbers.
+      strong Cost
+      | (with lines added and removed),
+      strong Tokens in / out
+      | (with the cache hit rate),
+      strong Context
+      | (with the number of compactions),
+      strong Duration
+      | ,
+      strong Waiting on me
+      | (the total time Claude has spent waiting for you, including a wait in progress) and
+      strong Last event
+      | (with the reason once it has ended).
+
+  h2#controls The controls
+  p These buttons act on this one session. They disappear once the session has ended.
+  dl
+    dt
+      strong Walk mode
+    dd
+      | Turns walk mode on or off for this session only. Once you have set it here it wins over the machine and global
+      | settings, even if you later switch the global walk mode off. See
+      a(href="/docs/walk-mode#which-wins") which setting wins
+      | .
+    dt
+      strong Notify
+    dd
+      | On by default. Switch it off to mute every notification about this session (it still shows in the Inbox and the
+      | attention bar).
+    dt
+      strong ❚❚ Pause
+      | /
+      strong ▶ Resume
+    dd
+      | Holds the session at its next tool call until you resume it. Claude can still finish the sentence it is writing;
+      | it just cannot run anything. A pause lasts at most about 9½ minutes per tool call; after that the tool runs and
+      | the next one is held again.
+    dt
+      strong ■ Stop
+    dd
+      | Asks "Stop this session?"; press
+      strong Yes, stop
+      | to confirm. Anything the session is waiting on is released (a pending permission is denied), and at its next tool
+      | call Claude is refused and halted. If the session is a Buildyboy job, its process is also ended on the machine.
+    dt
+      strong Remote Control ↗
+    dd Only shown when Claude Code's own Remote Control was active in this session.
+    dt
+      strong Export .md
+    dd
+      | Downloads the whole session as a Markdown file named
+      code session-xxxxxxxx.md
+      | .
+  +callout(variant="warning")
+    @content
+      p
+        strong Stop and Pause act at the next tool call.
+        | A session that is idle at its prompt, or only writing text, is not affected until it runs a tool. And a new
+        | prompt typed at the terminal cancels a pending stop.
+  p Below the buttons, three rows with a Copy button each give you ready-made commands:
+  ul
+    li
+      code claude --resume <id>
+      | to continue this session in a terminal,
+    li
+      code claude --desktop --resume <id>
+      | to continue it in the Claude desktop app,
+    li
+      code cd <folder>
+      | to go to its working folder first.
+
+  h2#timeline The timeline
+  p
+    | The timeline is the session's story, newest at the bottom. It follows new activity live while you are scrolled to
+    | the bottom; scroll up and it stops following and offers
+    strong ↓ Jump to live
+    | with a count of new items. Near the top,
+    strong Load older
+    | fetches earlier history.
+  p What you will see in it:
+  ul
+    li
+      strong Your prompts
+      | , right-aligned and labelled
+      code YOU
+      | (a subagent's instructions are labelled
+      code TASK PROMPT
+      | ).
+    li
+      strong Claude's replies
+      | under
+      code CLAUDE
+      | , formatted as Markdown. Links open in a new tab; HTML is shown as text, never run.
+    li
+      strong Thinking
+      | , folded away by default.
+    li
+      strong Tool cards
+      | , one per tool call (below).
+    li
+      strong Event rows
+      | with a coloured dot: grey for information, amber for warnings, red for errors. Tap one to see its details. Two
+      | kinds are worth knowing:
+      code Decision
+      | rows record how a request was answered ("Allowed Bash by web after 12s"), and
+      code Watcher
+      | rows record Buildyboy's own warnings (stale, loop suspected, budget, context).
+  h3#tool-cards Tool cards
+  p
+    | Every card shows the tool's name, a
+    code failed
+    | ,
+    code denied
+    | ,
+    code interrupted
+    | or pulsing
+    code running
+    | label when relevant, how long it took and when. Failed and denied cards have a red border. Each kind of tool gets
+    | its own layout:
+  ul
+    li
+      strong Bash
+      | : the command, an
+      code exit 0
+      | badge (green) or a red one for failures, and the output, opened automatically when the command failed or is short.
+    li
+      strong Edit, Write, MultiEdit
+      | : the file and a coloured diff with
+      code +added −removed
+      | counts.
+    li
+      strong Read, Grep, Glob
+      | : the file or pattern and how much was read or matched, with the matches folded away.
+    li
+      strong WebSearch and WebFetch
+      | : the query or address, the HTTP status, and the results.
+    li
+      strong Agent (subagents)
+      | : the task, the subagent's type, its result, and a button to open its lane.
+    li
+      strong TodoWrite
+      | : the checklist, with ☑ done, ◐ in progress and ☐ pending items.
+    li
+      strong AskUserQuestion and ExitPlanMode
+      | : the questions with the chosen answers, or the plan.
+  h3#lanes Lanes and subagents
+  p
+    | Above the timeline,
+    strong Main
+    | shows the main conversation. When Claude starts subagents, each gets a chip such as
+    code ✣ general-purpose · 4
+    | that shows only that subagent's work, and
+    strong All
+    | shows everything interleaved.
+
+  h2#side-panels The side panels
+  dl
+    dt
+      strong Todos
+    dd Claude's current to-do list, with how many items are done.
+    dt
+      strong Files
+    dd Every file the session changed, with a bar showing how often, and the added and removed lines. Tap a file to see each change as a diff.
+    dt
+      strong Git
+    dd
+      | Pull requests (with review and check status, if you added a GitHub token in
+      a(href="/docs/settings#github") Settings
+      | ), commits made during the session, and snapshots of the branch state.
+    dt
+      strong Subagents
+    dd Each subagent with its type, status, duration and a link to its lane.
+    dt
+      strong Progress
+    dd
+      | The latest
+      code PROGRESS.md
+      | the session wrote. Harness runs keep this file up to date; the "Next" and "Decisions" sections are highlighted.
+      | It is captured at the end of each turn, when it changed.
+    dt
+      strong Raw
+    dd The last 500 raw hook events, for when you want to see exactly what was recorded.
+
+  h2#compose Sending a message
+  p
+    | The box at the bottom lets you talk to a running session from anywhere. Type in
+    strong Message Claude…
+    | and press
+    strong Send
+    | (or
+    kbd Ctrl
+    | +
+    kbd Enter
+    | ;
+    kbd Cmd
+    | +
+    kbd Enter
+    | on a Mac). The quick buttons
+    strong continue
+    | ,
+    strong run the tests
+    | ,
+    strong commit and push
+    | and
+    strong stop here
+    | send their text immediately, with no confirmation.
+  p The switch on the left chooses when the message is delivered:
+  ul
+    li
+      strong After turn
+      | (the default): when Claude finishes its current turn, your message becomes its next instruction and it carries on.
+    li
+      strong Now
+      | : Claude sees the message at its next tool call, as an extra note ("Message from the user (sent via Buildyboy)"),
+      | without waiting for the turn to end.
+  p
+    | Queued messages show above the box with a
+    strong Cancel
+    | button until they are delivered;
+    code ▸ N delivered
+    | lists the last few that were.
+  +callout(variant="warning")
+    @content
+      p
+        strong A message does not wake up an idle session.
+        | If the session is sitting at its prompt, an "After turn" message waits for the end of the next turn and a "Now"
+        | message for the next tool call. The exception is a session holding at the end of a turn in walk mode: then your
+        | message answers it straight away. Also,
+        strong stop here
+        | is just a message to Claude; to actually stop, use
+        strong ■ Stop
+        | .
+  p
+    | Once a session has ended the box is replaced by a note: resume it with
+    code claude --resume
+    | to continue.
+
+  h2#replay Replay
+  p
+    | Press
+    strong ⟲ Replay
+    | to watch the session again. A bar appears with a play button, a time counter and a slider; on a computer a station
+    | card re-enacts the lamp, the activity line and the belt. Play advances one event at a time; drag the slider to jump.
+    | Replay covers the items already loaded in the current lane.
+    strong Exit replay
+    | returns to the live view.

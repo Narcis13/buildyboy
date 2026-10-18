@@ -1,0 +1,101 @@
+layout "layout.faqir"
+
+block content
+  p
+    | Buildyboy is a dashboard you host yourself for
+    strong Claude Code
+    | , the AI coding assistant that runs in your terminal. Every Claude Code session on every computer you pair
+    | with Buildyboy reports to one server, so you can see what all of them are doing in one place, answer them from
+    | your phone, and launch new unattended runs without sitting at your desk.
+  p
+    | You do not need to change how you use Claude Code. Once a machine is paired, you keep typing
+    code claude
+    | in your terminal exactly as before; Buildyboy watches quietly in the background and only steps in when you ask
+    | it to.
+
+  +callout(variant="info")
+    @content
+      p
+        strong New here?
+        | Start with the
+        a(href="/docs/quick-start") Quick start
+        | . It takes you from a fresh server to your first session on the screen in about fifteen minutes, and
+        | explains each step as you go.
+
+  h2#what-it-does What you can do with it
+  div(data-ui="grid" data-cols="1" data-cols-md="2" data-gap="4")
+    +card(title="Watch every session at once")
+      @body
+        p
+          | The
+          a(href="/docs/floor") Floor
+          | shows each computer as a bay and each session as a station with a status lamp, its cost and the tools it
+          | is using right now.
+    +card(title="Approve from your phone")
+      @body
+        p
+          | With
+          a(href="/docs/walk-mode") walk mode
+          | on, permission prompts, questions and plans come to your phone as notifications. One tap allows or denies.
+    +card(title="Steer a running session")
+      @body
+        p
+          | Open any
+          a(href="/docs/sessions") session
+          | to read its full timeline, then send it a message, pause it or stop it.
+    +card(title="Run work while you are away")
+      @body
+        p
+          | Write a task in the
+          a(href="/docs/composer") Composer
+          | and launch it as a
+          a(href="/docs/jobs") job
+          | on any machine, with a budget and a time limit, now or on a schedule.
+    +card(title="See where the money goes")
+      @body
+        p
+          a(href="/docs/insights") Insights
+          | charts cost, tokens and time per project, model and machine, and lists the commands that fail most.
+    +card(title="Find anything later")
+      @body
+        p
+          | Full-text
+          a(href="/docs/insights#search") search
+          | covers every message, command and prompt, and old history can be imported.
+
+  h2#how-to-read How to read this manual
+  p The pages are in reading order. If you are setting Buildyboy up for the first time, read the first three pages, then come back to the rest when you need them. Each page ends with a link to the next one.
+  ul
+    li
+      strong Getting started
+      | explains what Buildyboy is and gets it running.
+    li
+      strong Everyday use
+      | covers the screens you will use daily: the Floor, sessions, the Inbox and walk mode.
+    li
+      strong The factory
+      | is about writing tasks for Claude and running them unattended.
+    li
+      strong Your setup
+      | covers connecting machines and every setting.
+    li
+      strong Reference
+      | holds the command lists, server administration, security notes, troubleshooting and the glossary.
+  p
+    | Words in
+    code this style
+    | are things you type or see on screen exactly as written. Buttons and labels are written the way the app shows
+    | them, for example
+    strong Pair a machine
+    | . If a word is new to you, the
+    a(href="/docs/glossary") glossary
+    | explains it.
+
+  each section in sections
+    h2(id=section.id) {{ section.title }}
+    div(data-ui="grid" data-cols="1" data-cols-md="2" data-gap="4")
+      each item in section.pages
+        a(data-docs="card-link" href=item.href)
+          +card(title=item.title variant="outlined")
+            @body
+              p(data-ui="text" data-variant="muted") {{ item.summary }}

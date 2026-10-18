@@ -1,0 +1,284 @@
+layout "layout.faqir"
+
+block content
+  p
+    | When Claude works alone for an hour, the instruction you gave it at the start is all it has. The
+    strong Composer
+    | helps you write that instruction well: you fill in a few fields, it builds a complete prompt from a proven template,
+    | warns you about what is missing, and keeps your prompts in a library so the good ones can be reused and launched
+    | again.
+  include "partials/shot.faqir" (assets=site.assets file="composer-desktop.png" alt="The Composer: Spec-ify, Template and Task sections on the left; the Preview with a lint warning and the rendered prompt on the right." caption="The Composer. Fill in the left side; the right side shows the finished prompt and any warnings.")
+  p
+    | On a computer the form and the preview sit side by side. On a phone, switch between them with
+    strong Edit
+    | and
+    strong Preview
+    | (the preview tab shows the number of warnings, such as
+    code Preview (2 ⚠)
+    | ).
+
+  h2#harness The harness prompt
+  p
+    | The built-in template is called
+    strong harness
+    | . It starts with a short
+    strong Task
+    | section of fields that you fill in, followed by fixed guidance Claude follows on every run: how to work, when to use
+    | subagents, how to check its work visually, how to use git, what to do when you are away, guardrails, and how to keep
+    | a
+    code PROGRESS.md
+    | file with Done, Decisions, Tried and failed, Git and Next sections. That file is what you see in a session's
+    a(href="/docs/sessions#side-panels") Progress panel
+    | .
+  p
+    | The template is the file
+    code harness-prompt.md
+    | on the server. Editing that file updates the Composer within a few seconds; no restart needed.
+
+  h2#fields The fields
+  p None of the fields is strictly required, but the better you fill them in, the better an unattended run goes.
+  dl
+    dt
+      strong Goal
+    dd
+      | What you want, in one or two sentences. Be concrete: "Add CSV export to the reports page" beats "improve
+      | reports".
+    dt
+      strong Done when
+    dd
+      | A list of checks that prove the work is finished, one per row. Press Enter for a new row; Backspace on an empty
+      | row removes it; pasting a list splits it into rows. The best checks are commands Claude can run, written in
+      | backticks, for example
+      code `npm test` passes
+      | or
+      code `curl localhost:3000/health` returns 200
+      | . These same commands can later be re-run by Buildyboy to
+      a(href="/docs/jobs#verify") verify the job
+      | .
+    dt
+      strong Scope
+    dd Files or folders Claude may change. Everything else should be treated as read-only.
+    dt
+      strong Limit
+    dd
+      | How long to keep going, for example "4 hours" or "30 iterations". This is an instruction to Claude; to enforce a
+      | hard limit, set
+      strong Limit (minutes)
+      | when you
+      a(href="/docs/jobs#launch") launch the job
+      | .
+    dt
+      strong Subagents
+    dd How many helper agents Claude may run in parallel. Default 5; 0 to work alone.
+    dt
+      strong Branch
+    dd
+      strong new
+      | (with an optional name such as
+      code feat/csv-export
+      | ) to work on a fresh branch, or
+      strong current
+      | to stay on the branch that is checked out.
+    dt
+      strong PR
+    dd Whether to open a pull request at the end. Needs Branch set to new.
+    dt
+      strong Unattended
+    dd
+      | Yes tells Claude nobody will answer questions, so it should pick safe defaults and write them down under Decisions.
+      | It does not switch walk mode on by itself.
+
+  h2#warnings Warnings
+  p
+    | The preview lists problems as you type, each starting with ⚠. They are advice, not errors: you can still save and
+    | launch.
+  dl
+    dt "Done when is empty."
+    dd Add at least one check, so Claude knows when to stop.
+    dt "Done when has no runnable command."
+    dd
+      | None of the checks looks like something Claude can run. Add one in backticks, such as
+      code `npm test` passes
+      | .
+    dt "Unattended: yes without a Limit."
+    dd An unattended run with no limit may never end. Add a time or iteration limit.
+    dt "PR: yes needs a new branch."
+    dd Set Branch to new.
+    dt "Subagents must be a whole number."
+    dd Type a number such as 0, 3 or 5.
+    dt "Leftover placeholder(s) in the prompt"
+    dd
+      | You typed something in angle brackets, like
+      code <file name>
+      | , that looks like an unfilled blank. Replace it with the real value (text in backticks is ignored).
+
+  h2#preview Preview and output
+  p
+    | The preview has two tabs:
+    strong Rendered
+    | , easy to read, and
+    strong Raw Markdown
+    | , exactly what Claude will receive. Under it,
+    strong Use it
+    | offers three ways to use the prompt:
+  ul
+    li
+      strong Launch as a job
+      | : saves the prompt (if it changed) and opens the job form with it selected. This is the usual way; see
+      a(href="/docs/jobs#launch") Jobs
+      | .
+    li
+      strong Copy Markdown
+      | or
+      strong Download TASK.md
+      | : take the prompt elsewhere.
+    li
+      | Ready-made
+      strong Bash
+      | and
+      strong PowerShell
+      | commands that run the downloaded
+      code TASK.md
+      | with
+      code claude -p
+      | by hand, using the
+      strong Permission mode
+      | and
+      strong Max budget (USD)
+      | chosen just above them.
+  +callout(variant="muted")
+    @content
+      p
+        | The Permission mode and Max budget next to the copy buttons only change those copy-and-paste commands. A job
+        | launched with
+        strong Launch as a job
+        | takes its own settings from the job form.
+
+  h2#spec Attaching a spec
+  p
+    | For bigger tasks, give Claude a specification. Under
+    strong Attach spec
+    | choose one of:
+  ul
+    li
+      strong Paste markdown
+      | : paste the text, or use
+      strong Load from a .md file
+      | . It is added at the end of the prompt under a "Spec" heading.
+    li
+      strong File in the repo
+      | : type a path such as
+      code docs/spec.md
+      | . The prompt then just tells Claude to read that file before starting.
+  p Only the tab you have selected is used.
+
+  h2#spec-ify Spec-ify: from a rough idea to a draft
+  p
+    strong Spec-ify (optional)
+    | turns a one-line idea into a Goal, a Done when list, a Scope and a draft spec. Type the idea, for example "add
+    | CSV export to the reports page, streaming, with a test for 1M rows", pick a
+    strong Machine
+    | and a
+    strong Repository
+    | , and press
+    strong Spec-ify
+    | .
+  p
+    | Behind the scenes this starts a real job on that machine: an Opus run with a $1 budget that reads the repository
+    | and drafts the fields. It needs the machine's
+    a(href="/docs/runner") runner
+    | to be online, and it appears in your Jobs list as "Spec-ify: …". When it finishes, the Composer fills in Goal, Done
+    | when, Scope and the spec ("Spec-ify filled Goal, Done when, Scope and the spec. Review them, then save.").
+  +callout(variant="warning")
+    @content
+      p
+        | Spec-ify
+        strong replaces
+        | whatever was in those fields, and only fills them in while the Composer stays open. If you navigate away, the
+        | draft is still in the job's result on its job page, but you will have to copy it over yourself. Nothing is saved
+        | until you save.
+
+  h2#library Saving and the library
+  p
+    | Give the prompt a
+    strong Title
+    | (it defaults to the start of the Goal) and optional
+    strong Tags
+    | (comma separated, for example "backend, nightly"), then press
+    strong Save to library
+    | .
+  ul
+    li
+      strong Save new version
+      | stores the current state as the next version (
+      code v2
+      | ,
+      code v3
+      | …). Every save makes a version, even without changes.
+    li
+      strong Save as new prompt
+      | makes an independent copy.
+    li
+      strong History
+      | compares any two versions as a diff (choose
+      strong From
+      | and
+      strong To
+      | ) and can load an old version into the editor with
+      strong Load vN into the editor
+      | . Loading changes nothing until you save.
+  p
+    | The
+    strong Library
+    | tab lists all saved prompts with a search box and tag filters. Each card shows the version, the template, and how
+    | the prompt has performed as a job: number of runs, success rate, average cost and average duration. Its buttons are
+    strong Open
+    | ,
+    strong Duplicate
+    | ,
+    strong History
+    | and
+    strong Delete
+    | (press
+    strong Confirm delete
+    | to really delete).
+  p
+    | Start over at any time with
+    strong New prompt
+    | at the top.
+
+  h2#templates Your own templates
+  p
+    | Besides the harness, you can add templates of your own, for example a short bug-fix prompt. Under
+    strong Template
+    | press
+    strong + Add template
+    | , give it a
+    strong Template name
+    | , and paste or upload the Markdown (.md, .markdown or .txt). Every
+    code <placeholder>
+    | in it becomes a field in the Composer. Then press
+    strong Add template
+    | .
+  ul
+    li Adding a template with an existing name replaces it.
+    li The name harness is reserved; to change the built-in template, edit harness-prompt.md on the server.
+    li
+      | A template with no
+      code <placeholder>
+      | is refused.
+    li
+      strong Remove
+      | deletes an uploaded template, unless saved prompts still use it.
+  p Spec-ify fills the Goal, Done when and Scope fields, so it is meant for the harness template.
+
+  h2#tips Tips for prompts that work unattended
+  ul
+    li Give one goal per prompt. Two unrelated goals make it hard to say when it is done.
+    li
+      | Make every Done when check runnable and observable:
+      code `npm test` passes
+      | is checkable; "the code is clean" is not.
+    li Keep Scope tight. A small scope keeps the diff reviewable.
+    li Always pair Unattended with a Limit, and set a budget on the job.
+    li Read the Raw Markdown once before launching. It is exactly what Claude will read.

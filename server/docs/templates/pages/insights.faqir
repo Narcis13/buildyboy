@@ -1,0 +1,152 @@
+layout "layout.faqir"
+
+block content
+  p
+    | Buildyboy keeps everything your sessions do, so it can answer questions about the past: what did last month cost,
+    | which commands keep failing, how long do I keep Claude waiting, which prompts succeed as jobs? This page covers
+    | the
+    strong Insights
+    | charts, full-text
+    strong Search
+    | , and
+    strong importing
+    | history from before you paired a machine.
+
+  h2#insights Insights
+  p
+    | Open
+    strong Insights
+    | in the top bar (the page is titled Analytics; on a phone, go to
+    code {{ site.url }}/analytics
+    | ). Choose
+    strong 7 days
+    | ,
+    strong 30 days
+    | (the default) or
+    strong 90 days
+    | at the top.
+  include "partials/shot.faqir" (assets=site.assets file="insights-desktop.png" alt="The Insights page: six summary tiles (cost, active time, lines, tokens, cache hit, waiting on you) above a cost chart." caption="Insights: summary tiles first, then charts.")
+  h3#tiles The summary tiles
+  dl
+    dt Cost
+    dd Total spend, and how many sessions it came from.
+    dt Active time
+    dd The sum of session durations, from start to end (or last activity). Idle time inside a session counts.
+    dt Lines
+    dd Lines added and removed by Claude's edits.
+    dt Tokens out
+    dd Tokens Claude wrote, with the tokens it read underneath.
+    dt Cache hit
+    dd
+      | How much of the input came from Claude's prompt cache. Higher is cheaper: cached input costs a fraction of
+      | fresh input.
+    dt Waiting on you
+    dd Time sessions spent waiting for a permission answer or idle at the prompt.
+  h3#charts The charts
+  dl
+    dt
+      strong Cost
+    dd
+      | Spend over time, split by
+      strong Project
+      | ,
+      strong Model
+      | or
+      strong Machine
+      | , per
+      strong Day
+      | ,
+      strong Week
+      | or
+      strong Month
+      | . Each session's cost counts on the day it started.
+    dt
+      strong Tokens
+    dd Input, output and cache tokens per day, with the cache hit rate.
+    dt
+      strong Sessions per day
+      | ,
+      strong Active time
+      | ,
+      strong Lines added and removed
+    dd Your activity over time.
+    dt
+      strong Most-used tools
+    dd The 12 tools Claude used most, with how many calls failed.
+    dt
+      strong Most-failed commands
+    dd
+      | The 10 shell commands that failed most often. A command that fails again and again is usually a missing tool, a
+      | wrong path or a test Claude cannot fix, and is worth a look.
+    dt
+      strong Permission wait
+    dd How long sessions waited for you, how many requests were answered, and how fast you answered on average.
+    dt
+      strong Job success by prompt
+    dd For each saved prompt run as a job: its success rate, number of runs, and average cost and duration. Jobs started from a pasted prompt are grouped as Ad-hoc jobs.
+    dt
+      strong Rate limits
+    dd
+      | How much of Claude's 5-hour and 7-day usage windows you used over time. Needs the
+      a(href="/docs/settings#statusline") statusline bridge
+      | .
+  +callout(variant="muted")
+    @content
+      p
+        | Days in Insights are UTC days, so near midnight a session can land on the day before or after your local date.
+
+  h2#search Search
+  p
+    | Press
+    strong Search
+    | in the top bar (or go to
+    code {{ site.url }}/search
+    | ) and type. Results appear as you type, up to 50, best match first. Each shows what it is (
+    code session
+    | ,
+    code message
+    | ,
+    code command
+    | or
+    code prompt
+    | ) and a snippet with your words highlighted. Click a result to jump straight to that moment in the session's
+    | timeline; a saved prompt opens in the Composer.
+  include "partials/shot.faqir" (assets=site.assets file="search-desktop.png" alt="The Search page with a query and a list of matches, each with a kind badge and a highlighted snippet." caption="Search results with highlighted matches.")
+  h3#search-what What is searched
+  ul
+    li everything you and Claude wrote in sessions,
+    li every shell command Claude ran,
+    li your saved Composer prompts,
+    li sessions by their id and folder.
+  h3#search-how How to search well
+  ul
+    li
+      | Every word must match, and each word also matches longer words starting with it:
+      code rate lim
+      | finds "rate limiting".
+    li Case and punctuation do not matter.
+    li
+      | There are no special operators: quotes, OR, NOT and the like are treated as plain words. Add another word to narrow
+      | the results instead.
+    li Session names are not searched; search for a word from the session's first prompt instead.
+
+  h2#import Importing old history
+  p
+    | Claude Code keeps a transcript of every session on the machine where it ran, in
+    code ~/.claude/projects
+    | . The import command sends those transcripts to Buildyboy, so sessions from before you paired the machine, or from
+    | places the plugin does not see live (such as some Claude desktop app sessions), show up too.
+  p On the machine, from a copy of the Buildyboy code (see Setting up the runner for how to get one):
+  pre
+    code
+      | node cli/bb.ts import                # everything
+      | node cli/bb.ts import --since 30     # only transcripts changed in the last 30 days
+  p
+    | It shows a progress bar and ends with "imported N transcripts (X MB)". Imported sessions appear as ended, with an
+    code imported
+    | badge, and your redaction rules are applied to them. Running it again does not create duplicate sessions: a
+    | session that is already there is matched by its id.
+  p
+    | The machine must be paired first. To read transcripts from another folder, add
+    code --dir
+    | followed by the folder.

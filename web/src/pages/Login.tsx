@@ -64,6 +64,12 @@ export function Login({ setup = false }: { setup?: boolean }) {
             {setup ? 'Set password' : 'Log in'}
           </Button>
         </form>
+        <p className="mt-4 text-center text-sm text-muted">
+          New here?{' '}
+          <a href={setup ? '/docs/quick-start' : '/docs'} className="text-accent underline">
+            Read the manual
+          </a>
+        </p>
       </Card>
     </div>
   );

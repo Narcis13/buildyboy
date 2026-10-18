@@ -1,0 +1,367 @@
+/* The manual's own layer over the faqir slate theme: the frame (bar, contents, article, "On this page") and a few
+   tokens moved to Buildyboy's palette. Faqir's rules apply here too: attribute selectors, tokens, logical properties. */
+
+:root[data-theme="dark"] {
+  --color-bg: #0a1626;
+  --color-bg-subtle: #0f2036;
+  --color-bg-muted: #163052;
+  --color-border: #1f3d63;
+  --color-border-strong: #2c5482;
+  --color-fg: #dceaf7;
+  --color-fg-muted: #9db4cc;
+  --color-fg-subtle: #8aa4c0;
+  --color-primary: #5cc8ff;
+  --color-primary-hover: #7dd4ff;
+  --color-primary-active: #45b4ec;
+  --color-primary-fg: #04121f;
+  --color-primary-subtle: #12314f;
+  --color-ring: #5cc8ff;
+  --docs-grid: rgba(92, 200, 255, 0.06);
+}
+
+:root[data-theme="light"] {
+  --color-primary: #0b6fb8;
+  --color-primary-hover: #095f9e;
+  --color-primary-active: #084f84;
+  --color-primary-fg: #ffffff;
+  --color-ring: #0b6fb8;
+  --docs-grid: rgba(30, 90, 160, 0.07);
+}
+
+:root {
+  --docs-bar-height: 3.5rem;
+  --docs-side-width: 16rem;
+  --docs-toc-width: 13rem;
+  scroll-padding-block-start: calc(var(--docs-bar-height) + var(--space-4));
+}
+
+body {
+  background-color: var(--color-bg);
+  background-image:
+    linear-gradient(var(--docs-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--docs-grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-attachment: fixed;
+}
+
+/* ── Skip link ── */
+[data-docs="skip"] {
+  position: absolute;
+  inset-inline-start: var(--space-4);
+  inset-block-start: calc(-1 * var(--space-16));
+  z-index: var(--z-toast, 60);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-primary);
+  color: var(--color-primary-fg);
+  border-radius: var(--radius-md);
+}
+[data-docs="skip"]:focus {
+  inset-block-start: var(--space-2);
+}
+
+/* ── Top bar ── */
+[data-docs="bar"] {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--z-sticky, 20);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-block-size: var(--docs-bar-height);
+  padding-inline: var(--space-4);
+  background: color-mix(in oklab, var(--color-bg-subtle) 92%, transparent);
+  border-block-end: var(--border-width-sm, 1px) solid var(--color-border);
+  backdrop-filter: blur(8px);
+}
+[data-docs="brand"] {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-fg);
+  text-decoration: none;
+}
+[data-docs="wordmark"] {
+  font-weight: var(--weight-semibold, 600);
+  letter-spacing: 0.18em;
+}
+[data-docs="brand-sub"] {
+  padding-inline: var(--space-2);
+  border-inline-start: var(--border-width-sm, 1px) solid var(--color-border-strong);
+  color: var(--color-fg-muted);
+  font-size: var(--text-sm);
+}
+
+/* ── Frame: contents | article | on this page ── */
+[data-docs="shell"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  max-inline-size: 90rem;
+  margin-inline: auto;
+}
+[data-docs="side"],
+[data-docs="toc"] {
+  display: none;
+}
+#main {
+  min-inline-size: 0;
+  padding: var(--space-4) var(--space-4) var(--space-16);
+}
+[data-docs="mobile-nav"] {
+  margin-block-end: var(--space-6);
+}
+
+@media (min-width: 64rem) {
+  [data-docs="shell"] {
+    grid-template-columns: var(--docs-side-width) minmax(0, 1fr);
+  }
+  [data-docs="side"] {
+    display: block;
+    position: sticky;
+    inset-block-start: var(--docs-bar-height);
+    align-self: start;
+    max-block-size: calc(100dvh - var(--docs-bar-height));
+    overflow-y: auto;
+    padding: var(--space-6) var(--space-3) var(--space-10) var(--space-4);
+    border-inline-end: var(--border-width-sm, 1px) solid var(--color-border);
+  }
+  [data-docs="mobile-nav"] {
+    display: none;
+  }
+  #main {
+    padding: var(--space-8) var(--space-10) var(--space-20);
+  }
+}
+
+@media (min-width: 80rem) {
+  [data-docs="shell"] {
+    grid-template-columns: var(--docs-side-width) minmax(0, 1fr) var(--docs-toc-width);
+  }
+  [data-docs="toc"] {
+    display: block;
+    position: sticky;
+    inset-block-start: var(--docs-bar-height);
+    align-self: start;
+    max-block-size: calc(100dvh - var(--docs-bar-height));
+    overflow-y: auto;
+    padding: var(--space-8) var(--space-4) var(--space-10) 0;
+    font-size: var(--text-sm);
+  }
+  [data-docs="toc"] nav {
+    display: grid;
+    gap: var(--space-1);
+  }
+  [data-docs="toc"] a {
+    padding-block: var(--space-1);
+    padding-inline-start: var(--space-3);
+    border-inline-start: 2px solid var(--color-border);
+    color: var(--color-fg-muted);
+    text-decoration: none;
+  }
+  [data-docs="toc"] a:hover {
+    color: var(--color-fg);
+  }
+  [data-docs="toc"] a[aria-current] {
+    border-inline-start-color: var(--color-primary);
+    color: var(--color-fg);
+  }
+}
+
+/* ── Contents ── */
+[data-docs="nav-group"] {
+  margin-block: var(--space-5) var(--space-1);
+  padding-inline: var(--space-3);
+  color: var(--color-fg-subtle);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold, 600);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+[data-docs="nav-group"]:first-child {
+  margin-block-start: 0;
+}
+[data-docs="side"] [data-ui="nav"] [data-part="link"],
+[data-docs="mobile-nav"] [data-ui="nav"] [data-part="link"] {
+  font-size: var(--text-sm);
+}
+
+/* ── Article ── */
+[data-docs="article"] {
+  max-inline-size: 48rem;
+}
+[data-docs="article"] h2 {
+  font-size: var(--text-2xl);
+}
+[data-docs="article"] h3 {
+  font-size: var(--text-xl);
+}
+[data-docs="page-head"] {
+  margin-block-end: var(--space-8);
+  padding-block-end: var(--space-6);
+  border-block-end: var(--border-width-sm, 1px) solid var(--color-border);
+}
+[data-docs="page-head"] h1 {
+  margin-block: var(--space-1) var(--space-3);
+}
+[data-docs="article"] h2 {
+  margin-block-start: var(--space-12);
+  padding-block-start: var(--space-2);
+}
+[data-docs="article"] h3 {
+  margin-block-start: var(--space-8);
+}
+[data-docs="article"] h2 + *,
+[data-docs="article"] h3 + * {
+  margin-block-start: var(--space-3);
+}
+[data-docs="anchor"] {
+  margin-inline-start: var(--space-2);
+  color: var(--color-fg-subtle);
+  text-decoration: none;
+  opacity: 0;
+}
+h2:hover > [data-docs="anchor"],
+h3:hover > [data-docs="anchor"],
+[data-docs="anchor"]:focus-visible {
+  opacity: 1;
+}
+
+/* Screenshots */
+[data-docs="shot"] {
+  margin-inline: 0;
+}
+[data-docs="shot"] img {
+  display: block;
+  inline-size: 100%;
+  block-size: auto;
+  border: var(--border-width-sm, 1px) solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+[data-docs="shot"][data-docs-shape="phone"] img {
+  max-inline-size: 22rem;
+  margin-inline: auto;
+}
+[data-docs="shot"] figcaption {
+  margin-block-start: var(--space-2);
+  color: var(--color-fg-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+/* Code blocks get a copy button (docs.js) */
+[data-docs="code"] {
+  position: relative;
+}
+[data-docs="code"] pre {
+  overflow-x: auto;
+  padding-inline-end: var(--space-16);
+}
+[data-docs="copy"] {
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline-end: var(--space-2);
+}
+
+/* Tables scroll inside themselves on a phone */
+[data-docs="article"] [data-ui="table"] {
+  overflow-x: auto;
+}
+
+/* Home page cards are whole-card links */
+[data-docs="article"] [data-docs="card-link"] {
+  color: inherit;
+  text-decoration: none;
+  display: block;
+  block-size: 100%;
+}
+[data-docs="card-link"] [data-ui="card"] {
+  block-size: 100%;
+  transition: border-color var(--duration-fast) var(--ease-default);
+}
+[data-docs="card-link"]:hover [data-ui="card"],
+[data-docs="card-link"]:focus-visible [data-ui="card"] {
+  border-color: var(--color-primary);
+}
+
+/* ── Previous / next ── */
+[data-docs="pager"] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  margin-block-start: var(--space-16);
+  padding-block-start: var(--space-6);
+  border-block-start: var(--border-width-sm, 1px) solid var(--color-border);
+}
+[data-docs="pager"] a {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width-sm, 1px) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-fg);
+  text-decoration: none;
+}
+[data-docs="pager"] a:hover {
+  border-color: var(--color-primary);
+}
+[data-docs="pager-next"] {
+  grid-column: 2;
+  text-align: end;
+}
+[data-docs="pager-label"] {
+  color: var(--color-fg-muted);
+  font-size: var(--text-sm);
+}
+[data-docs="pager-title"] {
+  font-weight: var(--weight-semibold, 600);
+}
+
+[data-docs="foot"] {
+  max-inline-size: 48rem;
+  margin-block-start: var(--space-10);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-docs="card-link"] [data-ui="card"] {
+    transition: none;
+  }
+}
+
+/* A card call writes its optional header parts even when they are empty; an empty one should take no room. */
+[data-ui="card"] [data-part="description"]:empty,
+[data-ui="card"] [data-part="footer"]:empty,
+[data-ui="callout"] [data-part="icon"]:empty {
+  display: none;
+}
+
+/* The bar stays one line on a phone: the "Manual" label joins from the sm tier up. */
+[data-docs="bar"] [data-ui="cluster"] {
+  flex-wrap: nowrap;
+}
+[data-docs="brand-sub"] {
+  display: none;
+}
+@media (min-width: 40rem) {
+  [data-docs="brand-sub"] {
+    display: inline;
+  }
+}
+
+/* Definition lists: prose styles ul/ol/table but not dl, and the manual uses them for every list of buttons and settings. */
+[data-docs="article"] dl {
+  margin-block: var(--space-4);
+}
+[data-docs="article"] dt {
+  margin-block-start: var(--space-4);
+  font-weight: var(--weight-semibold, 600);
+}
+[data-docs="article"] dt:first-child {
+  margin-block-start: 0;
+}
+[data-docs="article"] dd {
+  margin-block: var(--space-1) 0;
+  margin-inline-start: 0;
+  padding-inline-start: var(--space-4);
+  border-inline-start: 2px solid var(--color-border);
+  color: var(--color-fg);
+}

@@ -1,0 +1,242 @@
+layout "layout.faqir"
+
+block content
+  p
+    | Find your symptom below and open it. Most problems come down to one of three things: the machine cannot reach the
+    | server, the session was started without the plugin, or walk mode is not on where you think it is. Two quick checks
+    | answer most questions:
+  ul
+    li
+      code /bb-status
+      | inside a Claude Code session, which tests that session's connection;
+    li
+      code node cli/bb.ts doctor
+      | on the machine, from a copy of the code, which tests the pairing.
+
+  h2#session-missing A session does not appear on the Floor
+  +collapsible
+    @trigger It was started before the machine was paired, or before the installer finished
+    @content
+      p
+        | Claude Code loads plugins when a session starts. Quit and start a new session (or resume the old one with
+        code claude --resume
+        | ). Then type
+        code /bb-status
+        | .
+  +collapsible
+    @trigger /bb-status says "Unknown command"
+    @content
+      p
+        | The plugin is not installed on this machine, or not in this environment. Remember that Windows and WSL are
+        | separate: pairing Windows does nothing for WSL. Run the installer again in the environment where you use
+        | Claude Code.
+  +collapsible
+    @trigger /bb-status says the server is NOT reachable
+    @content
+      p
+        | The machine cannot reach your server's address. Open
+        code {{ site.url }}/api/health
+        | in a browser on that machine. If that fails too, it is a network or DNS problem, not a Buildyboy one. Nothing is
+        | lost meanwhile: events are kept in
+        code ~/.buildyboy/spool.jsonl
+        | and sent when the connection is back.
+  +collapsible
+    @trigger /bb-status works, but I still do not see the session
+    @content
+      p
+        | Check the Floor's filters: switch to
+        strong All
+        | and set
+        strong All projects
+        | and
+        strong All machines
+        | . Also check that this machine is not revoked on the Machines page.
+  +collapsible
+    @trigger The session was started from the Claude desktop app
+    @content
+      p
+        | Some desktop sessions do not run plugins live. They still reach Buildyboy later through
+        a(href="/docs/insights#import") bb import
+        | .
+  +collapsible
+    @trigger I see a session called install-test-…
+    @content
+      p That is the installer's test event, sent to prove the connection works. It can be ignored.
+
+  h2#walk-mode-issues Walk mode
+  +collapsible
+    @trigger Walk mode is on, but permission prompts still appear in the terminal
+    @content
+      p
+        | Check that walk mode really applies to that session: its header should show the
+        code walk mode
+        | badge. A machine set to
+        strong Off
+        | , or a session switched off with
+        code /bb-walk off
+        | , wins over the global switch. Also, if the server is unreachable, the plugin steps aside and the terminal takes
+        | over (see
+        code /bb-status
+        | ).
+  +collapsible
+    @trigger I turned walk mode off, but one session still waits at the end of every turn
+    @content
+      p
+        | That session has its own walk mode setting, which wins over the global switch. Switch it off in its header, or
+        | type
+        code /bb-walk off
+        | in it.
+  +collapsible
+    @trigger I answered a card and got "Already answered (probably at your desk)"
+    @content
+      p
+        | The request was no longer waiting: it was answered at the terminal, it waited longer than about 9½ minutes and
+        | timed out, or the session was stopped. If Claude is now at its prompt, send your instruction from the session
+        | page; it is delivered at the next turn.
+  +collapsible
+    @trigger I pressed Stop but the session keeps going
+    @content
+      p
+        | Stop takes effect at the session's next tool call. A session that is idle, or writing a long answer, stops when
+        | it next tries to use a tool. A new prompt typed at the terminal cancels the stop. For a job, Stop also ends the
+        | process on the machine.
+  +collapsible
+    @trigger I sent a message, but nothing happens
+    @content
+      p
+        | A message does not wake up an idle session. "After turn" messages are delivered when the current turn ends, and
+        | "Now" messages at the next tool call. If the session is idle at its prompt, type in the terminal or use
+        | walk mode, where an idle-at-the-end-of-turn session takes your message straight away.
+
+  h2#no-notifications Notifications
+  +collapsible
+    @trigger Send test notification says "Sent to 0 device(s)"
+    @content
+      p
+        | No device is switched on. On the device you want to notify, press
+        strong Enable notifications on this device
+        | in Settings.
+  +collapsible
+    @trigger The status says "blocked"
+    @content
+      p
+        | The browser was told not to allow notifications from this site. Open the browser's site settings for
+        code {{ site.url }}
+        | , allow notifications, reload, and enable them again.
+  +collapsible
+    @trigger On iPhone it says "not supported here"
+    @content
+      p
+        | Web Push on iPhone only works in the app added to the home screen. Open Buildyboy from the home screen icon,
+        | log in there, and enable notifications. Or use ntfy.
+  +collapsible
+    @trigger The test works, but real notifications do not come
+    @content
+      p
+        | Check, in order: walk mode is on (requests only wait, and notify, in walk mode); quiet hours are off or set
+        | right for the server's time zone; the kind of notification is switched on in Settings; and the session's own
+        strong Notify
+        | switch is on.
+
+  h2#jobs-issues Jobs and the runner
+  +collapsible
+    @trigger A job stays queued
+    @content
+      p
+        | The machine's runner is not connected (Machines shows
+        code Runner: not running
+        | ), all its slots are busy, or another job is running in the same repository. Start the runner (see
+        a(href="/docs/runner") Setting up the runner
+        | ).
+  +collapsible
+    @trigger A job failed straight away with "cwd is outside the runner's allowed roots"
+    @content
+      p
+        | The folder is not under any folder listed in that machine's
+        code runner.json
+        | . Add it, restart the runner, and press
+        strong Rerun
+        | .
+  +collapsible
+    @trigger The runner service keeps restarting
+    @content
+      p
+        | Most often there is no
+        code ~/.buildyboy/runner.json
+        | yet; the installer does not create it. Write it and the service settles. Check the log with
+        code journalctl --user -u buildyboy-runner.service
+        | (Linux, WSL).
+  +collapsible
+    @trigger A job finished long ago but still says running
+    @content
+      p
+        | After Claude finishes, a job waits about two minutes for a follow-up message before it ends. It then turns into
+        | succeeded by itself.
+  +collapsible
+    @trigger A job says lost
+    @content
+      p
+        | The runner was out of touch for more than two minutes (machine asleep, network down, runner stopped). The work
+        | may still have finished: if the runner reconnects and reports, the status is corrected. Otherwise
+        strong Resume
+        | continues the same Claude session.
+  +collapsible
+    @trigger Verify says "not one of this job's own Done-when commands" or "this runner did not run the job"
+    @content
+      p
+        | For safety, Verify only runs commands that were in that job's prompt, on the runner that ran the job, before it
+        | restarts. Use the pre-filled list, and verify soon after the job ends.
+
+  h2#data-issues Numbers and data
+  +collapsible
+    @trigger The context meter shows a dash
+    @content
+      p
+        | Context is only known reliably through the statusline bridge. Set it up in
+        a(href="/docs/settings#statusline") Settings
+        | .
+  +collapsible
+    @trigger Costs look slightly different from my Anthropic bill
+    @content
+      p
+        | Without telemetry, cost is worked out from what the hooks see. Add the OpenTelemetry snippet from
+        a(href="/docs/settings#otel") Settings
+        | for exact figures.
+  +collapsible
+    @trigger Search does not find a phrase
+    @content
+      p
+        | Search matches every word separately, and does not search session names. Try fewer, more distinctive words.
+        | See
+        a(href="/docs/insights#search-how") How to search well
+        | .
+
+  h2#login-issues Logging in
+  +collapsible
+    @trigger I forgot the password
+    @content
+      p
+        | Set a new one on the server with
+        a(href="/docs/commands#set-password") bb set-password
+        | . Browsers that are already logged in stay logged in.
+  +collapsible
+    @trigger "too many attempts, wait a minute"
+    @content
+      p After 10 wrong passwords in a minute from one address, logins are refused for a minute. Wait, then try again carefully.
+  +collapsible
+    @trigger I lost the setup link
+    @content
+      p
+        | On the server, run
+        code journalctl -u buildyboy | grep setup
+        | . The link stays valid until a password is set.
+
+  h2#still-stuck Still stuck?
+  p
+    | Collect the output of
+    code /bb-status
+    | , of
+    code node cli/bb.ts doctor
+    | on the machine, and the server log (
+    code journalctl -u buildyboy -n 200
+    | ). Those three show where the chain breaks: in the session, on the machine, or on the server.

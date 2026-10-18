@@ -1,0 +1,208 @@
+layout "layout.faqir"
+
+block content
+  p
+    | Buildyboy is built from a few simple parts. Once you know what each one does, every screen in the app makes sense,
+    | and so do most problems. This page explains them in plain words, from the computer you type on to the phone in
+    | your pocket.
+
+  h2#the-picture The picture
+  div(data-ui="grid" data-cols="1" data-cols-md="3" data-gap="4")
+    +card(title="1 · Your computers" variant="outlined")
+      @body
+        p Claude Code sessions, each with the Buildyboy plugin reporting what happens. Optionally the runner, which starts jobs.
+    +card(title="2 · Your server" variant="outlined")
+      @body
+        p
+          code {{ site.host }}
+          | stores everything, serves the app, holds requests that wait for you and sends notifications.
+    +card(title="3 · Your browser and phone" variant="outlined")
+      @body
+        p The Floor, the Inbox and notifications. Your answers and new jobs travel back the same way.
+  p
+    | Information flows one way most of the time: your sessions report what they do, and the server stores it and shows
+    | it to you. It only flows back when you answer something (a permission, a question, a message) or launch a job.
+
+  h2#server The server
+  p
+    | The server is one program and one database file running on a machine you control (for example, inside WSL on your
+    | home PC, published as
+    code {{ site.url }}
+    | ). It does four things:
+  ul
+    li receives events from your computers and stores them,
+    li serves the Buildyboy web app you are using (and this manual),
+    li holds requests that are waiting for your answer and passes your answer back,
+    li sends notifications to your devices.
+  p
+    | The server never runs Claude Code or any command itself. It only records, displays and relays. Anything that runs
+    | happens on your own computers.
+
+  h2#machines Machines and pairing
+  p
+    | A
+    strong machine
+    | is one computer (or one WSL installation) where you use Claude Code. Before Buildyboy can see it, you
+    strong pair
+    | it: you create a short one-time code on the
+    strong Machines
+    | page and run an installer on the computer. The installer saves the computer's own access key in a folder called
+    code ~/.buildyboy
+    | and installs the Buildyboy plugin into Claude Code.
+  p
+    | Each machine has its own key. You can rename a machine, give it a new key, or cut it off for good (revoke it) at
+    | any time from the
+    a(href="/docs/machines") Machines
+    | page.
+
+  h2#sessions Sessions
+  p
+    | A
+    strong session
+    | is one conversation with Claude Code: everything from starting
+    code claude
+    | in a folder until you quit. Buildyboy gives each session a card on the
+    a(href="/docs/floor") Floor
+    | and a page of its own with the full timeline. Sessions are grouped by machine and by
+    strong project
+    | (the git repository or folder they run in).
+  p A session always has one of these statuses:
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") Status
+          th(data-part="th" scope="col") What it means
+      tbody(data-part="tbody")
+        tr(data-part="tr")
+          td(data-part="td")
+            span(data-ui="badge" data-variant="success") Working
+          td(data-part="td") Claude is busy: thinking, running a tool or a subagent.
+        tr(data-part="tr")
+          td(data-part="td")
+            span(data-ui="badge" data-variant="warning") Waiting on you
+          td(data-part="td") Claude stopped and needs you: a permission prompt, a question or a plan to approve.
+        tr(data-part="tr")
+          td(data-part="td")
+            span(data-ui="badge" data-variant="primary") Idle
+          td(data-part="td") The turn is over and Claude is waiting for your next prompt. Nothing is wrong.
+        tr(data-part="tr")
+          td(data-part="td")
+            span(data-ui="badge" data-variant="primary") Compacting
+          td(data-part="td") Claude Code is summarising the conversation to free up context space.
+        tr(data-part="tr")
+          td(data-part="td")
+            span(data-ui="badge" data-variant="warning") Stale
+          td(data-part="td") It was working, but no event has arrived for 10 minutes. It may be stuck, or the computer may be asleep.
+        tr(data-part="tr")
+          td(data-part="td")
+            span(data-ui="badge" data-variant="destructive") Error
+          td(data-part="td") The turn failed, for example because of a rate limit or an API error.
+        tr(data-part="tr")
+          td(data-part="td")
+            span(data-ui="badge") Ended
+          td(data-part="td") The session was closed. Resuming it with claude --resume brings it back.
+
+  h2#hooks The plugin and its hooks
+  p
+    | Claude Code can call small helper programs at fixed moments, called
+    strong hooks
+    | : when a session starts, before and after each tool, when it asks for permission, when a turn ends, and so on. The
+    | Buildyboy plugin registers one hook script for these moments. Each time it runs, it sends a short event to your
+    | server.
+  p The hook is built to stay out of your way:
+  ul
+    li
+      strong It fails open.
+      | If the server is down or slow, the hook gives up within about a second, prints nothing and lets Claude Code carry
+      | on exactly as if Buildyboy did not exist.
+    li
+      strong It keeps what it could not send.
+      | Events that could not be delivered are saved in
+      code ~/.buildyboy/spool.jsonl
+      | and sent later, so history has no holes. The spool is capped at 50 MB.
+    li
+      strong It backs off.
+      | After a failed call it stops trying for 60 seconds, so a dead server costs you nothing.
+    li
+      strong It masks secrets.
+      | API keys, tokens and the contents of
+      code .env
+      | files are replaced with
+      code [REDACTED]
+      | on the server before anything is stored. See
+      a(href="/docs/security") Security and privacy
+      | .
+  p
+    | With walk mode off, the hook only reports. It never changes what Claude does and never makes it wait.
+
+  h2#walk-mode Walk mode
+  p
+    strong Walk mode
+    | is the switch that lets the server hold Claude for you. When it is on, the hook does not just report a permission
+    | prompt, a question or a plan; it asks the server and waits for your answer, which you give from the
+    a(href="/docs/inbox") Inbox
+    | or straight from a notification. At the end of each turn Claude also waits a few minutes for your next instruction.
+  p
+    | If you do not answer in time, nothing breaks: the request falls back to Claude Code's normal behaviour (the prompt
+    | appears in the terminal). Walk mode can be set for everything, per machine, or per session. All of it is explained
+    | in
+    a(href="/docs/walk-mode") Walk mode
+    | .
+
+  h2#runner-and-jobs The runner and jobs
+  p
+    | Watching sessions you started yourself needs nothing more. To
+    strong start
+    | work from Buildyboy (for example from your phone at night), a machine also needs the
+    strong runner
+    | : a small background program that keeps a connection open to the server and, when you launch a
+    strong job
+    | , starts
+    code claude -p
+    | with your prompt in the folder you chose.
+  p
+    | For safety the runner only works inside the folders you list in its own settings file on that machine, called the
+    strong allowed roots
+    | . The server cannot change that list. See
+    a(href="/docs/runner") Setting up the runner
+    | and
+    a(href="/docs/jobs") Jobs and schedules
+    | .
+
+  h2#harness The harness prompt
+  p
+    | Unattended runs work best with a clear, complete instruction. Buildyboy ships one, the
+    strong harness prompt
+    | : a template with a
+    strong Goal
+    | , a
+    strong Done when
+    | list of checks, a
+    strong Scope
+    | and a few switches, followed by fixed advice on how to work, test, commit and keep a
+    code PROGRESS.md
+    | file. The
+    a(href="/docs/composer") Composer
+    | helps you fill it in, warns you about gaps, and keeps your prompts in a library.
+
+  h2#data Where your data lives
+  ul
+    li
+      strong On the server:
+      | one SQLite database file holding sessions, events, settings, the password hash, machine keys (hashed) and push
+      | subscriptions. It is backed up every night. See
+      a(href="/docs/server#backups") Backups
+      | .
+    li
+      strong On each machine:
+      | the
+      code ~/.buildyboy
+      | folder with the access key (
+      code config.json
+      | ), the plugin, the spool, and the runner's settings (
+      code runner.json
+      | ) if you use it. Your Claude Code settings file is never touched.
+    li
+      strong In your browser:
+      | only your login cookie and a few view preferences (theme, Floor filters, card positions).

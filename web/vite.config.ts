@@ -11,6 +11,6 @@ export default defineConfig({
   build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 1500 },
   server: {
     port: 5173,
-    proxy: { '/api': { target: process.env.BUILDYBOY_DEV_API ?? 'http://127.0.0.1:7700', changeOrigin: false } },
+    proxy: Object.fromEntries(['/api', '/docs'].map((p) => [p, { target: process.env.BUILDYBOY_DEV_API ?? 'http://127.0.0.1:7700', changeOrigin: false }])),
   },
 });

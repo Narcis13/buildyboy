@@ -1,0 +1,216 @@
+layout "layout.faqir"
+
+block content
+  p
+    | Every computer where you use Claude Code needs to be
+    strong paired
+    | once before Buildyboy can see its sessions. Pairing gives the computer its own access key and installs the Buildyboy
+    | plugin into Claude Code. This page covers pairing on each system, checking that it worked, and managing machines
+    | afterwards.
+
+  h2#pair Pairing a machine
+  ol
+    li
+      | Open
+      strong Machines
+      | and press
+      strong Pair a machine
+      | .
+    li
+      | Type a name in
+      strong Name for this machine (optional)
+      | , for example
+      code work-laptop
+      | , and press
+      strong Create pairing code
+      | . (Without a name, the computer's own host name is used.)
+    li
+      | An 8-character code appears with a countdown (
+      code Expires in 09:58
+      | ). It works once and expires after 10 minutes; if it runs out, press
+      strong New code
+      | .
+    li Copy the command for the computer's system and run it there, in a normal terminal (not inside Claude Code).
+  include "partials/shot.faqir" (assets=site.assets file="machines-pair-desktop.png" alt="The Pair a machine panel with a pairing code, its expiry countdown and the two install commands." caption="The pairing panel. The commands already contain the code and this server's address.")
+
+  h3#pair-linux Linux, macOS and WSL
+  pre
+    code
+      | curl -fsSL {{ site.url }}/install.sh | bash -s -- PAIRCODE
+  p
+    | Needs
+    code curl
+    | ,
+    code tar
+    | and Node.js (Claude Code's hooks are Node scripts). Add
+    code --name laptop-wsl
+    | after the code to choose the name here instead.
+  h3#pair-windows Windows (PowerShell)
+  pre
+    code
+      | $env:BB_CODE='PAIRCODE'; irm {{ site.url }}/install.ps1 | iex
+  p
+    | Run it in Windows PowerShell or PowerShell 7 (not in Command Prompt). It needs Windows 10 version 1803 or newer. Set
+    code $env:BB_NAME='laptop'
+    | first to choose the name.
+  +callout(variant="warning")
+    @content
+      p
+        | The code stays in
+        code $env:BB_CODE
+        | for as long as that PowerShell window is open. If you need to pair again, create a new code and set it again,
+        | or open a new window; re-running the line as it is reuses the spent code and fails.
+
+  h3#what-it-does What the installer does
+  ol
+    li
+      | Downloads the plugin into
+      code ~/.buildyboy/marketplace
+      | .
+    li
+      | Pairs the machine and saves its address, key and id in
+      code ~/.buildyboy/config.json
+      | , readable only by you.
+    li
+      | Registers the plugin with Claude Code (
+      code claude plugin marketplace add
+      | and
+      code claude plugin install buildyboy@buildyboy
+      | ).
+    li
+      | Optionally installs the
+      a(href="/docs/runner") runner
+      | .
+    li Sends a test event, so the machine shows up straight away.
+  p
+    | It finishes with "Buildyboy is installed on …". It never edits your Claude Code settings file
+    code ~/.claude/settings.json
+    | .
+
+  h2#windows-and-wsl Windows and WSL
+  p
+    | Windows and WSL keep separate Claude Code folders, so for Buildyboy they are two machines. If you use Claude Code in
+    | both, pair both, each with its own code, and give them different names (for example
+    code laptop
+    | and
+    code laptop-wsl
+    | ): they usually share the same host name, so without a name you get two machines called the same.
+
+  h2#check Checking a machine
+  ol
+    li Start a new Claude Code session on it. Sessions that were already open do not have the plugin yet.
+    li
+      | Type
+      code /bb-status
+      | . A healthy machine answers like this:
+  pre
+    code
+      | Server: {{ site.url }} (reachable)
+      | Machine: work-laptop (m_8c1f…)
+      | Walk mode: off for this session
+      | Spool: 0 bytes waiting locally
+      | Session: {{ site.url }}/s/1b2c…
+  p
+    | If it says the server is
+    strong NOT reachable
+    | , the machine cannot reach your server (check the address and your network). The session keeps working normally;
+    | events wait in the spool.
+  p
+    | The session should now be on the
+    a(href="/docs/floor") Floor
+    | . After installing you may also see a short session named "install-test-…"; that is the installer's test event and
+    | can be ignored.
+
+  h2#machines-page The Machines page
+  p Each machine has a card:
+  include "partials/shot.faqir" (assets=site.assets file="machines-desktop.png" alt="Machine cards with a status badge, platform, Claude Code and hook versions, last event, spool size, runner state and a three-way walk mode control." caption="Machine cards.")
+  dl
+    dt Status badge
+    dd
+      code online
+      | (it sent something in the last 5 minutes, or its runner is connected),
+      code offline
+      | , or
+      code revoked
+      | .
+    dt Platform, Claude Code, Hook
+    dd The system and host name, the Claude Code version and the plugin version.
+    dt Last event
+    dd When it last sent something. Amber after 10 quiet minutes.
+    dt Spool
+    dd How much is waiting on that machine to be sent. Normally 0 B.
+    dt Runner
+    dd
+      code connected
+      | or
+      code not running
+      | .
+    dt Walk mode
+    dd
+      strong Inherit
+      | (follows the global setting),
+      strong On
+      | (always on for this machine) or
+      strong Off
+      | (never waits for you here). See
+      a(href="/docs/walk-mode#which-wins") Walk mode
+      | .
+  h3#rename Renaming
+  p
+    | Press
+    strong Rename
+    | , type the new name and press
+    strong Save
+    | .
+  h3#rotate Giving a machine a new key
+  p
+    | If you think a machine's key has leaked, press
+    strong Rotate token
+    | and then
+    strong Rotate now
+    | . The old key stops working immediately. The new one is shown
+    strong once
+    | (copy it with
+    strong Copy token
+    | ): put it in the
+    code token
+    | field of
+    code ~/.buildyboy/config.json
+    | on that machine, or simply pair the machine again with a new code.
+  h3#revoke Removing a machine
+  ol
+    li
+      | On the machine, run the installer with the uninstall switch. It removes the plugin and the runner and asks before
+      | deleting
+      code ~/.buildyboy
+      | :
+  pre
+    code
+      | curl -fsSL {{ site.url }}/install.sh | bash -s -- --uninstall
+  pre
+    code
+      | $env:BB_UNINSTALL='1'; irm {{ site.url }}/install.ps1 | iex
+  ol(start="2")
+    li
+      | In Buildyboy, press
+      strong Revoke
+      | on the machine's card and confirm with
+      strong Revoke <name>
+      | . Its hooks and runner are cut off for good; its history stays. To use it again, pair it again.
+  p Revoked machines stay in the list, dimmed, so their history keeps its context.
+
+  h2#by-hand Pairing without the installer
+  p
+    | If you cannot pipe a script into your shell, pair with Buildyboy's command-line tool from a copy of the code, then
+    | register the plugin yourself:
+  pre
+    code
+      | node cli/bb.ts pair {{ site.url }} PAIRCODE my-laptop
+      | claude plugin marketplace add ~/.buildyboy/marketplace
+      | claude plugin install buildyboy@buildyboy
+  p
+    | The first command writes
+    code ~/.buildyboy/config.json
+    | ; the marketplace folder comes from the installer or from
+    code {{ site.url }}/plugin.tgz
+    | .

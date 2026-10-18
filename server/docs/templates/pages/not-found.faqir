@@ -1,0 +1,11 @@
+layout "layout.faqir"
+
+block content
+  +callout(variant="warning")
+    @content
+      p
+        | There is no manual page at this address. It may have been renamed; the contents on the left (or under
+        strong Manual contents
+        | on a phone) list every page.
+  p
+    a(href="/docs") Go to the manual's home page

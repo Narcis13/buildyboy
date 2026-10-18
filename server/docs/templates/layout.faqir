@@ -1,0 +1,48 @@
+//- The manual's frame: top bar, contents sidebar, the page, previous/next links.
+//- Every page is `layout "layout.faqir"` plus one `block content`. Titles and summaries come from catalog.ts.
+doctype html
+html(lang="en" data-theme="dark")
+  head
+    meta(charset="utf-8")
+    meta(name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover")
+    meta(name="robots" content="noindex")
+    meta(name="description" content="{{ page.summary }}")
+    meta(name="theme-color" content="#0a1626")
+    title {{ page.title }} · Buildyboy manual
+    link(rel="icon" href="/icon.svg" type="image/svg+xml")
+    link(rel="stylesheet" href="{{ site.assets }}/faqir.css")
+    link(rel="stylesheet" href="{{ site.assets }}/docs.css")
+    script(src="{{ site.assets }}/docs.js")
+    script(src="{{ site.assets }}/faqir-core.js" defer)
+  body
+    a(href="#main" data-docs="skip") Skip to the content
+    header(data-docs="bar")
+      a(href="/docs" data-docs="brand" aria-label="Buildyboy manual, home")
+        img(src="/icon.svg" alt="" width="28" height="28")
+        span(data-docs="wordmark") BUILDYBOY
+        span(data-docs="brand-sub") Manual
+      div(data-ui="cluster" data-gap="2" data-justify="end")
+        a(data-ui="button" data-variant="primary" data-size="sm" href="/") Open the app
+        button(data-ui="button" data-variant="ghost" data-size="sm" type="button" data-docs="theme" aria-label="Switch between the dark and the light theme") ☾
+    div(data-docs="shell")
+      aside(data-docs="side")
+        include "partials/nav.faqir" (nav=nav label="Manual")
+      main#main
+        +collapsible(data-docs="mobile-nav")
+          @trigger Manual contents
+          @content
+            include "partials/nav.faqir" (nav=nav label="Manual (compact)")
+        article(data-ui="prose" data-docs="article")
+          header(data-docs="page-head")
+            if page.section != ""
+              p(data-ui="text" data-variant="eyebrow") {{ page.section }}
+            h1 {{ page.title }}
+            p(data-ui="text" data-size="lg" data-variant="muted") {{ page.summary }}
+          block content
+          include "partials/pager.faqir" (prev=prev next=next)
+        footer(data-docs="foot")
+          p(data-ui="text" data-size="sm" data-variant="muted")
+            | This manual is served by your own Buildyboy server at
+            code {{ site.url }}
+            | . Commands on these pages already use that address.
+      aside(data-docs="toc" aria-label="On this page")

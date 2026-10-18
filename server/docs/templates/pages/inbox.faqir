@@ -1,0 +1,161 @@
+layout "layout.faqir"
+
+block content
+  p
+    | The
+    strong Inbox
+    | is where Claude's requests wait for you while
+    a(href="/docs/walk-mode") walk mode
+    | is on. Each request is a card with everything you need to decide, and the buttons to answer it. It is designed to
+    | be used with one thumb on a phone. The number on the Inbox tab is how many cards are waiting.
+  include "partials/shot.faqir" (assets=site.assets file="inbox-phone.png" alt="The Inbox on a phone: the Walk mode and Pause everything switches, then a Plan card with the plan text and an Approve plan button." caption="The Inbox on a phone, with walk mode on and a plan waiting for approval." phone)
+
+  h2#switches The two switches at the top
+  dl
+    dt
+      strong Walk mode
+    dd
+      | The global walk mode switch. On: "permissions, questions and plans wait for you here". Off: "hooks only watch;
+      | nothing waits for you". The card gets an amber border while it is on.
+    dt
+      strong Pause everything
+    dd
+      | Holds every session at its next tool call until you switch it off again. Useful when something is going wrong on
+      | several machines at once. Paused sessions do not create cards and do not notify you.
+  p Both switch instantly and switch back if the server could not save the change.
+
+  h2#cards Reading a card
+  p Every card starts with the same information:
+  ul
+    li
+      | A
+      strong kind
+      | badge:
+      span(data-ui="badge" data-variant="warning") Permission
+      | ,
+      span(data-ui="badge" data-variant="primary") Question
+      | ,
+      span(data-ui="badge" data-variant="secondary") Plan
+      | or
+      span(data-ui="badge" data-variant="success") Turn finished
+      | , the tool involved and how long ago it arrived.
+    li The session's name (tap it to open the session), the machine and project, the folder and the branch.
+    li
+      strong Claude said
+      | : Claude's last message before the request, so you know the context. Long messages are clipped; tap
+      strong Show more
+      | .
+  p
+    | Opening a notification takes you to the Inbox with that card highlighted.
+
+  h2#permission Permission cards
+  p
+    | Claude wants to use a tool that needs your approval, such as running a command or editing a file. The card shows
+    | exactly what it wants to do: the full command for shell commands, a red and green diff for edits, the file and its
+    | size for new files, the address for web requests.
+  dl
+    dt
+      strong Allow once
+    dd Lets this one call run.
+    dt
+      strong Allow for this session
+    dd
+      | Only shown when Claude Code offered a matching rule (for example "always allow npm run build"). It allows this call
+      | and every similar one for the rest of this Claude session.
+    dt
+      strong Deny
+    dd
+      | Refuses the call. Claude is told why and carries on with something else. Write the reason in
+      strong Tell Claude why (optional)
+      | , for example "use the staging script instead"; otherwise it hears "Denied from Buildyboy".
+    dt
+      strong Deny and interrupt
+    dd Refuses the call and also stops Claude's current turn, so it waits for new instructions.
+  +callout(variant="info")
+    @content
+      p
+        | Permission notifications on most phones and desktops have
+        strong Allow
+        | and
+        strong Deny
+        | buttons, so you can answer without opening the app. Those buttons work for 15 minutes.
+
+  h2#question Question cards
+  p
+    | Claude asked you to choose (its "AskUserQuestion" tool). Each question shows its options as large tappable rows
+    | with a short description; questions marked "(choose any)" accept several answers. Tap
+    strong Other…
+    | to type your own answer instead. When every question has an answer, press
+    strong Send answer
+    | .
+
+  h2#plan Plan cards
+  p
+    | Claude is in plan mode and proposes a plan before changing anything. Read it, then either press
+    strong Approve plan
+    | to let it start, or type what should change in
+    strong What should change?
+    | and press
+    strong Reject with feedback
+    | . Claude revises the plan and asks again.
+
+  h2#turn-finished Turn finished cards
+  p
+    | With walk mode on, every time Claude finishes a turn it waits a few minutes (5 by default) for your next
+    | instruction instead of going idle straight away. This card is that moment. You can:
+  ul
+    li
+      | tap a quick reply:
+      strong continue
+      | ,
+      strong run the tests
+      | ,
+      strong commit and push
+      | or
+      strong stop here
+      | (each is sent at once);
+    li
+      | type an instruction in
+      strong Or tell Claude what to do next
+      | and press
+      strong Send reply
+      | ;
+    li
+      | or press
+      strong Let it go idle
+      | to release it now.
+  p
+    | Whatever you send becomes Claude's next instruction and the session keeps working. If you do nothing, it goes idle
+    | when the wait is over, exactly as it would have without Buildyboy.
+
+  h2#history History
+  p
+    | Under the cards,
+    strong History
+    | lists the last 50 requests and what happened to them. Each row has a badge:
+  ul
+    li
+      span(data-ui="badge" data-variant="success") answered
+      | : someone answered it. The summary says how ("Allowed once", "Denied: use the staging script", "Answered: Postgres",
+      | "Replied: run the tests") and from where (by web, by push, by local…).
+    li
+      span(data-ui="badge" data-variant="warning") timeout
+      | : nobody answered in time, so Claude Code's normal behaviour took over ("Timed out — the local prompt applied").
+      | The same wording is used when a server restart cleared the request.
+    li
+      span(data-ui="badge") superseded
+      | : it was answered at the terminal before you got to it ("Answered at the terminal").
+
+  h2#errors When answering fails
+  ul
+    li
+      strong "Already answered (probably at your desk)."
+      | The request is no longer waiting. Usually you answered it at the terminal, but it is also what you see when it
+      | timed out or the session was stopped.
+    li
+      strong "Could not send: …"
+      | The server could not be reached or refused the answer. Check your connection and try again; the card stays until
+      | it is answered or times out.
+  p
+    | The Inbox refreshes itself live. Cards disappear as soon as they are answered anywhere, including from another
+    | device or from the terminal.

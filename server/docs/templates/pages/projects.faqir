@@ -1,0 +1,73 @@
+layout "layout.faqir"
+
+block content
+  p
+    | A
+    strong project
+    | is a folder you work in with Claude Code on one machine, usually a git repository. Buildyboy creates projects by
+    | itself as sessions arrive, and groups everything that happened there: sessions, jobs, cost, commits, pull requests
+    | and progress notes. Open
+    strong Projects
+    | in the top bar (on a phone, go to
+    code {{ site.url }}/projects
+    | ).
+
+  h2#how How sessions are grouped
+  ul
+    li
+      | A session belongs to the
+      strong git repository
+      | it runs in (the top folder of the repository), even if you started Claude in a sub-folder.
+    li Outside git, the folder Claude was started in is the project.
+    li The project's name is the last part of its path, for example shop-api for C:\work\shop-api.
+    li
+      | The same repository on two machines is two projects, one per machine. This includes Windows and WSL on the same
+      | computer.
+    li
+      | Repositories hosted on github.com are linked to their GitHub page, which is what lets Buildyboy follow pull
+      | requests when you add a
+      a(href="/docs/settings#github") GitHub token
+      | .
+
+  h2#list The project list
+  p
+    | Each card shows the project's name and total cost, its path and machine, how many sessions it has, its GitHub
+    | owner and name, and when it was last active. Click a card to open the project.
+
+  h2#page A project's page
+  p Under the header (path, machine, default branch, GitHub link and total cost) you find:
+  dl
+    dt
+      strong Cost over time
+    dd Daily cost for the last 60 days.
+    dt
+      strong Sessions
+    dd The most recent sessions, linking to their pages.
+    dt
+      strong Jobs
+    dd Jobs that ran in this project's folder.
+    dt
+      strong Pull requests
+    dd
+      | Open and recent pull requests for the project's branches, with their state and checks (
+      code success
+      | ,
+      code failure
+      | ,
+      code pending
+      | or
+      code none
+      | ). This needs a GitHub token in Settings.
+    dt
+      strong Commits
+    dd Commits made during sessions.
+    dt
+      strong Recent PROGRESS.md
+    dd
+      | The latest progress notes written by harness runs (see
+      a(href="/docs/composer#harness") the harness prompt
+      | ).
+  p
+    | Projects appear on their own; there is nothing to create or delete. Use the Floor's
+    strong All projects
+    | filter to see only one project's sessions.

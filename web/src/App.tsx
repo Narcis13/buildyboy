@@ -34,7 +34,8 @@ const routes: [string, (p: Record<string, string>) => ReactNode][] = [
   ['/search', () => <Search />],
 ];
 
-const NAV: { to: string; label: string; icon: string; phone?: boolean }[] = [
+/** `doc` entries are server-rendered pages (the manual), reached with a full page load rather than the client router. */
+const NAV: { to: string; label: string; icon: string; phone?: boolean; doc?: boolean }[] = [
   { to: '/', label: 'Floor', icon: '▦', phone: true },
   { to: '/inbox', label: 'Inbox', icon: '✉', phone: true },
   { to: '/composer', label: 'Composer', icon: '✎', phone: true },
@@ -44,7 +45,23 @@ const NAV: { to: string; label: string; icon: string; phone?: boolean }[] = [
   { to: '/analytics', label: 'Insights', icon: '📈' },
   { to: '/search', label: 'Search', icon: '⌕' },
   { to: '/settings', label: 'Settings', icon: '⚑', phone: true },
+  { to: '/docs', label: 'Docs', icon: '📖', phone: true, doc: true },
 ];
+
+function NavLink({ item, className, children }: { item: (typeof NAV)[number]; className: string; children: ReactNode }) {
+  if (item.doc) {
+    return (
+      <a href={item.to} className={className}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <Link to={item.to} className={className}>
+      {children}
+    </Link>
+  );
+}
 
 function isActive(to: string, path: string) {
   return to === '/' ? path === '/' || path.startsWith('/s/') : path.startsWith(to);
@@ -78,10 +95,10 @@ function Shell({ children }: { children: ReactNode }) {
           <img src="/icon.svg" alt="" className="h-7 w-7" /> BUILDYBOY
         </Link>
         {NAV.map((n) => (
-          <Link key={n.to} to={n.to} className={`relative flex min-h-12 items-center px-3 text-[15px] ${isActive(n.to, path) ? 'text-ink shadow-[inset_0_-2px_0_var(--bb-accent)]' : 'text-muted hover:text-ink'}`}>
+          <NavLink key={n.to} item={n} className={`relative flex min-h-12 items-center px-3 text-[15px] ${isActive(n.to, path) ? 'text-ink shadow-[inset_0_-2px_0_var(--bb-accent)]' : 'text-muted hover:text-ink'}`}>
             {n.label}
             {n.to === '/inbox' && !!inbox?.pending && <span className="ml-1.5 rounded-full bg-waiting px-1.5 text-xs font-bold text-[#1d1300]">{inbox.pending}</span>}
-          </Link>
+          </NavLink>
         ))}
         <div className="ml-auto">
           <ThemeToggle />
@@ -90,11 +107,11 @@ function Shell({ children }: { children: ReactNode }) {
       <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 pb-24 pt-4 md:pb-8">{children}</main>
       <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-line bg-bg-2/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden" aria-label="Main">
         {NAV.filter((n) => n.phone).map((n) => (
-          <Link key={n.to} to={n.to} className={`relative flex min-h-14 flex-1 flex-col items-center justify-center text-xs ${isActive(n.to, path) ? 'text-accent' : 'text-muted'}`}>
+          <NavLink key={n.to} item={n} className={`relative flex min-h-14 flex-1 flex-col items-center justify-center text-xs ${isActive(n.to, path) ? 'text-accent' : 'text-muted'}`}>
             <span className="text-lg leading-none">{n.icon}</span>
             {n.label}
             {n.to === '/inbox' && !!inbox?.pending && <span className="absolute right-[22%] top-1.5 rounded-full bg-waiting px-1.5 text-[11px] font-bold text-[#1d1300]">{inbox.pending}</span>}
-          </Link>
+          </NavLink>
         ))}
       </nav>
     </div>

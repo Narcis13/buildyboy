@@ -1,0 +1,174 @@
+layout "layout.faqir"
+
+block content
+  p
+    | Notifications tell you when something needs you, so you do not have to keep the app open. Buildyboy can deliver
+    | them in two ways: as
+    strong Web Push
+    | notifications to the browsers and phones where you switched them on, and optionally to an
+    strong ntfy
+    | topic. Everything is set up in
+    strong Settings → Notifications
+    | .
+
+  h2#web-push Turning on Web Push on a device
+  p Repeat this on every device that should receive notifications. Each device is switched on separately.
+  ol
+    li
+      | On a phone, first install Buildyboy on the home screen (see
+      a(href="/docs/quick-start#step-2") Quick start, step 2
+      | ) and open it from there.
+    li
+      | Open
+      strong Settings
+      | . The line
+      strong Web Push on this device
+      | says
+      code off
+      | .
+    li
+      | Check the name in
+      strong Name this device
+      | (it is pre-filled, for example "Chrome on Windows") and press
+      strong Enable notifications on this device
+      | .
+    li When the browser asks whether this site may send notifications, allow it. The line now says on.
+    li
+      | Press
+      strong Send test notification
+      | . The answer says how many devices it reached ("Sent to 2 device(s).") and a notification titled
+      | "Buildyboy test notification" should appear.
+  p
+    | To stop notifications on a device, press
+    strong Turn off for this device
+    | on that device.
+  h3#status What the status line means
+  dl
+    dt
+      code on
+      | /
+      code off
+    dd Notifications are, or are not, switched on for this browser.
+    dt
+      code blocked
+    dd You (or the browser) refused permission earlier. Allow notifications for this site in the browser's site settings, then try again.
+    dt
+      code not supported here
+    dd This browser cannot receive Web Push. On iPhone this means Buildyboy is not opened from the home screen.
+  +callout(variant="warning")
+    @content
+      p
+        strong iPhone and iPad:
+        | Web Push only works in the app installed on the home screen, not in a Safari tab. If you would rather not install
+        | it, use ntfy (below).
+  p
+    | Web Push also needs a secure address (https), which a deployed server has. On a plain
+    code http://
+    | address other than localhost, the page says the service worker is not active.
+
+  h2#what-you-get What you are notified about
+  p Under Send notifications for you can switch each kind off. All are on by default.
+  dl
+    dt
+      strong Permission, question or plan waiting
+    dd
+      | A walk-mode request is waiting in the Inbox. Titles look like "Bash needs permission", "Claude is asking a
+      | question" or "Plan waiting for approval". Permission notifications carry
+      strong Allow
+      | and
+      strong Deny
+      | buttons on platforms that support them; they work for 15 minutes.
+    dt
+      strong Turn finished (walk mode)
+    dd "Turn finished — waiting for your next instruction".
+    dt
+      strong Job finished or failed
+    dd
+      | A job ended, for example "Job succeeded: Fix the flaky test". Jobs that you stopped yourself do not notify.
+    dt
+      strong Session went stale
+    dd A working session has sent nothing for 10 minutes.
+    dt
+      strong Loop suspected
+    dd The same failing call happened three or more times, or 15 turns went by with no file changes.
+    dt
+      strong CI result on a PR
+    dd
+      | The checks on a pull request passed or failed (needs a
+      a(href="/docs/settings#github") GitHub token
+      | ).
+    dt
+      strong Budget or rate limit
+    dd A session or job is near its cost limit, or you are close to Claude's usage limits.
+    dt
+      strong Context nearly full
+    dd A session's context is above your threshold (85% by default) or it has compacted three or more times.
+  p
+    | The text under each title is the project and the session name. Tapping a notification opens the Inbox (or the
+    | relevant page) in an existing Buildyboy window if you have one. Press
+    strong Save
+    | after changing these switches.
+
+  h2#quiet-hours Quiet hours
+  p
+    | Switch on
+    strong Quiet hours
+    | and choose
+    strong From
+    | and
+    strong Until
+    | (24-hour times, 22:00 to 07:00 by default) to silence notifications overnight. Requests still wait in the Inbox.
+  +callout(variant="muted")
+    @content
+      p
+        | Quiet hours follow the
+        strong server's
+        | clock. If the server is in a different time zone from you, adjust the times accordingly. The test notification
+        | ignores quiet hours, so you can always test.
+
+  h2#ntfy ntfy, the fallback
+  p
+    a(href="https://ntfy.sh") ntfy
+    | is a free notification service with an app for Android and iPhone. Buildyboy can post to a topic there in addition
+    | to Web Push. It is handy on an iPhone where Buildyboy is not installed, or as a second channel.
+  ol
+    li
+      | Install the ntfy app and subscribe to a topic with a long, hard-to-guess name, for example
+      code buildyboy-7f3k2q9x
+      | . Anyone who knows the name can read it.
+    li
+      | In Buildyboy's Settings, paste the full address, for example
+      code https://ntfy.sh/buildyboy-7f3k2q9x
+      | , into
+      strong ntfy topic URL
+      | and press
+      strong Save
+      | .
+    li
+      strong Send test notification
+      | now reports "and ntfy" too.
+  p
+    | ntfy messages are marked high priority for waiting requests. They have no Allow and Deny buttons; tap them to open
+    | Buildyboy.
+
+  h2#mute Muting one session
+  p
+    | A busy session can be muted without touching the rest: open it and switch off
+    strong Notify
+    | in its header. Every kind of notification about that session stops. It still appears in the Inbox and the
+    | attention bar.
+
+  h2#troubleshooting When notifications do not arrive
+  ol
+    li
+      | Press
+      strong Send test notification
+      | . If it says "Sent to 0 device(s)", this device is not switched on: enable it again.
+    li Check the phone's own settings: notifications allowed for the browser or the installed app, and no focus or do-not-disturb mode.
+    li Check quiet hours and the per-kind switches in Settings, and the session's Notify switch.
+    li
+      | Remember walk-mode notifications only happen with walk mode on. With it off, nothing waits, so nothing is sent.
+    li
+      | Still nothing? See
+      a(href="/docs/troubleshooting#no-notifications") Troubleshooting
+      | .

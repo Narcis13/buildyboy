@@ -1,0 +1,5 @@
+//- A screenshot of the app. Parameters: assets (site.assets), file (in assets/img), alt, caption, and phone (optional:
+//- a narrower frame for a 390px-wide shot).
+figure(data-docs="shot" data-docs-shape=phone ?? false ? "phone" : false)
+  img(src="{{ assets }}/img/{{ file }}" alt=alt loading="lazy" width=phone ?? false ? "390" : "1280" height=phone ?? false ? "844" : "800")
+  figcaption {{ caption }}

@@ -1,0 +1,239 @@
+layout "layout.faqir"
+
+block content
+  p
+    | This page is for whoever looks after the Buildyboy server: installing it, updating it, keeping backups and
+    | restoring them. The standard setup is Ubuntu inside WSL on a Windows PC, running Buildyboy as a system service
+    | behind the Caddy web server, which provides the https address. The same scripts work on a regular Ubuntu server.
+
+  h2#layout What lives where
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") What
+          th(data-part="th" scope="col") Where (standard install)
+      tbody(data-part="tbody")
+        tr(data-part="tr")
+          td(data-part="td") The app
+          td(data-part="td")
+            code ~/apps/buildyboy
+        tr(data-part="tr")
+          td(data-part="td") The previous version, kept after an update
+          td(data-part="td")
+            code ~/apps/buildyboy.prev
+        tr(data-part="tr")
+          td(data-part="td") The data: database, settings, keys
+          td(data-part="td")
+            code ~/.local/share/buildyboy
+        tr(data-part="tr")
+          td(data-part="td") Nightly backups
+          td(data-part="td")
+            code ~/.local/share/buildyboy/backups
+        tr(data-part="tr")
+          td(data-part="td") The service
+          td(data-part="td")
+            code /etc/systemd/system/buildyboy.service
+        tr(data-part="tr")
+          td(data-part="td") The web address (Caddy site)
+          td(data-part="td")
+            code /etc/caddy/sites/buildyboy.caddy
+  p
+    | The service listens only on
+    code 127.0.0.1:7700
+    | ; Caddy publishes it at
+    code {{ site.url }}
+    | with an automatic certificate. Everything Buildyboy knows is in one SQLite database file,
+    code buildyboy.db
+    | , in the data folder.
+
+  h2#install Installing for the first time
+  p Inside WSL (or on the server), you need systemd switched on, Node.js 24 installed with nvm, rsync, curl, Caddy, and sudo rights. Then, from a copy of the code:
+  pre
+    code
+      | DOMAIN={{ site.host }} deploy/deploy-wsl.sh --dry-run   # shows every step, changes nothing
+      | DOMAIN={{ site.host }} deploy/deploy-wsl.sh             # does it
+  p The script prints each command before running it, and can be run again safely. It goes through six steps:
+  ol
+    li
+      strong Preflight
+      | : checks Node 24, the port, Caddy, and that the existing Caddy configuration is valid.
+    li
+      strong Install
+      | : copies the app to
+      code ~/apps/buildyboy
+      | , installs its dependencies and builds the web app.
+    li
+      strong Service
+      | : installs and enables the
+      code buildyboy
+      | systemd service, locked down to its own data folder.
+    li
+      strong Caddy
+      | : adds a site file for your domain and reloads Caddy. If anything fails it puts the old configuration back. Other
+      | sites on the same Caddy are never edited.
+    li
+      strong Backups
+      | : installs a timer that backs the database up every night.
+    li
+      strong Finish
+      | : waits until
+      code /api/health
+      | answers and prints the one-time setup link for your password.
+  +callout(variant="warning")
+    @content
+      p
+        strong Always pass your DOMAIN.
+        | Without it the script uses its built-in default address and rewrites the Caddy site and the service's public
+        | address to it, which breaks installer commands, notification links and the setup link. For this server that
+        | means
+        code DOMAIN={{ site.host }}
+        | .
+  p
+    | Your domain needs a DNS record pointing at the machine's public address, and ports 80 and 443 must reach Caddy
+    | (on a home PC: forwarded by the router to the PC, and from Windows into WSL).
+
+  h2#update Updating
+  p
+    | To install a newer version, run the update script from a copy of the code (not from
+    code ~/apps/buildyboy
+    | itself):
+  pre
+    code
+      | deploy/update.sh --dry-run    # see what it would do
+      | deploy/update.sh              # pull, back up, build, swap, restart, check
+  p It is careful by design:
+  ol
+    li pulls the latest code with git (skip with --no-pull),
+    li backs the database up,
+    li builds the new version next to the running one,
+    li swaps them, keeping the old one as buildyboy.prev, and restarts the service,
+    li
+      | waits up to 45 seconds for
+      code /api/health
+      | ; if the new version does not come up healthy, it puts the previous version back by itself.
+  p
+    | It does not touch Caddy or the service settings, so it is the safe way to ship code changes. Database changes run
+    | automatically when the new version starts and only go forward; the backup taken before the update is your way
+    | back.
+
+  h2#status Checking on it
+  pre
+    code
+      | systemctl status buildyboy             # is it running?
+      | journalctl -u buildyboy -n 80          # the last 80 log lines
+      | journalctl -u buildyboy -f             # follow the log live
+      | curl -s http://127.0.0.1:7700/api/health
+  p
+    code /api/health
+    | answers with
+    code {"ok":true,…}
+    | when the server is up. Restarting needs sudo:
+    code sudo systemctl restart buildyboy
+    | .
+
+  h2#backups Backups
+  p
+    | A timer backs the database up every night at about 03:30 into the
+    code backups
+    | folder, and keeps the newest 14. Backups are made while the server runs, without stopping it. To make one now:
+  pre
+    code
+      | cd ~/apps/buildyboy && BUILDYBOY_DATA=~/.local/share/buildyboy node cli/bb.ts backup
+  p
+    | Backups live on the same disk as the database. For real safety, copy the backups folder somewhere else from time
+    | to time, for example to Windows (
+    code /mnt/c/…
+    | ) or to another machine.
+  h3#restore Restoring a backup
+  ol
+    li
+      | Stop the server:
+      code sudo systemctl stop buildyboy
+    li
+      | Keep a copy of the current database, copy the backup you want over it, and remove the two files next to it that
+      | end in
+      code -wal
+      | and
+      code -shm
+      | :
+      pre
+        code
+          | cd ~/.local/share/buildyboy
+          | cp buildyboy.db buildyboy.db.before-restore
+          | cp backups/buildyboy-2026-10-17T03-30-12-000Z.db buildyboy.db
+          | rm -f buildyboy.db-wal buildyboy.db-shm
+    li
+      | Start it again with
+      code sudo systemctl start buildyboy
+      | and check the log.
+  p
+    | Restore a backup with the same version of Buildyboy that made it, or a newer one: a newer version upgrades an
+    | older database when it starts, but an older version cannot open a database a newer one has changed.
+
+  h2#settings Server settings
+  p The service reads these environment variables (set in its systemd unit):
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") Variable
+          th(data-part="th" scope="col") Default
+          th(data-part="th" scope="col") Meaning
+      tbody(data-part="tbody")
+        tr(data-part="tr")
+          td(data-part="td") BUILDYBOY_PUBLIC_URL
+          td(data-part="td") http://127.0.0.1:7700
+          td(data-part="td") The address people and machines use. It appears in installer commands, links and notifications.
+        tr(data-part="tr")
+          td(data-part="td") BUILDYBOY_PORT
+          td(data-part="td") 7700
+          td(data-part="td") The port to listen on.
+        tr(data-part="tr")
+          td(data-part="td") BUILDYBOY_HOST
+          td(data-part="td") 127.0.0.1
+          td(data-part="td") The address to listen on. Keep it local behind Caddy.
+        tr(data-part="tr")
+          td(data-part="td") BUILDYBOY_DATA
+          td(data-part="td") ./data
+          td(data-part="td") The data folder.
+        tr(data-part="tr")
+          td(data-part="td") BUILDYBOY_PERMISSION_WAIT_MS
+          td(data-part="td") 570000 (9½ min)
+          td(data-part="td") How long a walk-mode permission, question or plan waits for an answer.
+        tr(data-part="tr")
+          td(data-part="td") BUILDYBOY_STOP_WAIT_MIN
+          td(data-part="td") 5
+          td(data-part="td") The default end-of-turn wait in walk mode, in minutes (Settings can override it).
+        tr(data-part="tr")
+          td(data-part="td") BUILDYBOY_PAUSE_WAIT_MS
+          td(data-part="td") 570000 (9½ min)
+          td(data-part="td") The longest a paused session is held per tool call.
+        tr(data-part="tr")
+          td(data-part="td") BUILDYBOY_INITIAL_PASSWORD
+          td(data-part="td") none
+          td(data-part="td") Sets the password on start if none exists yet. Handy for automated setups; remove it afterwards.
+        tr(data-part="tr")
+          td(data-part="td") NODE_ENV
+          td(data-part="td") production on the service
+          td(data-part="td") Production mode.
+
+  h2#uninstall Uninstalling
+  pre
+    code
+      | deploy/deploy-wsl.sh --uninstall
+  p
+    | This removes the service, the backup timer and the Caddy site, and reloads Caddy. It leaves the app folder and the
+    | data folder, so nothing is lost until you delete them yourself.
+
+  h2#local Running it on your own computer
+  p To try Buildyboy or work on it, run it locally with Node.js 24:
+  pre
+    code
+      | npm ci
+      | npm run dev        # the server on :7700 and the web app on :5173
+      | npm run simulate   # fill the Floor with three made-up sessions
+  p
+    | Open
+    code http://localhost:5173
+    | . The first start prints the setup link in the terminal.

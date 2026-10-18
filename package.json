@@ -19,9 +19,12 @@
     "test": "vitest run",
     "e2e": "npm run build && playwright test",
     "simulate": "node scripts/simulate.ts",
-    "smoke:claude": "node scripts/smoke-claude.ts"
+    "smoke:claude": "node scripts/smoke-claude.ts",
+    "docs:screenshots": "node scripts/docs-screenshots.ts"
   },
   "dependencies": {
+    "@faqir-ui/core": "1.2.5",
+    "@faqir-ui/template": "1.2.5",
     "@hono/node-server": "^2.1.4",
     "hono": "^4.13.13",
     "web-push": "^3.6.7",

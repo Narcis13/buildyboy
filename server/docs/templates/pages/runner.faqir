@@ -1,0 +1,204 @@
+layout "layout.faqir"
+
+block content
+  p
+    | The
+    strong runner
+    | is a small background program that lets Buildyboy start Claude Code on a machine. It is optional: you only need it
+    | to launch
+    a(href="/docs/jobs") jobs
+    | or use
+    a(href="/docs/composer#spec-ify") Spec-ify
+    | . Watching and answering the sessions you start yourself works without it.
+
+  h2#how How it works, and why it is safe
+  p
+    | The runner opens a connection
+    strong from
+    | your machine
+    strong to
+    | the server and waits. Nothing on your machine listens for incoming connections. When you launch a job, the server
+    | sends it down that connection; the runner checks it and starts Claude Code.
+  p The runner protects your machine with three rules the server cannot change:
+  ul
+    li
+      strong Allowed roots.
+      | It only runs jobs inside folders you list in its settings file on that machine. A job for any other folder is
+      | refused.
+    li
+      strong Only Claude.
+      | It only ever starts
+      code claude
+      | with a checked list of options, without a shell, so a prompt cannot sneak in another command.
+    li
+      strong Verify commands are the prompt's own.
+      | When you
+      a(href="/docs/jobs#verify") verify
+      | a job, it only runs commands that were written in that job's Done when, after you confirmed them.
+
+  h2#requirements What you need
+  ul
+    li The machine is paired (see Pairing machines).
+    li Node.js 24 and a copy of the Buildyboy code on the machine, with its dependencies installed (the three commands below).
+    li
+      code claude
+      | installed and logged in on that machine, so it runs without asking anything.
+  pre
+    code
+      | git clone https://github.com/Narcis13/buildyboy
+      | cd buildyboy
+      | npm ci
+
+  h2#config Step 1 · Write runner.json
+  p
+    | The runner reads
+    code ~/.buildyboy/runner.json
+    | (on Windows,
+    code %USERPROFILE%\.buildyboy\runner.json
+    | ). The installer does not create it, so write it yourself. The smallest useful file lists the folders jobs may run
+    | in:
+  pre
+    code
+      | {
+      |   "allowedRoots": ["C:\\work", "C:\\Users\\me\\code"],
+      |   "concurrency": 2
+      | }
+  p On Linux, WSL or macOS:
+  pre
+    code
+      | {
+      |   "allowedRoots": ["/home/me/code"],
+      |   "concurrency": 2
+      | }
+  p All the settings:
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") Key
+          th(data-part="th" scope="col") Default
+          th(data-part="th" scope="col") Meaning
+      tbody(data-part="tbody")
+        tr(data-part="tr")
+          td(data-part="td")
+            code allowedRoots
+          td(data-part="td") required
+          td(data-part="td") Folders jobs may run in, and everything under them. At least one. Windows paths need doubled backslashes in JSON.
+        tr(data-part="tr")
+          td(data-part="td")
+            code concurrency
+          td(data-part="td") 2
+          td(data-part="td") How many jobs may run at the same time on this machine.
+        tr(data-part="tr")
+          td(data-part="td")
+            code claudePath
+          td(data-part="td") claude on the PATH
+          td(data-part="td") The full path of the claude program, if it is not found automatically (on Windows, point it at claude.exe).
+        tr(data-part="tr")
+          td(data-part="td")
+            code pluginDirs
+          td(data-part="td") none
+          td(data-part="td") Extra Claude Code plugin folders to load in every job.
+        tr(data-part="tr")
+          td(data-part="td")
+            code idleExitSeconds
+          td(data-part="td") 120
+          td(data-part="td") How long a finished job waits for a follow-up message before it ends.
+        tr(data-part="tr")
+          td(data-part="td")
+            code stopGraceSeconds
+          td(data-part="td") 10
+          td(data-part="td") After you press Stop, how long to wait before forcing the job to quit.
+  p The file is read when the runner starts. After changing it, restart the runner.
+
+  h2#start Step 2 · Start the runner
+  h3#start-by-hand By hand (to try it)
+  p From the folder where you cloned Buildyboy:
+  pre
+    code
+      | node cli/bb.ts runner
+  p It prints its allowed roots, its concurrency and the claude version it found, then "connected to …". Leave the window open; the runner stops when you close it. On the Machines page the machine now shows Runner: connected.
+  h3#service-linux As a service on Linux or WSL
+  p
+    | Run the installer again with the runner switch, and tell it where your copy of the code is with BB_REPO. Note that
+    | BB_REPO goes after the pipe, in front of bash, so the installer sees it. If the machine is already
+    | paired, leave out the code; it is not paired again.
+  pre
+    code
+      | curl -fsSL {{ site.url }}/install.sh | BB_REPO=$HOME/buildyboy bash -s -- --runner
+  p
+    | This creates and starts a user service named
+    code buildyboy-runner
+    | that restarts by itself. Check it with:
+  pre
+    code
+      | systemctl --user status buildyboy-runner.service
+      | journalctl --user -u buildyboy-runner.service -f
+  p To keep it running after you log out (recommended on a server):
+  pre
+    code
+      | loginctl enable-linger $USER
+  h3#service-windows As a background task on Windows
+  p In PowerShell:
+  pre
+    code
+      | $env:BB_RUNNER='1'; $env:BB_REPO='C:\path\to\buildyboy'; irm {{ site.url }}/install.ps1 | iex
+  p
+    | This registers a scheduled task named
+    code BuildyboyRunner
+    | that starts at logon and restarts itself if it crashes, and starts it right away. If a scheduled task cannot be
+    | created, it falls back to a shortcut in your Startup folder. The task keeps no log; to see what the runner is
+    | doing, stop the task and run
+    code node cli/bb.ts runner
+    | in a terminal.
+  +callout(variant="warning")
+    @content
+      p
+        | Remember: Windows and WSL are separate machines. If you want jobs in both, set up a runner in both, each with its
+        | own runner.json.
+
+  h2#check Step 3 · Check it
+  ol
+    li
+      | Open
+      a(href="/docs/machines") Machines
+      | : the machine says
+      code Runner: connected
+      | and its bay on the Floor says
+      code runner online
+      | .
+    li
+      | Launch a small job, for example the prompt "Say hello and list the files in this folder" with a $0.50 budget, in a
+      | folder inside an allowed root.
+    li Watch it go from queued to running to succeeded on its job page.
+
+  h2#offline When the runner or the server goes away
+  ul
+    li
+      strong The runner is stopped or the machine is off:
+      | new jobs wait in the queue and start when it is back.
+    li
+      strong The connection drops during a job:
+      | the runner keeps working and reconnects by itself, retrying every few seconds up to every 30 seconds. Output is
+      | kept and sent when the connection is back. If it is gone for more than 2 minutes, the job is marked lost; it is
+      | corrected if the runner later reports how it ended.
+    li
+      strong You stop the runner while jobs run:
+      | its jobs are stopped ("runner shutting down").
+
+  h2#problems Common problems
+  dl
+    dt "runner config not found"
+    dd
+      | There is no runner.json yet. Create it (Step 1). Until then a runner service keeps restarting.
+    dt "cwd is outside the runner's allowed roots"
+    dd The job's folder is not under any allowedRoots entry. Add the parent folder to runner.json and restart the runner, or launch in a folder that is.
+    dt "'claude' not found on PATH"
+    dd Set claudePath in runner.json to the full path of claude (claude.exe on Windows).
+    dt "not paired"
+    dd
+      | The machine has no Buildyboy access key. Pair it first (see
+      a(href="/docs/machines") Pairing machines
+      | ).
+    dt The job stays queued
+    dd The runner is not connected (check Machines), all its slots are busy, or another job is already running in the same repository.

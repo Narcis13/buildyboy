@@ -1,4 +1,5 @@
 // Buildyboy service worker: app-shell cache (network first), Web Push with Allow/Deny actions.
+// /docs is server-rendered, not the app shell: it is left to the network so it never replaces the cached shell.
 const CACHE = 'bb-shell-v1';
 
 self.addEventListener('install', (e) => {
@@ -12,7 +13,7 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname.startsWith('/v1/')) return;
+  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname.startsWith('/v1/') || url.pathname.startsWith('/docs')) return;
   e.respondWith(
     fetch(e.request)
       .then((res) => {

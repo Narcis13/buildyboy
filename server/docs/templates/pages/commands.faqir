@@ -1,0 +1,216 @@
+layout "layout.faqir"
+
+block content
+  p
+    | Everything you can type: the slash commands inside Claude Code, Buildyboy's own command-line tool, and the
+    | installer options. Commands that mention your server already use this server's address.
+
+  h2#slash Slash commands in Claude Code
+  p These come with the Buildyboy plugin and work in any Claude Code session on a paired machine. Claude prints their answer as is.
+  dl
+    dt
+      code /bb-status
+    dd
+      | Checks the connection and shows the server, this machine's name, whether walk mode is on for this session, how
+      | many bytes are waiting in the local spool, and this session's link. If the server cannot be reached it says so;
+      | your session keeps working.
+    dt
+      code /bb-walk
+      | [
+      code on
+      | |
+      code off
+      | |
+      code 5m
+      | ]
+    dd
+      | Walk mode for this session: on, off, or on with a wait of N minutes (0 to 9) at the end of each turn. See
+      a(href="/docs/walk-mode#bb-walk") Walk mode
+      | .
+    dt
+      code /bb-link
+    dd
+      | Prints this session's address, for example
+      code {{ site.url }}/s/1b2c…
+      | . Open it on your phone to follow along.
+  p
+    | If the machine is not paired, all three say "Buildyboy is not configured on this machine" and point you to the
+    | Machines page.
+
+  h2#bb The bb command-line tool
+  p
+    | Buildyboy's tool lives in the code itself, as
+    code cli/bb.ts
+    | . Run it with Node.js 24 from a copy of the code, as
+    code node cli/bb.ts <command>
+    | . It is not added to your PATH, so the examples below always use the full form.
+  dl
+    dt#doctor
+      code node cli/bb.ts doctor
+    dd
+      | Checks a machine: whether
+      code ~/.buildyboy/config.json
+      | exists, whether the server is reachable, whether it accepts this machine's key, how much is in the spool, and
+      | whether the hook has recently backed off after a failure. Each line starts with ✔ or ✘.
+    dt#pair
+      code node cli/bb.ts pair <server> <code> [name]
+    dd
+      | Pairs this machine with a code from the Machines page and writes
+      code ~/.buildyboy/config.json
+      | . The name defaults to the computer's host name, with
+      code -wsl
+      | added inside WSL. It does not install the plugin; see
+      a(href="/docs/machines#by-hand") Pairing without the installer
+      | .
+    dt#runner-cmd
+      code node cli/bb.ts runner [--config <file>]
+    dd
+      | Starts the runner in this window. Reads
+      code ~/.buildyboy/runner.json
+      | unless you give another file. See
+      a(href="/docs/runner") Setting up the runner
+      | .
+    dt#import
+      code node cli/bb.ts import [--since <days>] [--dir <folder>]
+    dd
+      | Sends Claude Code transcripts from
+      code ~/.claude/projects
+      | to the server. See
+      a(href="/docs/insights#import") Importing old history
+      | .
+    dt#set-password
+      code node cli/bb.ts set-password
+    dd
+      | Run on the server. Sets the web password (at least 8 characters). It reads the password from the
+      code BB_PASSWORD
+      | variable or from its input, so the easiest form is to pipe it in. There is an example just below this list.
+    dt#backup
+      code node cli/bb.ts backup [--out <file>]
+    dd
+      | Run on the server. Writes a consistent copy of the database, by default into the data folder's
+      code backups
+      | folder, and keeps the newest 14 there.
+    dt#token
+      code node cli/bb.ts token <name>
+    dd
+      | Run on the server. Creates a machine and prints its id and key, for setting up a machine completely by hand.
+      | Pairing codes are easier.
+    dt#server-cmd
+      code node cli/bb.ts server
+    dd Starts the server in this window (the same as npm start). Normally the server runs as a service instead.
+  p Setting the password on the standard WSL install:
+  pre
+    code
+      | cd ~/apps/buildyboy
+      | echo 'my-long-password' | BUILDYBOY_DATA=~/.local/share/buildyboy node cli/bb.ts set-password
+  +callout(variant="warning")
+    @content
+      p
+        | On the server, commands that touch the database need
+        code BUILDYBOY_DATA
+        | pointing at the real data folder. Without it they quietly use a new, empty database in the code folder. Setting
+        | the password this way does not log out browsers that are already logged in; change it in Settings for that.
+
+  h2#installers Installer options
+  h3#install-sh install.sh (Linux, macOS, WSL)
+  pre
+    code
+      | curl -fsSL {{ site.url }}/install.sh | bash -s -- PAIRCODE [--name NAME] [--runner]
+      | curl -fsSL {{ site.url }}/install.sh | bash -s -- --uninstall [--yes]
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") Option
+          th(data-part="th" scope="col") Or variable
+          th(data-part="th" scope="col") Meaning
+      tbody(data-part="tbody")
+        tr(data-part="tr")
+          td(data-part="td") PAIRCODE
+          td(data-part="td") BB_CODE
+          td(data-part="td") The pairing code. Leave it out on an already paired machine to just refresh the plugin.
+        tr(data-part="tr")
+          td(data-part="td") --name NAME
+          td(data-part="td") BB_NAME
+          td(data-part="td") The machine's name in Buildyboy.
+        tr(data-part="tr")
+          td(data-part="td") --runner
+          td(data-part="td") BB_RUNNER=1
+          td(data-part="td") Also install the runner as a service. Needs BB_REPO, the folder of a copy of the code.
+        tr(data-part="tr")
+          td(data-part="td") --uninstall
+          td(data-part="td") BB_UNINSTALL=1
+          td(data-part="td") Remove the plugin and the runner, and ask before deleting ~/.buildyboy.
+        tr(data-part="tr")
+          td(data-part="td") --yes
+          td(data-part="td") BB_YES=1
+          td(data-part="td") Do not ask before deleting.
+        tr(data-part="tr")
+          td(data-part="td") —
+          td(data-part="td") BB_URL
+          td(data-part="td") A different server address (default: the server the script came from).
+  p
+    | Variables must be set for
+    code bash
+    | , after the pipe:
+    code curl … | BB_REPO=~/buildyboy bash -s -- --runner
+    | .
+  h3#install-ps1 install.ps1 (Windows)
+  p
+    | The Windows installer takes the same settings as variables only:
+    code BB_CODE
+    | ,
+    code BB_NAME
+    | ,
+    code BB_RUNNER
+    | ,
+    code BB_REPO
+    | ,
+    code BB_UNINSTALL
+    | ,
+    code BB_YES
+    | and
+    code BB_URL
+    | . Set them first, then run the script:
+  pre
+    code
+      | $env:BB_CODE='PAIRCODE'; $env:BB_NAME='laptop'; irm {{ site.url }}/install.ps1 | iex
+      | $env:BB_UNINSTALL='1'; irm {{ site.url }}/install.ps1 | iex
+  p It reports problems as a red ERROR line rather than a failing exit code, so read its output.
+
+  h2#client-env Settings on each machine
+  p These variables change how the plugin, the runner and the tools behave on a machine:
+  dl
+    dt
+      code BUILDYBOY_DISABLED=1
+    dd Switches the plugin off completely for that terminal or session. Handy for a private session.
+    dt
+      code BUILDYBOY_URL
+      | ,
+      code BUILDYBOY_TOKEN
+    dd Use a different server and key than the ones in config.json.
+    dt
+      code BUILDYBOY_HOME
+    dd Use a different folder than ~/.buildyboy.
+    dt
+      code BUILDYBOY_STATUSLINE_NEXT
+    dd Your own status line command, run by the statusline bridge.
+  h3#files What is in ~/.buildyboy
+  dl
+    dt
+      code config.json
+    dd The server address, this machine's id and its key. Keep it private.
+    dt
+      code runner.json
+    dd The runner's settings, written by you.
+    dt
+      code marketplace/
+    dd The plugin Claude Code loads.
+    dt
+      code spool.jsonl
+    dd Events waiting to be sent (at most 50 MB).
+    dt
+      code breaker
+      | ,
+      code control.json
+    dd Small files the hook uses to back off after failures and to answer quickly.

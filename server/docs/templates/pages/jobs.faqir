@@ -1,0 +1,333 @@
+layout "layout.faqir"
+
+block content
+  p
+    | A
+    strong job
+    | is a Claude Code run that Buildyboy starts for you on one of your machines: you pick a prompt, a machine, a folder
+    | and a budget, and the machine's
+    a(href="/docs/runner") runner
+    | starts
+    code claude -p
+    | there. You can launch jobs from your phone, follow their output live, send follow-up messages, stop them, rerun
+    | them, check their claims, and run them on a schedule.
+  +callout(variant="info")
+    @content
+      p
+        | Jobs need the runner on the target machine. Without it, a job waits in the queue until the runner comes online.
+        | Set it up once with
+        a(href="/docs/runner") Setting up the runner
+        | .
+
+  h2#launch Launching a job
+  p
+    | Open
+    strong Jobs
+    | and press
+    strong New job
+    | , or press
+    strong Launch as a job
+    | in the
+    a(href="/docs/composer") Composer
+    | . The
+    strong Launch a job
+    | form has four parts.
+  include "partials/shot.faqir" (assets=site.assets file="jobs-launch-desktop.png" alt="The Launch a job form: a Saved prompt dropdown, a Prompt text box, an optional Title, then Machine and Project directory dropdowns." caption="The top of the Launch a job form.")
+  h3#launch-what 1. What to run
+  dl
+    dt
+      strong Saved prompt
+    dd
+      | A prompt from your library. Choose
+      strong — Paste a prompt instead —
+      | to type or paste one into
+      strong Prompt text
+      | .
+    dt
+      strong Title (optional)
+    dd How the job is listed. It defaults to the prompt's title, or its Goal.
+  h3#launch-where 2. Where to run it
+  dl
+    dt
+      strong Machine
+    dd
+      | Each machine is listed with
+      code runner online
+      | or
+      code runner offline
+      | . A job for an offline runner waits in the queue ("This machine's runner is offline; the job will wait in the
+      | queue.").
+    dt
+      strong Project directory
+    dd
+      | Known projects on that machine, recent folders, the runner's allowed roots, or
+      strong Other path…
+      | to type one in
+      strong Directory path
+      | . It must be inside one of the runner's allowed roots, or the job fails as soon as it reaches the machine.
+    dt
+      strong New git worktree (-w)
+    dd Runs the job in a separate git worktree, so it does not touch your checked-out files.
+    dt
+      strong Walk mode
+    dd Turns walk mode on for the job's session, so its permission prompts and questions come to your Inbox.
+  h3#launch-limits 3. Limits and options
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") Field
+          th(data-part="th" scope="col") Default
+          th(data-part="th" scope="col") What it does
+      tbody(data-part="tbody")
+        tr(data-part="tr")
+          td(data-part="td") Max budget USD (required)
+          td(data-part="td") 5
+          td(data-part="td") Claude stops when the run has cost this much. Up to 1000.
+        tr(data-part="tr")
+          td(data-part="td") Limit (minutes)
+          td(data-part="td") no limit
+          td(data-part="td") The runner stops the job after this long ("limit of 30 min reached"). Up to 7 days.
+        tr(data-part="tr")
+          td(data-part="td") Model
+          td(data-part="td") Claude Code's default
+          td(data-part="td") For example opus, sonnet, haiku or a full model name.
+        tr(data-part="tr")
+          td(data-part="td") Fallback model
+          td(data-part="td") none
+          td(data-part="td") Used if the main model is overloaded.
+        tr(data-part="tr")
+          td(data-part="td") Effort
+          td(data-part="td") Default
+          td(data-part="td") How hard the model thinks: low, medium, high, xhigh or max.
+        tr(data-part="tr")
+          td(data-part="td") Permission mode
+          td(data-part="td") Default
+          td(data-part="td") What Claude may do without asking. See below.
+        tr(data-part="tr")
+          td(data-part="td") Max turns
+          td(data-part="td") no limit
+          td(data-part="td") Stops after this many back-and-forth turns.
+        tr(data-part="tr")
+          td(data-part="td") Extra allowed tools
+          td(data-part="td") none
+          td(data-part="td") One per line, for example Bash(npm test:*), to pre-approve specific tools.
+        tr(data-part="tr")
+          td(data-part="td") Disallowed tools
+          td(data-part="td") none
+          td(data-part="td") One per line; Claude may never use these.
+  h3#permission-modes Choosing a permission mode
+  p
+    | An unattended run cannot answer permission prompts at the terminal, so choose how much Claude may do on its own:
+  dl
+    dt
+      strong Default
+    dd
+      | Claude asks before risky actions. Unanswered requests are denied, unless you turn on
+      strong Walk mode
+      | for the job and answer them from the Inbox.
+    dt
+      strong acceptEdits
+    dd Claude may edit files without asking, but still asks for commands. A good default for coding jobs with walk mode on.
+    dt
+      strong plan
+    dd Claude only plans and changes nothing.
+    dt
+      strong auto
+      | ,
+      strong dontAsk
+    dd Claude Code's more autonomous modes; see Claude Code's own documentation.
+    dt
+      strong bypassPermissions
+    dd Claude may do anything without asking. Only use it in a throwaway folder or a worktree you are happy to lose.
+  h3#launch-when 4. When to run it
+  p
+    | Choose
+    strong Run now
+    | and press
+    strong Launch job
+    | , or choose
+    strong On a schedule
+    | and press
+    strong Create schedule
+    | (see
+    a(href="#schedules") Schedules
+    | ). After launching you land on the job's page.
+
+  h2#statuses Job statuses
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") Status
+          th(data-part="th" scope="col") Meaning
+      tbody(data-part="tbody")
+        tr(data-part="tr")
+          td(data-part="td") queued
+          td(data-part="td") Waiting for the runner to come online, or for a free slot on it.
+        tr(data-part="tr")
+          td(data-part="td") starting
+          td(data-part="td") Sent to the runner, not yet confirmed. If not confirmed within a minute it goes back to queued.
+        tr(data-part="tr")
+          td(data-part="td") running
+          td(data-part="td") Claude is working.
+        tr(data-part="tr")
+          td(data-part="td") succeeded
+          td(data-part="td") Claude finished without an error.
+        tr(data-part="tr")
+          td(data-part="td") failed
+          td(data-part="td") The runner refused it (for example a folder outside the allowed roots), or Claude ended with an error or hit a budget or turn limit. The reason is shown in red.
+        tr(data-part="tr")
+          td(data-part="td") stopped
+          td(data-part="td") You stopped or cancelled it, or its time limit was reached.
+        tr(data-part="tr")
+          td(data-part="td") lost
+          td(data-part="td") The runner lost contact for more than 2 minutes. If it reconnects and reports the real outcome, the status is corrected.
+  p
+    | A job stays
+    strong running
+    | for about two minutes after Claude has finished, so that you can still send it a follow-up message. It then turns
+    | into
+    strong succeeded
+    | by itself.
+  h3#queue How the queue works
+  ul
+    li Each machine runs at most 2 jobs at a time by default (its runner's concurrency).
+    li Only one job runs per repository at a time; others for the same repository wait.
+    li Queued jobs start within a few seconds of a slot freeing up.
+
+  h2#list The job list
+  p
+    | The
+    strong Jobs
+    | page lists jobs newest first, filtered with
+    strong All
+    | ,
+    strong Active
+    | ,
+    strong Done
+    | and
+    strong Failed
+    | . Each row shows the status, title, machine, folder, cost, duration and, for jobs with a time limit, how much time
+    | is left.
+
+  h2#detail The job page
+  p At the top: the status, the machine, cost against budget (for example $0.42 / $5.00), duration and remaining time (amber in the last 5 minutes), the folder, a link to its session, and a summary of its options.
+  dl
+    dt
+      strong Cancel
+      | /
+      strong Stop
+    dd
+      | Cancels a queued job, or stops a running one. Press twice: the button changes to
+      strong Tap again to stop
+      | so a stray tap does nothing.
+    dt
+      strong Rerun
+    dd Starts a new job with the same prompt and options (for ended jobs).
+    dt
+      strong Resume
+    dd
+      | Starts a new job that continues the same Claude session, with an optional message (by default "Continue where
+      | you left off."). Useful after a job ran out of budget or time.
+  h3#output Output
+  p
+    | The output shows what Claude is doing, live: its messages, thinking, tool calls (tap one to see its input), tool
+    | results and a final summary such as "Result · success · $0.12 · 5 turns · 40 s". Toggle
+    strong Follow
+    | to stay at the bottom and
+    strong Raw
+    | to see the underlying lines. The newest 400 items are shown, with a button for earlier ones.
+  h3#follow-up Follow-up messages
+  p
+    | While a job is live, type in
+    strong Send a follow-up message…
+    | and press
+    strong Send
+    | . It appears in the output as a
+    strong You
+    | bubble and Claude continues with it.
+  h3#verify Verify
+  p
+    | Agents sometimes say "all tests pass" when they do not. The
+    strong Verify
+    | card lets the runner check for itself after the job ends: it runs the
+    strong Done when
+    | commands from the prompt (the ones written in backticks) in the job's folder, one by one.
+  ol
+    li
+      | Check the list in
+      strong Commands (one per line)
+      | . It is pre-filled from the prompt.
+    li
+      | Press
+      strong Verify N commands…
+      | , read the confirmation ("Run these N commands with the shell in …?") and press
+      strong Confirm and run
+      | .
+    li Each command shows PASS or FAIL with its exit code and output, and the card says how many passed.
+  +callout(variant="muted")
+    @content
+      p
+        | For safety the runner only runs commands that appeared in that job's own prompt, and only if it is the runner
+        | that ran the job and it has not restarted since. Each command may take up to 10 minutes.
+
+  h2#schedules Schedules
+  p
+    | A schedule launches the same prompt again and again, for example every night at 2:00. Create one from the launch
+    | form: fill it in as usual, choose
+    strong On a schedule
+    | , type a cron expression in
+    strong Cron (minute hour day month weekday, server time)
+    | , and press
+    strong Create schedule
+    | . Schedules are listed under
+    strong Schedules
+    | on the Jobs page with their next and last run.
+  h3#cron Writing a cron expression
+  p Five fields separated by spaces: minute (0–59), hour (0–23), day of the month (1–31), month (1–12 or jan–dec) and weekday (0–7 or sun–sat, where 0 and 7 are Sunday).
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") Expression
+          th(data-part="th" scope="col") Runs
+      tbody(data-part="tbody")
+        tr(data-part="tr")
+          td(data-part="td")
+            code 0 2 * * *
+          td(data-part="td") every night at 02:00
+        tr(data-part="tr")
+          td(data-part="td")
+            code 30 6 * * 1-5
+          td(data-part="td") at 06:30 on weekdays
+        tr(data-part="tr")
+          td(data-part="td")
+            code 0 */4 * * *
+          td(data-part="td") every 4 hours, on the hour
+        tr(data-part="tr")
+          td(data-part="td")
+            code 0 9 1 * *
+          td(data-part="td") at 09:00 on the first of every month
+  p
+    code *
+    | means every value; use commas for lists (
+    code 1,15
+    | ), a dash for ranges (
+    code 1-5
+    | ) and a slash for steps (
+    code */15
+    | ). Shortcuts such as
+    code @daily
+    | are not supported.
+  h3#schedule-notes Good to know
+  ul
+    li Times are in the server's time zone.
+    li Runs missed while the server was down are not made up later.
+    li A schedule uses the saved prompt's current version every time it fires, so editing the prompt changes future runs.
+    li
+      | Schedules cannot be paused or edited. To change one, delete it (press
+      strong Delete
+      | , then
+      strong Tap again to delete
+      | ) and create it again.

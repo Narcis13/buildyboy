@@ -1,0 +1,176 @@
+layout "layout.faqir"
+
+block content
+  p
+    | Claude Code stops and waits whenever it needs you: to approve a command, to answer a question, to approve a plan,
+    | or simply because it finished and wants the next instruction. At your desk that is fine. Away from it, Claude sits
+    | idle until you come back.
+    strong Walk mode
+    | moves those moments to your phone.
+
+  h2#on-off What changes when it is on
+  div(data-ui="grid" data-cols="1" data-cols-md="2" data-gap="4")
+    +card(title="Walk mode off (the default)")
+      @body
+        ul
+          li The plugin only reports what happens.
+          li Permission prompts, questions and plans appear in the terminal as usual.
+          li Nothing ever waits on the server, so your sessions are never slowed down.
+    +card(title="Walk mode on")
+      @body
+        ul
+          li Permission prompts, questions and plans become Inbox cards and notifications, and Claude waits for your answer.
+          li At the end of each turn Claude waits up to 5 minutes for your next instruction ("Turn finished").
+          li Your answer goes straight back to Claude, which carries on.
+
+  h2#turn-on Turning it on and off
+  p There are three places, from broadest to narrowest:
+  dl
+    dt
+      strong For everything:
+      | the
+      strong Walk mode
+      | switch in the
+      a(href="/docs/inbox") Inbox
+    dd The global setting. Every session follows it unless its machine or the session itself says otherwise.
+    dt
+      strong For one machine:
+      | the
+      strong Walk mode
+      | control on its card in
+      a(href="/docs/machines") Machines
+    dd
+      strong Inherit
+      | follows the global setting,
+      strong On
+      | means "always on for this machine" and
+      strong Off
+      | means "never waits for you here". Handy for a machine that runs unattended jobs.
+    dt
+      strong For one session:
+      | the
+      strong Walk mode
+      | switch in its
+      a(href="/docs/sessions#controls") header
+      | , or the
+      code /bb-walk
+      | command inside Claude Code
+    dd The narrowest setting, and the one that wins.
+  h3#which-wins Which setting wins
+  p
+    | Buildyboy looks at the session first: if the session has its own setting, that is used. If not, it uses the
+    | machine's setting, unless the machine is on
+    strong Inherit
+    | , in which case the global switch decides.
+  +callout(variant="warning")
+    @content
+      p
+        | Once you have switched walk mode on or off for a session, that session keeps its own setting. Turning the global
+        | switch off later does
+        strong not
+        | turn it off for that session. Switch it off on the session itself, or type
+        code /bb-walk off
+        | in it.
+
+  h2#bb-walk The /bb-walk command
+  p Inside any Claude Code session on a paired machine, type:
+  dl
+    dt
+      code /bb-walk
+      | or
+      code /bb-walk on
+    dd Walk mode on for this session.
+    dt
+      code /bb-walk off
+    dd Walk mode off for this session.
+    dt
+      code /bb-walk 5m
+    dd
+      | Walk mode on, and at the end of each turn wait up to 5 minutes for your reply. Any number from 0 to 9 works (for
+      | example
+      code 2.5m
+      | );
+      code 0m
+      | means "do not wait at the end of a turn at all".
+  p
+    | It replies with a line such as "Walk mode ON for this session; at the end of a turn Claude waits up to 5 min for
+    | your reply." If the server does not know the session yet, it applies to the whole machine instead and says so.
+  +callout(variant="muted")
+    @content
+      p
+        | Anything other than
+        code off
+        | turns walk mode on, so a typo such as
+        code /bb-walk of
+        | switches it on. Check the reply.
+
+  h2#waiting How long things wait
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") What
+          th(data-part="th" scope="col") How long
+          th(data-part="th" scope="col") If you do not answer
+      tbody(data-part="tbody")
+        tr(data-part="tr")
+          td(data-part="td") Permission, question, plan
+          td(data-part="td") about 9½ minutes
+          td(data-part="td") Claude Code's normal behaviour takes over: in a terminal the usual prompt appears; in an unattended claude -p run the request is denied.
+        tr(data-part="tr")
+          td(data-part="td") Turn finished
+          td(data-part="td") 5 minutes by default, at most 9
+          td(data-part="td") The session goes idle, as it would have anyway.
+        tr(data-part="tr")
+          td(data-part="td") Pause (per session or Pause everything)
+          td(data-part="td") about 9½ minutes per tool call
+          td(data-part="td") The held tool runs, and the next tool call is held again.
+  p
+    | The end-of-turn wait can be changed in three ways:
+    code /bb-walk Nm
+    | for one session,
+    strong Hold at Stop (minutes)
+    | in
+    a(href="/docs/settings#budgets") Settings
+    | for everyone, or the server's
+    code BUILDYBOY_STOP_WAIT_MIN
+    | setting. The session's own value wins, then Settings, then the server default. Values above 9 minutes are treated
+    | as 9, because Claude Code gives up on a hook after 10.
+
+  h2#answering-late Answering late, or at the desk
+  ul
+    li
+      strong You answered at the terminal first.
+      | The card moves to History as "Answered at the terminal" and leaves the Inbox.
+    li
+      strong The wait ran out before you answered.
+      | Answering now shows "Already answered (probably at your desk)." Nothing is lost: if Claude is at its prompt,
+      | send your instruction from the session page instead; it is delivered at the next turn.
+    li
+      strong The server restarted while something was waiting.
+      | The waiting request is released and recorded as timed out.
+
+  h2#server-down If the server cannot be reached
+  p
+    | Walk mode relies on the server. If the hook cannot reach it, it does what it always does: it gives up within a
+    | second and lets Claude Code behave normally. Prompts appear at the terminal and your phone sees nothing until the
+    | connection is back. Events are kept in the local spool and sent later.
+
+  h2#good-habits Good habits
+  ol
+    li
+      | Before leaving, check notifications work with
+      strong Send test notification
+      | in
+      a(href="/docs/notifications") Settings → Notifications
+      | .
+    li
+      | Turn walk mode on in the Inbox (or with
+      code /bb-walk 5m
+      | in the session you care about).
+    li
+      | Keep an eye on the attention bar; "1 waiting for you" is your cue.
+    li
+      strong Turn walk mode off when you are back.
+      | Otherwise every finished turn at your desk waits up to 5 minutes for a reply that you would rather type in the
+      | terminal.

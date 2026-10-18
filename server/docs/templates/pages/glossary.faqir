@@ -1,0 +1,124 @@
+layout "layout.faqir"
+
+block content
+  p Every term used in this manual, in alphabetical order, with a link to where it is explained in full.
+  dl
+    dt#allowed-roots Allowed roots
+    dd
+      | The folders a machine's runner may start jobs in, listed in its runner.json. Only that machine can change them.
+      a(href="/docs/runner#config") More
+    dt#attention-bar Attention bar
+    dd
+      | The strip at the top of every page that says what needs you, such as "2 waiting for you".
+      a(href="/docs/floor#attention-bar") More
+    dt#bay Bay
+    dd A machine on the Floor, drawn as a dashed box holding its stations.
+    dt#belt Belt (conveyor belt)
+    dd
+      | The row of coloured blocks on a station: its last 20 tool calls.
+      a(href="/docs/floor#bays-and-stations") More
+    dt#claude-code Claude Code
+    dd Anthropic's AI coding assistant that runs in your terminal (and in its desktop app). Buildyboy watches and helps steer it.
+    dt#compaction Compaction
+    dd When a conversation gets too long, Claude Code summarises it to free up context space. Shown as Compacting.
+    dt#composer Composer
+    dd
+      | The page where you write and save prompts for unattended runs.
+      a(href="/docs/composer") More
+    dt#context Context
+    dd How much of the model's working memory (its context window) the conversation fills, as a percentage.
+    dt#done-when Done when
+    dd
+      | The list of checks in a harness prompt that tell Claude, and Buildyboy's Verify, when the work is finished.
+      a(href="/docs/composer#fields") More
+    dt#harness Harness prompt
+    dd
+      | Buildyboy's built-in prompt template for long unattended runs: your Goal, Done when and Scope, plus fixed
+      | guidance on working, testing, git and PROGRESS.md.
+      a(href="/docs/composer#harness") More
+    dt#hook Hook
+    dd
+      | A small program Claude Code runs at fixed moments (a tool is about to run, a turn ended…). The Buildyboy plugin's
+      | hook reports these moments to the server.
+      a(href="/docs/concepts#hooks") More
+    dt#inbox Inbox
+    dd
+      | Where requests wait for your answer while walk mode is on.
+      a(href="/docs/inbox") More
+    dt#job Job
+    dd
+      | A Claude Code run started by Buildyboy on one of your machines, with a budget and optional limits.
+      a(href="/docs/jobs") More
+    dt#machine Machine
+    dd A computer, or a WSL installation, paired with Buildyboy. Windows and WSL on the same PC are two machines.
+    dt#mcp MCP
+    dd Model Context Protocol: a way to give Claude extra tools from outside programs. MCP tool calls are pink on the belt.
+    dt#pairing Pairing, pairing code
+    dd
+      | Connecting a machine to Buildyboy with a one-time 8-character code that expires after 10 minutes.
+      a(href="/docs/machines") More
+    dt#permission-mode Permission mode
+    dd What Claude may do without asking: default, acceptEdits, plan, auto, dontAsk or bypassPermissions.
+    dt#plan-mode Plan mode
+    dd A Claude Code mode in which Claude proposes a plan before changing anything. With walk mode on, the plan comes to your Inbox.
+    dt#plugin Plugin
+    dd The Buildyboy add-on installed into Claude Code on each paired machine. It provides the hooks and the /bb-… commands.
+    dt#progress PROGRESS.md
+    dd A file harness runs keep in the repository with what is done, decisions, failed attempts and next steps. Shown in the session's Progress panel.
+    dt#project Project
+    dd
+      | A repository or folder on one machine, with all the sessions and jobs that ran in it.
+      a(href="/docs/projects") More
+    dt#pwa PWA
+    dd A web app that can be installed on a phone's home screen. Buildyboy is one; on iPhone, installing it is needed for notifications.
+    dt#redaction Redaction
+    dd
+      | Replacing secrets with [REDACTED] before anything is stored.
+      a(href="/docs/settings#redaction") More
+    dt#revoke Revoke
+    dd Cutting a machine off for good. Its history stays.
+    dt#rotate Rotate token
+    dd Giving a machine a new key and making the old one stop working.
+    dt#runner Runner
+    dd
+      | A background program on a machine that starts jobs for Buildyboy.
+      a(href="/docs/runner") More
+    dt#session Session
+    dd One conversation with Claude Code, from starting claude to quitting it.
+    dt#schedule Schedule
+    dd
+      | A job that runs again and again at times given by a cron expression.
+      a(href="/docs/jobs#schedules") More
+    dt#spec-ify Spec-ify
+    dd
+      | A Composer feature that turns a rough idea into Goal, Done when, Scope and a draft spec, by running a short job.
+      a(href="/docs/composer#spec-ify") More
+    dt#spool Spool
+    dd The file on each machine (~/.buildyboy/spool.jsonl) where events wait when the server cannot be reached.
+    dt#stale Stale
+    dd A session that was working but has sent nothing for 10 minutes.
+    dt#station Station
+    dd A session's card on the Floor.
+    dt#statusline Statusline bridge
+    dd
+      | An optional script that feeds context and usage-limit figures to Buildyboy.
+      a(href="/docs/settings#statusline") More
+    dt#subagent Subagent
+    dd A helper agent Claude starts for part of a task. Shown as ✣ on the Floor and as its own lane in a session.
+    dt#turn Turn
+    dd One round of work: from your prompt until Claude stops and waits for the next one.
+    dt#verify Verify
+    dd
+      | Re-running a job's Done when commands on its machine to check the agent's claims.
+      a(href="/docs/jobs#verify") More
+    dt#walk-mode Walk mode
+    dd
+      | The switch that sends permission prompts, questions, plans and finished turns to your phone and makes Claude
+      | wait for your answer.
+      a(href="/docs/walk-mode") More
+    dt#watcher Watcher
+    dd
+      | A check Buildyboy runs every minute on each session: stale, loop, budget, context and harness alignment.
+      a(href="/docs/settings#watchers") More
+    dt#worktree Worktree
+    dd A separate working copy of a git repository. Running a job in a new worktree keeps it away from your checked-out files.

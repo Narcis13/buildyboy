@@ -1,0 +1,239 @@
+layout "layout.faqir"
+
+block content
+  p
+    | The
+    strong Settings
+    | page holds everything that applies to your whole Buildyboy: notifications, limits and warnings, GitHub, telemetry,
+    | secret masking, your password and your logged-in devices. Each section has its own
+    strong Save
+    | button, which shows
+    code Saving…
+    | and then
+    code Saved
+    | .
+  include "partials/shot.faqir" (assets=site.assets file="settings-desktop.png" alt="The Settings page: Notifications and Budgets, retention and watchers on the left; Telemetry and statusline and Redaction rules on the right." caption="Settings on a computer. On a phone the sections are stacked.")
+
+  h2#notifications Notifications
+  p
+    | Web Push per device, the test button, the ntfy fallback, quiet hours and the switch for each kind of notification.
+    | All of it is explained in
+    a(href="/docs/notifications") Notifications
+    | .
+
+  h2#budgets Budgets, retention and watchers
+  dl
+    dt
+      strong Hold at Stop (minutes)
+    dd
+      | With walk mode on, how long a finished turn waits for your next instruction. Default 5. Values above 9 are treated
+      | as 9; 0 means no wait. A session's own
+      code /bb-walk Nm
+      | wins over this.
+    dt
+      strong Keep raw events (days)
+    dd
+      | Raw hook events and job output older than this are deleted (the clean-up runs several times a day). Sessions, your
+      | prompts, Claude's messages and key events stay. Default 90.
+    dt
+      strong Session budget (USD)
+    dd Warns you when one session has cost about this much. Empty means no limit.
+    dt
+      strong Job budget (USD)
+    dd
+      | Warns you when one job approaches this cost. Empty means no limit. The warning fires at 90% of the amount. A job's
+      | own Max budget is still what actually stops it.
+    dt
+      strong Context threshold (%)
+    dd The context watcher warns when a session's context is fuller than this. Default 85, from 1 to 100.
+  h3#watchers Smart watchers
+  p
+    | Watchers look at every session once a minute and raise a warning once per problem: a row in the session's timeline
+    | and, if switched on in Notifications, a notification.
+  dl
+    dt
+      strong Stale
+    dd No event for 10 minutes while working.
+    dt
+      strong Loop suspicion
+    dd The same failing call 3 or more times, or 15 turns with no file changes.
+    dt
+      strong Budget
+    dd A session or job passes its cost threshold. This switch also covers the rate-limit warning (above 80% of Claude's usage window) and the harness "Limit reached" warning.
+    dt
+      strong Context
+    dd The context is above the threshold, or the session has compacted 3 or more times.
+    dt
+      strong Harness alignment
+    dd
+      | A harness run's
+      code PROGRESS.md
+      | "Next" section has not changed for 60 minutes: it may be stuck.
+
+  h2#github GitHub
+  p
+    | With a GitHub token, Buildyboy follows the pull requests for your sessions' branches and their check results (it
+    | looks every 2 minutes), shows them in the session's Git panel and on project pages, and notifies you when checks
+    | pass or fail.
+  ol
+    li
+      | On GitHub, create a
+      strong fine-grained personal access token
+      | with read-only access to
+      strong Pull requests
+      | ,
+      strong Checks
+      | (or Commit statuses) and
+      strong Contents
+      | for the repositories you care about.
+    li
+      | Paste it into
+      strong Personal access token
+      | and press
+      strong Save
+      | .
+  p
+    | The token is never shown again ("A token is saved. Type a new one to replace it."). Press
+    strong Remove token
+    | to stop. Only sessions active in the last 7 days, on repositories hosted on github.com, are followed, and only pull
+    | requests opened from a branch of the same repository.
+
+  h2#telemetry Telemetry and statusline
+  p
+    | Two optional extras, each a snippet you add to
+    code ~/.claude/settings.json
+    | on a machine. Buildyboy never edits that file for you. If the file already has an
+    code env
+    | section, merge the lines into it.
+  h3#otel OpenTelemetry: exact cost, tokens and latency
+  p
+    | Claude Code can report its own usage figures. Without them Buildyboy estimates cost from what the hooks see; with
+    | them the numbers are exact. Copy the snippet from Settings; it looks like this:
+  pre
+    code
+      | {
+      |   "env": {
+      |     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+      |     "OTEL_METRICS_EXPORTER": "otlp",
+      |     "OTEL_LOGS_EXPORTER": "otlp",
+      |     "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+      |     "OTEL_EXPORTER_OTLP_ENDPOINT": "{{ site.url }}",
+      |     "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer <machine token>"
+      |   }
+      | }
+  p
+    | Replace
+    code <machine token>
+    | with the
+    code token
+    | value from that machine's
+    code ~/.buildyboy/config.json
+    | .
+  h3#statusline The statusline bridge: context and rate limits
+  p
+    | Claude Code can show a status line under the prompt. The bridge is a tiny script that passes that information
+    | (context fill, cost, model, how much of your 5-hour and 7-day usage windows is used) to Buildyboy, then prints a
+    | status line as usual. It powers the context meters and the Rate limits chart in Insights.
+  pre
+    code
+      | {
+      |   "statusLine": {
+      |     "type": "command",
+      |     "command": "node ~/.buildyboy/marketplace/plugin/statusline/bb-statusline.mjs"
+      |   }
+      | }
+  +callout(variant="warning")
+    @content
+      p
+        | The snippet shown in Settings points at
+        code ~/.buildyboy/plugin/statusline/…
+        | , which does not exist after a normal install. Use the path above, inside
+        code marketplace
+        | , as written here.
+  p
+    | Already have a status line of your own? Keep it: put its command in
+    code BUILDYBOY_STATUSLINE_NEXT
+    | in the same
+    code env
+    | section, and the bridge runs it and shows its output. Without one, the bridge prints model, context and cost, for
+    | example
+    code sonnet · ctx 42% · $0.31
+    | .
+
+  h2#redaction Redaction rules
+  p
+    | Before anything is stored, Buildyboy masks secrets with
+    code [REDACTED]
+    | . Built-in rules already cover API keys (OpenAI-style, Stripe, Google, npm, Slack), GitHub and AWS tokens, JWTs,
+    code Bearer
+    | headers,
+    code password=
+    | style values, command-line secrets such as
+    code --token
+    | , private keys, and the whole content of
+    code .env
+    | files (except
+    code .env.example
+    | ,
+    code .sample
+    | and
+    code .template
+    | ).
+  p Add your own rules for anything else, such as internal tokens:
+  ol
+    li
+      | Press
+      strong Add a rule
+      | and fill in a
+      strong name
+      | , a
+      strong pattern
+      | (a JavaScript regular expression, for example
+      code acme-[a-z0-9]{16}
+      | ) and optional
+      strong flags
+      | .
+    li
+      | Check the line under the rule says
+      code Valid
+      | , and try it in
+      strong Try it on sample text
+      | .
+    li
+      | Press
+      strong Save
+      | .
+  +callout(variant="muted")
+    @content
+      p
+        | Leave
+        strong flags
+        | empty (or include
+        code g
+        | ) so every match is masked, not just the first. New rules apply to data that arrives after you save; what is
+        | already stored is not changed. The live preview only masks the first match when flags are empty, even though the
+        | server masks them all.
+
+  h2#password Password
+  p
+    | Type your
+    strong Current password
+    | , then the
+    strong New password
+    | (at least 8 characters) twice, and press
+    strong Change password
+    | . Every other logged-in device is logged out; this one stays logged in. Forgot the password? Reset it on the
+    | server; see
+    a(href="/docs/commands#set-password") bb set-password
+    | .
+
+  h2#devices Devices
+  p
+    | Lists every browser that is logged in, such as "Chrome on Windows", with its address and when it was last active.
+    | The current one is marked
+    code this device
+    | . Press
+    strong Log out
+    | next to any device you do not recognise, or
+    strong Log out of this device
+    | to log out here. A login lasts 30 days.

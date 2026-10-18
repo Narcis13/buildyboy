@@ -1,0 +1,106 @@
+layout "layout.faqir"
+
+block content
+  p
+    | Buildyboy sees a lot: your prompts, Claude's replies, the commands it runs and the code it changes. This page
+    | explains what is stored, how it is protected, who can do what, and what you can do to tighten it further.
+
+  h2#stored What is stored, and where
+  p
+    | Everything is stored in one database on
+    strong your
+    | server; nothing is sent to anyone else. Notifications go through your browser's push service (Google, Apple or
+    | Mozilla) or ntfy if you set it up, and carry only a short title, the project and the session name.
+  ul
+    li
+      strong Stored:
+      | session events, your prompts and Claude's messages, tool calls with their input and output (long outputs are
+      | shortened), file diffs, git state, PROGRESS.md notes, saved prompts, job output, settings.
+    li
+      strong Never stored as plain text:
+      | your password (stored as a scrypt hash), machine keys (stored as hashes; the machine keeps the only copy).
+    li
+      strong Kept for a limited time:
+      | raw hook events and job output are deleted after the number of days in
+      a(href="/docs/settings#budgets") Keep raw events
+      | (90 by default).
+
+  h2#redaction Secrets are masked first
+  p
+    | Before anything is written to the database, Buildyboy replaces secrets with
+    code [REDACTED]
+    | : API keys and tokens of the common services, JWTs, Bearer headers, password and token values, private keys, and
+    | the entire content of any
+    code .env
+    | file Claude reads or writes. You can add rules of your own; see
+    a(href="/docs/settings#redaction") Redaction rules
+    | . Masking happens on the way in, so it also applies to imported history.
+  +callout(variant="muted")
+    @content
+      p
+        | Masking is pattern-based. A secret in an unusual format can slip through. If you work with such secrets, add a
+        | rule for them, and avoid pasting secrets into prompts.
+
+  h2#web-access Who can use the web app
+  ul
+    li There is one password. Anyone with it has full access.
+    li
+      | Logins last 30 days and are kept in a cookie that scripts cannot read and that other sites cannot use (HttpOnly,
+      | SameSite=Strict, and Secure over https). Every change also requires a second, per-login token, which blocks
+      | cross-site request forgery.
+    li After 10 wrong passwords from one address within a minute, logins from that address are refused for a minute.
+    li
+      | Settings → Devices shows every logged-in browser and lets you log any of them out. Changing the password logs out
+      | all the others.
+    li This manual is public on purpose: it contains no data.
+
+  h2#machine-access What a machine can do
+  ul
+    li Each machine has its own key, created through a single-use pairing code that expires after 10 minutes.
+    li A machine can only send events about its own sessions and answer its own sessions' requests. It cannot read anything else.
+    li
+      | A leaked key can be replaced (
+      strong Rotate token
+      | ) or cut off for good (
+      strong Revoke
+      | ) on the Machines page.
+
+  h2#what-runs What runs where
+  ul
+    li
+      strong The server never runs Claude or any command.
+      | It records, displays and relays answers.
+    li
+      strong The plugin
+      | runs a short Node.js script for each hook. It fails open: if anything goes wrong it does nothing and lets Claude
+      | Code continue normally. With walk mode off it never changes what Claude does.
+    li
+      strong The runner
+      | only starts
+      code claude
+      | with a checked list of options (no shell), only inside the allowed roots listed in its own settings file, which
+      | the server cannot change. The only other commands it runs are a job's own Done when commands, and only after you
+      | confirm them on the job page.
+
+  h2#permissions Choosing permission modes for jobs
+  p
+    | The most important safety decision is yours: the permission mode of each job.
+    strong bypassPermissions
+    | lets Claude run anything without asking; use it only in a worktree or a disposable folder.
+    strong acceptEdits
+    | with walk mode on is a good everyday choice: Claude edits freely but asks you before running commands. See
+    a(href="/docs/jobs#permission-modes") Choosing a permission mode
+    | .
+
+  h2#hardening Tightening things up
+  ol
+    li Use a long, unique password, and log out devices you no longer use.
+    li Keep the server listening on 127.0.0.1 behind Caddy (the default), so it is only reachable over https.
+    li Keep the allowed roots in each runner.json as narrow as possible, for example one folder of repositories rather than your whole home folder.
+    li Revoke machines you no longer use.
+    li Add redaction rules for any internal secret formats you use.
+    li Keep your ntfy topic name long and random, or do not use ntfy.
+    li
+      | Copy backups off the server regularly; they contain everything above. See
+      a(href="/docs/server#backups") Backups
+      | .
