@@ -20,17 +20,20 @@
     "e2e": "npm run build && playwright test",
     "simulate": "node scripts/simulate.ts",
     "smoke:claude": "node scripts/smoke-claude.ts",
-    "docs:screenshots": "node scripts/docs-screenshots.ts"
+    "docs:screenshots": "node scripts/docs-screenshots.ts",
+    "smoke:mcp": "node scripts/smoke-mcp.ts"
   },
   "dependencies": {
     "@faqir-ui/core": "1.2.5",
     "@faqir-ui/template": "1.2.5",
     "@hono/node-server": "^2.1.4",
+    "@modelcontextprotocol/server": "2.4.0",
     "hono": "^4.13.13",
     "web-push": "^3.6.7",
     "zod": "^4.6.6"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
     "@playwright/test": "^1.64.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-query": "^5.104.2",

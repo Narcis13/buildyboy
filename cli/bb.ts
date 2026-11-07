@@ -7,7 +7,10 @@
 //   bb token <machine-name>        create a machine and print its token (server host only)
 //   bb import [--dir <path>]       backfill transcripts from ~/.claude/projects
 //   bb backup [--out <file>]       online SQLite backup
-//   bb doctor                      check config, server reachability and spool
+//   bb doctor                      check config, server reachability, spool and what the factory still needs
+//   bb mcp                         MCP server (stdio) for a coordinator; needs BUILDYBOY_AGENT_TOKEN
+//   bb tasks import <path>         Markdown task files into the backlog; needs BUILDYBOY_AGENT_TOKEN
+//   bb agent-token <name>          create an agent token and print it (server host only)
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { configFromEnv, createContext } from '../server/main.ts';
@@ -91,7 +94,31 @@ switch (cmd) {
     process.exitCode = await doctor();
     break;
   }
+  case 'mcp': {
+    const { runMcp } = await import('./mcp.ts');
+    await runMcp();
+    break;
+  }
+  case 'tasks': {
+    const { tasksCli } = await import('./tasks.ts');
+    process.exitCode = await tasksCli(rest);
+    break;
+  }
+  case 'agent-token': {
+    const name = rest[0];
+    if (!name) {
+      console.error('usage: bb agent-token <name>');
+      process.exit(1);
+    }
+    const { createAgentToken } = await import('../server/factory/agent.ts');
+    const ctx = localCtx();
+    const t = createAgentToken(ctx, name);
+    ctx.db.audit('cli', 'agent_token_create', t.id, { name });
+    ctx.db.close();
+    console.log(JSON.stringify({ id: t.id, token: t.token }));
+    break;
+  }
   default:
-    console.error(`unknown command: ${cmd}\nusage: bb server | runner | pair | set-password | token | import | backup | doctor`);
+    console.error(`unknown command: ${cmd}\nusage: bb server | runner | pair | set-password | token | agent-token | import | backup | doctor | mcp | tasks`);
     process.exit(1);
 }

@@ -3,6 +3,7 @@ import { runWatchers } from './watchers.ts';
 import { expireOrphans } from './control/pending.ts';
 import { startGithubPoller } from './github/poller.ts';
 import { startJobScheduler } from './jobs/scheduler.ts';
+import { maybeDailyDigest } from './factory/digest.ts';
 
 /** Periodic jobs: watchers, retention, the job scheduler and the GitHub poller. Returns a stop function. */
 export function startBackground(ctx: Ctx): () => void {
@@ -20,6 +21,7 @@ export function startBackground(ctx: Ctx): () => void {
   };
 
   every(60_000, () => runWatchers(ctx));
+  every(60_000, () => maybeDailyDigest(ctx));
   every(30_000, () => expireOrphans(ctx));
   every(6 * 3600_000, () => purgeOld(ctx));
 

@@ -25,7 +25,8 @@ const answerSchema: z.ZodType<ActionAnswer> = z.union([
 
 /** Settings readable/writable from the web. Secrets are write-only. */
 const SETTINGS = ['walk_mode', 'pause_all', 'stop_wait_min', 'retention_days', 'redaction_rules', 'budget_session_usd', 'budget_job_usd',
-  'watchers', 'ntfy_url', 'quiet_hours', 'push_types', 'github_token', 'context_threshold_pct'] as const;
+  'watchers', 'ntfy_url', 'quiet_hours', 'push_types', 'github_token', 'context_threshold_pct',
+  'governor_five_hour_pct', 'governor_seven_day_pct', 'governor_max_age_min', 'digest_enabled', 'digest_time'] as const;
 const SECRET_SETTINGS = new Set(['github_token']);
 
 export function webRoutes(ctx: Ctx) {
