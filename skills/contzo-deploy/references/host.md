@@ -129,3 +129,8 @@ Claude usually runs in Windows (PowerShell + Git Bash tools). Reaching into WSL:
   unsets `NODE_ENV` for the build and only production runs get it.
 - Apps must listen on `127.0.0.1:$PORT`. Binding `0.0.0.0` would publish the port to the internet
   past Caddy (the firewall is off).
+- Caddy 2.6.2 can **panic during `systemctl reload caddy`** ("context: internal error: missing
+  cancel error", 2026-10-24, while a reload added edgy.contzo.lol and started its certificate).
+  The whole server exits, so every site goes down and later `--setup` runs fail with "caddy.service
+  is not active". Recovery: `sudo systemctl start caddy` (a fresh start was fine), then re-run
+  `--setup`. A newer Caddy from the official repo would likely fix it; ask before upgrading.
