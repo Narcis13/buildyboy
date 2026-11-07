@@ -123,7 +123,7 @@ scripts/     simulate.ts (replays fixtures into a running server), smoke-claude.
 - **Envelope.** Wrap the hook JSON with:
   - `machineId`, `hostname`, `platform`. The platform is win32, linux, darwin or **wsl**; detect WSL from `/proc/version` containing "microsoft".
   - `user`, `pid`, `ppid`, `hookVersion`, `ts`.
-  - a few allowlisted environment variables. These are the entrypoint or source variable, `CLAUDE_PROJECT_DIR`, `TERM_PROGRAM` and `BUILDYBOY_JOB_ID`. **Never send the whole environment.**
+  - a few allowlisted environment variables. These are the entrypoint or source variable, `CLAUDE_PROJECT_DIR`, `TERM_PROGRAM`, `BUILDYBOY_JOB_ID` and herdr's `HC_TERMINAL_ID` (§11.4). **Never send the whole environment.**
 - **Git enrichment.** Do it only on SessionStart, Stop, SessionEnd, and PostToolUse of a Bash call that ran `git`/`gh`. Each command has a 1.5 s timeout and git errors are ignored. Collect:
   - branch, HEAD sha, upstream ahead and behind, dirty file count, remote URL (credentials stripped), repo root, whether it is a worktree;
   - at Stop, `git diff --shortstat` against the session's start sha;
