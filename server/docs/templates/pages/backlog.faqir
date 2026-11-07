@@ -71,8 +71,9 @@ block content
     code ---
     | lines, then the description. Upload the files on the board, or run
     a(href="/docs/commands#tasks-import") bb tasks import
-    | with a file or a folder. Importing the same id again updates the package and keeps its status, unless the file
-    | sets one.
+    | with a file or a folder. Importing the same file again updates the package instead of adding a new one. A
+    | status in the file only applies while the package is still Backlog or Gata, and a file without dependencies or
+    | criteria leaves the existing ones alone.
   pre
     code
       | ---
@@ -141,7 +142,8 @@ block content
     a(href="/docs/jobs") job
     | . Both need the machine's
     a(href="/docs/runner") runner
-    | , and the folder must be inside its allowed roots.
+    | , and the folder must be inside its allowed roots. Launching claims the package at once (it becomes În lucru),
+    | so the coordinator cannot hand it to another worker; if the launch fails, it goes back to the status it had.
 
   h2#decisions Decisions
   include "partials/shot.faqir" (assets=site.assets file="decisions-desktop.png" alt="The Decisions page: a pending question with its context and one button per option, and answered questions below." caption="A question from the coordinator, waiting for you.")

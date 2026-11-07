@@ -94,9 +94,11 @@ export function listTasks(ctx: Ctx, f: { status?: TaskStatus[]; ready?: boolean;
     where.push("(id LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')");
     args.push(like, like, like);
   }
-  const rows = ctx.db.all<TaskRow>(`SELECT * FROM tasks ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ${ORDER} LIMIT ?`, ...args, f.limit ?? 500);
+  if (f.ready) where.push("status = 'gata'");
+  // readiness depends on other rows, so the limit applies after that filter
+  const rows = ctx.db.all<TaskRow>(`SELECT * FROM tasks ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ${ORDER} LIMIT ?`, ...args, f.ready ? 5000 : (f.limit ?? 500));
   const out = summaries(ctx, rows);
-  return f.ready ? out.filter((t) => t.ready) : out;
+  return f.ready ? out.filter((t) => t.ready).slice(0, f.limit ?? 500) : out;
 }
 
 function row(ctx: Ctx, id: string): TaskRow {
@@ -155,10 +157,13 @@ export function createTask(ctx: Ctx, t: NewTask, actor: string): TaskSummary {
   if (!/^[\w.-]{1,64}$/.test(id)) throw new FactoryError(400, 'task ids use letters, digits, ".", "_" and "-"');
   const existing = db.get<TaskRow>('SELECT * FROM tasks WHERE id = ?', id);
   if (existing && !t.upsert) throw new FactoryError(409, `task ${id} already exists`);
+  if (t.extRef && db.get('SELECT 1 FROM tasks WHERE ext_ref = ? AND id != ?', t.extRef, id)) throw new FactoryError(409, `${t.extRef} already belongs to another task`);
   db.tx(() => {
     const now = Date.now();
     if (existing) {
-      updateTask(ctx, { ...t, id }, actor, { title: t.title, body: t.body, repo: t.repo, priority: t.priority, sensitive: t.sensitive });
+      // an upsert (re-import) never moves a package that work has started on
+      const status = existing.status === 'backlog' || existing.status === 'gata' ? t.status : undefined;
+      updateTask(ctx, { ...t, id, status }, actor, { title: t.title, body: t.body, repo: t.repo, priority: t.priority, sensitive: t.sensitive });
       return;
     }
     const status = t.status ?? 'backlog';

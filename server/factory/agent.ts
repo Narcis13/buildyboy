@@ -9,7 +9,7 @@ import { promptStore } from '../routes/prompts.ts';
 import { lintPrompt, parseTemplate, renderTemplate } from '../../shared/harness.ts';
 import type { AgentTokenView, ToolArgs, ToolName } from '../../shared/factory.ts';
 import { governor, readUsage } from './governor.ts';
-import { ackControls, claimTask, controls, createTask, FactoryError, getTask, listTasks, recordGate, updateTask } from './tasks.ts';
+import { ackControls, claimTask, controls, createTask, FactoryError, getTask, listTasks, recordGate, taskSummary, updateTask } from './tasks.ts';
 import { askDecision, getDecision } from './decisions.ts';
 import { sendDigest } from './digest.ts';
 
@@ -80,6 +80,7 @@ export const HANDLERS: { [K in ToolName]: Handler<K> } = {
     return { templateId: row.id, warnings: lintPrompt(parsed, a.slots) };
   },
   prompts_save: (ctx, a, actor) => {
+    if (a.taskId) taskSummary(ctx, a.taskId); // unknown task: refuse before saving anything
     const store = promptStore(ctx);
     let saved;
     if (a.id != null) {
@@ -106,7 +107,9 @@ export const HANDLERS: { [K in ToolName]: Handler<K> } = {
   digest_post: (ctx, a) => sendDigest(ctx, 'manual', a.note ?? null),
   control_get: (ctx, a, actor) => {
     const open = controls(ctx, { taskId: a.taskId });
-    if (a.ack && open.length) ackControls(ctx, open.map((r) => r.id), actor);
-    return { requests: open, acked: !!a.ack };
+    if (!a.ack || !open.length) return { requests: open, acked: false };
+    ackControls(ctx, open.map((r) => r.id), actor);
+    const ids = new Set(open.map((r) => r.id));
+    return { requests: controls(ctx, { taskId: a.taskId, all: true }).filter((r) => ids.has(r.id)), acked: true };
   },
 };

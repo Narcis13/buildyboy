@@ -139,9 +139,9 @@ export const HC_PROMPT_MAX = 24_000;
 
 /**
  * The validated argument list for `hc run`, which starts an interactive `claude` in a persistent terminal.
- * `program` is the claude executable (`claude`, or the configured claudePath); `plugin` are extra --plugin-dir paths.
+ * `program` is the claude executable as argv (absolute path, or node plus a script; never a .cmd shim); `pluginDirs` are extra --plugin-dir paths.
  */
-export function buildHcRunArgs(raw: unknown, a: { jobId: string; cwd: string; title: string | null; prompt: string; program?: string; pluginDirs?: string[] }): string[] {
+export function buildHcRunArgs(raw: unknown, a: { jobId: string; cwd: string; title: string | null; prompt: string; program?: string[]; pluginDirs?: string[] }): string[] {
   const o = checkOptions(raw);
   if (!HC_ID_RE.test(a.jobId)) throw new OptionError('invalid job id');
   const prompt = a.prompt.trim();
@@ -149,7 +149,7 @@ export function buildHcRunArgs(raw: unknown, a: { jobId: string; cwd: string; ti
   if (prompt.length > HC_PROMPT_MAX) throw new OptionError(`prompt is too long for a terminal command line (${prompt.length} > ${HC_PROMPT_MAX} characters); launch it with claude -p`);
   const args = ['run', '--bg', '--json', '--name', hcTerminalName(o.taskId, a.jobId), '--cwd', a.cwd, '--label', 'owner=buildyboy'];
   if (o.taskId) args.push('--label', `bb.task=${o.taskId}`);
-  args.push('--label', `bb.job=${a.jobId}`, '--no-parent', a.program || 'claude');
+  args.push('--label', `bb.job=${a.jobId}`, '--no-parent', ...(a.program?.length ? a.program : ['claude']));
   if (o.model) args.push('--model', o.model);
   if (o.permissionMode) args.push('--permission-mode', o.permissionMode);
   for (const d of a.pluginDirs ?? []) args.push('--plugin-dir', d);

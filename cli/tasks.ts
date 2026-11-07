@@ -1,9 +1,9 @@
 // bb tasks import <path> — Markdown task files (one task per file, frontmatter + body) into the backlog.
 // A directory imports every *.md in it (recursively) that has frontmatter. Existing ids are updated, never duplicated.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, relative } from 'node:path';
 import { parseArgs } from 'node:util';
-import { orderByDeps, parseTaskFile, TaskFileError, type TaskFile } from '../shared/tasks-md.ts';
+import { orderByDeps, parseTaskFile, TaskFileError, taskFileToCreate, type TaskFile } from '../shared/tasks-md.ts';
 import { agentClient } from './mcp.ts';
 import { readClientConfig } from './config.ts';
 
@@ -18,9 +18,9 @@ function mdFiles(dir: string): string[] {
   return out.sort();
 }
 
-export function readTaskFiles(path: string): { tasks: TaskFile[]; skipped: string[] } {
-  if (!statSync(path).isDirectory()) return { tasks: [parseTaskFile(readFileSync(path, 'utf8'), basename(path))], skipped: [] };
-  const tasks: TaskFile[] = [];
+export function readTaskFiles(path: string): { tasks: (TaskFile & { ref: string })[]; skipped: string[] } {
+  if (!statSync(path).isDirectory()) return { tasks: [{ ...parseTaskFile(readFileSync(path, 'utf8'), basename(path)), ref: basename(path) }], skipped: [] };
+  const tasks: (TaskFile & { ref: string })[] = [];
   const skipped: string[] = [];
   for (const f of mdFiles(path)) {
     const text = readFileSync(f, 'utf8');
@@ -28,7 +28,7 @@ export function readTaskFiles(path: string): { tasks: TaskFile[]; skipped: strin
       skipped.push(f);
       continue;
     }
-    tasks.push(parseTaskFile(text, basename(f)));
+    tasks.push({ ...parseTaskFile(text, basename(f)), ref: relative(path, f) });
   }
   return { tasks, skipped };
 }
@@ -45,7 +45,7 @@ export async function tasksCli(args: string[]): Promise<number> {
     console.error('usage: bb tasks import <file.md | dir> [--dry-run]');
     return 1;
   }
-  let batch: TaskFile[];
+  let batch: (TaskFile & { ref: string })[];
   try {
     const r = readTaskFiles(path);
     batch = orderByDeps(r.tasks);
@@ -69,7 +69,7 @@ export async function tasksCli(args: string[]): Promise<number> {
   }
   const client = agentClient(url, token);
   for (const t of batch) {
-    const out = (await client.call('tasks_create', { ...t, upsert: true })) as { id: string; status: string };
+    const out = (await client.call('tasks_create', taskFileToCreate(t, t.ref))) as { id: string; status: string };
     console.log(`${out.id}\t${out.status}\t${t.title}`);
   }
   return 0;

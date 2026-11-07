@@ -35,13 +35,24 @@ function windowOf(raw: unknown): UsageWindow | null {
   return { pct: w.used_percentage, resetsAt: epochMs(w.resets_at) };
 }
 
+const SAMPLES = "FROM otel_points WHERE name = 'statusline.rate_limits'";
+
+/**
+ * Each window comes from the newest sample that carries it, so a sparse sample (one window, or none) cannot hide a
+ * window that is still over its limit; a window whose reset time has passed is ignored later by evaluate().
+ * The data's age is the newest sample's.
+ */
 export function readUsage(ctx: Ctx, now = Date.now()): Usage {
-  const row = ctx.db.get<{ ts: number; session_id: string | null; attrs_json: string }>(
-    "SELECT ts, session_id, attrs_json FROM otel_points WHERE name = 'statusline.rate_limits' ORDER BY ts DESC, id DESC LIMIT 1",
-  );
+  const row = ctx.db.get<{ ts: number; session_id: string | null }>(`SELECT ts, session_id ${SAMPLES} ORDER BY ts DESC, id DESC LIMIT 1`);
   if (!row) return { fiveHour: null, sevenDay: null, updatedAt: null, ageMs: null, sessionId: null };
-  const limits = json<Record<string, unknown>>(row.attrs_json, {}) ?? {};
-  return { fiveHour: windowOf(limits.five_hour), sevenDay: windowOf(limits.seven_day), updatedAt: row.ts, ageMs: Math.max(0, now - row.ts), sessionId: row.session_id };
+  const latest = (key: 'five_hour' | 'seven_day') => {
+    const r = ctx.db.get<{ attrs_json: string }>(
+      `SELECT attrs_json ${SAMPLES} AND ts > ? AND json_extract(attrs_json, '$.${key}.used_percentage') IS NOT NULL ORDER BY ts DESC, id DESC LIMIT 1`,
+      now - 8 * 24 * 3600_000,
+    );
+    return windowOf((json<Record<string, unknown>>(r?.attrs_json, {}) ?? {})[key]);
+  };
+  return { fiveHour: latest('five_hour'), sevenDay: latest('seven_day'), updatedAt: row.ts, ageMs: Math.max(0, now - row.ts), sessionId: row.session_id };
 }
 
 const fmt = (ms: number | null) => (ms ? new Date(ms).toISOString() : 'an unknown time');

@@ -76,7 +76,7 @@ export async function factoryChecks(url: string | undefined): Promise<string[]> 
   const cj = readJson(claudeJson()) ?? {};
   const registered = !!cj.mcpServers?.buildyboy || Object.values((cj.projects ?? {}) as Record<string, { mcpServers?: Record<string, unknown> }>).some((p) => !!p?.mcpServers?.buildyboy);
   item(registered, `MCP server "buildyboy" ${registered ? 'registered' : 'not registered'} with Claude Code`, 'claude mcp add buildyboy --scope user -e BUILDYBOY_URL=<url> -e BUILDYBOY_AGENT_TOKEN=<bba_…> -- node <buildyboy>/cli/bb.ts mcp');
-  const hc = findHc();
+  const hc = findHc(readJson(join(bbHome(), 'runner.json'))?.hcPath);
   item(!!hc, `herdr hc ${hc ? `found (${hc})` : 'not found'}`, 'install herdr-core, or set BUILDYBOY_HC (or "hcPath" in runner.json) to hc');
   const agentToken = process.env.BUILDYBOY_AGENT_TOKEN;
   if (!url) return missing;

@@ -491,7 +491,7 @@ Buildyboy is the control tower of an autonomous factory (decided 2026-11-07): a 
 - **tasks** (packages): id (given, like `P2`, or `T<n>`), title, body, acceptance criteria, status, repo, branch, priority, cost, prompt id and version, sensitive flag, note, claimed by, job, terminal, session, source (`web`, `markdown`, `github`, `agent`), external ref, integrated_at. **task_deps** (task → depends on, no cycles), **task_events** (history: created, status, update, note, gate, control).
 - Statuses: `backlog`, `gata`, `in_lucru`, `la_porti`, `integrata`, `blocata`. A task is **ready** when it is `gata` and every dependency is `integrata`.
 - `tasks_claim` takes the given ready task or the best ready one (priority, then age), sets `in_lucru` and `claimed_by`, atomically. It is refused while the governor says `canStart: false`, unless `force: true`.
-- Inputs: the PWA (also on the phone); Markdown files with frontmatter (`bb tasks import <file|dir>`, generic: `id`, `title`, `status`, `depends_on`/`after`, `repo`, `branch`, `priority`, `sensitive`, `acceptance` or an "Acceptance criteria" section; upsert by id, dependencies ordered); GitHub issues of a repo (optional label) through the existing GitHub token, upserted by `owner/repo#n`.
+- Inputs: the PWA (also on the phone); Markdown files with frontmatter (`bb tasks import <file|dir>`, generic: `id`, `title`, `status`, `depends_on`/`after`, `repo`, `branch`, `priority`, `sensitive`, `acceptance` or an "Acceptance criteria" section; upsert by id, or by path for files without an id; dependencies ordered; a re-import never changes the status of a package already started, and absent lists leave dependencies and criteria alone); GitHub issues of a repo (optional label) through the existing GitHub token, upserted by `owner/repo#n`.
 - PWA: `/backlog` (board: six columns on desktop, a status filter on the phone), `/backlog/:id` (the package page, §11.5).
 
 ### 11.3 Consumption governor
@@ -500,7 +500,7 @@ Buildyboy is the control tower of an autonomous factory (decided 2026-11-07): a 
 
 - the 7-day window at or above **80%** → `stopAll: true`, `canStart: false`, `waitUntil` = its reset;
 - the 5-hour window at or above **85%** → `canStart: false` (active workers finish), `waitUntil` = its reset;
-- a window missing from the data, or whose `resets_at` has passed, is ignored;
+- a window missing from the data, or whose `resets_at` has passed, is ignored (each window is read from the newest sample that carries it, so a sparse sample cannot hide a window still over its limit);
 - data older than **30 min**, or no data at all, → `canStart: false`, with the reason.
 
 The three thresholds are settings (`governor_five_hour_pct`, `governor_seven_day_pct`, `governor_max_age_min`). The existing 80% watcher (§5.8) still notifies.
@@ -508,7 +508,7 @@ The three thresholds are settings (`governor_five_hour_pct`, `governor_seven_day
 ### 11.4 herdr integration
 
 - The **runner** finds `hc` (`hcPath` in runner.json, `BUILDYBOY_HC`, herdr-core's default install, or PATH), reports `hc ls --json` every 15 s to `POST /api/runner/terminals`, and the Floor shows the terminals with their status, linked to their Claude Code session through `HC_TERMINAL_ID` (hook env allowlist → `sessions.hc_terminal`) and to their package.
-- A package starts as an interactive agent from its page: `POST /api/tasks/:id/launch` with `launcher: 'hc'` makes a job that the runner turns into `hc run --bg --name bb-<task> --cwd <dir> --label owner=buildyboy --label bb.task=<id> … claude …` (a checked argv, inside the allowed roots, no shell). `launcher: 'claude'` is a normal `claude -p` job.
+- A package starts as an interactive agent from its page: `POST /api/tasks/:id/launch` with `launcher: 'hc'` makes a job that the runner turns into `hc run --bg --name bb-<task> --cwd <dir> --label owner=buildyboy --label bb.task=<id> … claude …` (a checked argv, inside the allowed roots, no shell; `claude` is resolved to its real executable, never a `.cmd` shim, and hc passes arguments through unchanged, verified 2026-11-07). `launcher: 'claude'` is a normal `claude -p` job. Launching claims the package (`in_lucru`) at once; a launch that fails before any terminal or session hands it back to its earlier status. The worker's SessionStart links its session to the package through the terminal.
 
 ### 11.5 Gates, controls, decisions and the digest
 

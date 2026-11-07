@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { Ctx } from '../context.ts';
 import { requireWeb, webUser } from '../auth.ts';
 import { TASK_STATUSES, TOOLS, TOOL_NAMES, type TaskStatus, type ToolName } from '../../shared/factory.ts';
-import { parseTaskFile, orderByDeps, TaskFileError } from '../../shared/tasks-md.ts';
+import { parseTaskFile, orderByDeps, TaskFileError, taskFileToCreate } from '../../shared/tasks-md.ts';
 import { agentFromToken, createAgentToken, HANDLERS, listAgentTokens, requireAgent, revokeAgentToken } from '../factory/agent.ts';
 import { governor, readUsage } from '../factory/governor.ts';
 import { createTask, deleteTask, FactoryError, gateShot, getTask, listTasks, requestControl, updateTask } from '../factory/tasks.ts';
@@ -75,8 +75,13 @@ export function factoryRoutes(ctx: Ctx) {
     const b = z.object({ files: z.array(z.object({ name: z.string().max(300), text: z.string().max(500_000) })).min(1).max(200) }).safeParse(await c.req.json().catch(() => null));
     if (!b.success) return c.json({ error: 'files: [{ name, text }] required' }, 400);
     try {
-      const parsed = orderByDeps(b.data.files.map((f) => parseTaskFile(f.text, f.name)));
-      const out = db.tx(() => parsed.map((t) => createTask(ctx, { ...t, upsert: true, source: 'markdown' }, 'web')));
+      const parsed = orderByDeps(b.data.files.map((f) => ({ ...parseTaskFile(f.text, f.name), ref: f.name })));
+      const args = parsed.map((t) => {
+        const p = TOOLS.tasks_create.input.safeParse(taskFileToCreate(t, t.ref));
+        if (!p.success) throw new TaskFileError(`${t.ref}: ${p.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`);
+        return p.data;
+      });
+      const out = db.tx(() => args.map((t) => createTask(ctx, { ...t, source: 'markdown' }, 'web')));
       return c.json({ imported: out.map((t) => t.id) });
     } catch (e) {
       return fail(c, e);
@@ -136,7 +141,7 @@ export function factoryRoutes(ctx: Ctx) {
   app.get('/api/gate-shots/:id', web, (c) => {
     const s = gateShot(ctx, Number(c.req.param('id')));
     if (!s) return c.json({ error: 'not found' }, 404);
-    return c.body(Buffer.from(s.data), 200, { 'content-type': s.mime, 'cache-control': 'private, max-age=86400' });
+    return c.body(Buffer.from(s.data), 200, { 'content-type': s.mime, 'cache-control': 'private, max-age=86400', 'x-content-type-options': 'nosniff' });
   });
 
   // ---------- decisions ----------

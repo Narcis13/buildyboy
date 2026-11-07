@@ -189,7 +189,7 @@ describe('factory API', () => {
     await web.post('/api/tasks/G1T/control', { kind: 'revert', note: 'broke main' });
     expect((await web.get('/api/tasks/G1T')).openControls).toBe(1);
     const ctl = await ok('control_get', { taskId: 'G1T', ack: true });
-    expect(ctl.requests).toMatchObject([{ kind: 'revert', note: 'broke main', status: 'open' }]);
+    expect(ctl.requests).toMatchObject([{ kind: 'revert', note: 'broke main', status: 'acked' }]);
     expect((await ok('control_get', { taskId: 'G1T' })).requests).toEqual([]);
     expect((await web.get('/api/tasks/G1T')).controls[0].status).toBe('acked');
 
@@ -297,15 +297,56 @@ describe('factory API', () => {
     }
   });
 
-  it('the governor ignores rate limits from before the newest sample', () => {
-    expect(governor(srv.ctx).usage.fiveHour?.pct).toBe(20);
+  it('a sparse statusline sample does not hide a window that is still over its limit', async () => {
+    const resets = Math.floor(Date.now() / 1000) + 7200;
+    await statusline({ five_hour: { used_percentage: 30, resets_at: resets }, seven_day: { used_percentage: 92, resets_at: resets + 86400 } });
+    await statusline({ five_hour: { used_percentage: 31, resets_at: resets } });
+    await statusline({});
+    const g = governor(srv.ctx);
+    expect(g.usage).toMatchObject({ fiveHour: { pct: 31 }, sevenDay: { pct: 92 } });
+    expect(g).toMatchObject({ canStart: false, stopAll: true });
+    // once the 7-day window has reset, Claude Code drops it and the old value no longer counts
+    srv.ctx.db.run("UPDATE otel_points SET attrs_json = json_set(attrs_json, '$.seven_day.resets_at', 1) WHERE name = 'statusline.rate_limits'");
+    expect(governor(srv.ctx)).toMatchObject({ canStart: true, stopAll: false });
+  });
+
+  it('ready with a limit counts only ready tasks', async () => {
+    for (let i = 0; i < 4; i++) await ok('tasks_create', { id: `L${i}`, title: `busy ${i}`, priority: 500 });
+    await ok('tasks_create', { id: 'LR', title: 'ready one', status: 'gata', priority: -5 });
+    // the five highest-priority tasks are not ready; the old LIMIT-then-filter returned nothing
+    const r = await ok('tasks_list', { ready: true, limit: 3 });
+    expect(r).toHaveLength(3);
+    expect(r.every((t: any) => t.ready)).toBe(true);
+  });
+
+  it('re-importing Markdown keeps the status of a started package, its dependencies, and does not duplicate id-less files', async () => {
+    const md = (...lines: string[]) => ['---', ...lines, '---', ''].join('\n');
+    await web.post('/api/tasks/import/markdown', { files: [{ name: 'r1.md', text: md('id: R1', 'title: R one', 'status: gata') }, { name: 'r2.md', text: md('id: R2', 'title: R two') }] });
+    await web.put('/api/tasks/R2', { dependsOn: ['R1'] });
+    await ok('tasks_update', { id: 'R1', status: 'integrata' });
+    const again = [{ name: 'r1.md', text: md('id: R1', 'title: R one v2', 'status: gata') }, { name: 'r2.md', text: md('id: R2', 'title: R two') }];
+    await web.post('/api/tasks/import/markdown', { files: again });
+    expect(await web.get('/api/tasks/R1')).toMatchObject({ title: 'R one v2', status: 'integrata' });
+    expect((await web.get('/api/tasks/R2')).dependsOn).toEqual(['R1']);
+    const noId = { files: [{ name: 'loose.md', text: md('title: No id') }] };
+    const a = (await web.post('/api/tasks/import/markdown', noId)).imported;
+    const b = (await web.post('/api/tasks/import/markdown', noId)).imported;
+    expect(b).toEqual(a);
+    await expect(web.post('/api/tasks/import/markdown', { files: [{ name: 'bad.md', text: md(`title: ${'x'.repeat(300)}`) }] })).rejects.toThrow(/400/);
+  });
+
+  it('prompts_save refuses an unknown task before saving anything', async () => {
+    const before = srv.ctx.db.get<{ n: number }>('SELECT COUNT(*) n FROM prompts')!.n;
+    expect((await agent('prompts_save', { title: 'x', slots: {}, taskId: 'NOPE' })).status).toBe(404);
+    expect(srv.ctx.db.get<{ n: number }>('SELECT COUNT(*) n FROM prompts')!.n).toBe(before);
   });
 });
 
 describe('bb doctor factory checks', () => {
   it('names exactly what is missing, reading only the given config dirs', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'bb-doctor-'));
-    const prev = { c: process.env.CLAUDE_CONFIG_DIR, h: process.env.BUILDYBOY_HC, a: process.env.BUILDYBOY_AGENT_TOKEN, p: process.env.PATH, l: process.env.LOCALAPPDATA };
+    const prev = { c: process.env.CLAUDE_CONFIG_DIR, h: process.env.BUILDYBOY_HC, a: process.env.BUILDYBOY_AGENT_TOKEN, p: process.env.PATH, l: process.env.LOCALAPPDATA, home: process.env.BUILDYBOY_HOME };
+    process.env.BUILDYBOY_HOME = dir;
     process.env.CLAUDE_CONFIG_DIR = dir;
     process.env.BUILDYBOY_HC = join(dir, 'no-hc.exe');
     process.env.PATH = '';
@@ -327,7 +368,7 @@ describe('bb doctor factory checks', () => {
       expect(missing).toEqual([]);
     } finally {
       console.log = log;
-      for (const [k, v] of [['CLAUDE_CONFIG_DIR', prev.c], ['BUILDYBOY_HC', prev.h], ['BUILDYBOY_AGENT_TOKEN', prev.a], ['PATH', prev.p], ['LOCALAPPDATA', prev.l]] as const) {
+      for (const [k, v] of [['CLAUDE_CONFIG_DIR', prev.c], ['BUILDYBOY_HC', prev.h], ['BUILDYBOY_AGENT_TOKEN', prev.a], ['PATH', prev.p], ['LOCALAPPDATA', prev.l], ['BUILDYBOY_HOME', prev.home]] as const) {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;
       }

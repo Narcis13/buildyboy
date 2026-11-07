@@ -200,7 +200,8 @@ describe('launching a package', () => {
     expect(argv).toEqual([
       'run', '--bg', '--json', '--name', 'bb-t10', '--cwd', realpathSync.native(repoA),
       '--label', 'owner=buildyboy', '--label', 'bb.task=T10', '--label', `bb.job=${id}`, '--no-parent',
-      'claude', '--model', 'sonnet', '--permission-mode', 'acceptEdits', '-n', 'T10: Package T10',
+      // claude resolved to a real executable (here: node + the fake claude script), never a shell shim
+      process.execPath, FAKE_CLAUDE, '--model', 'sonnet', '--permission-mode', 'acceptEdits', '-n', 'T10: Package T10',
       argv[argv.length - 1],
     ]);
     expect(argv).not.toContain('-p'); // interactive, not headless
@@ -229,11 +230,12 @@ describe('launching a package', () => {
     expect((await task('T10')).sessionId).toBe('hc-worker-t7');
   });
 
-  it('only moves a gata package to in_lucru; others keep their state and still get the terminal', async () => {
+  it('launching claims the package whatever its status, so tasks_claim cannot hand it out again', async () => {
     await newTask('T11', { status: 'backlog' });
     const { id } = await launch('T11', { launcher: 'hc' });
+    expect(await task('T11')).toMatchObject({ status: 'in_lucru', claimedBy: 'web', jobId: id }); // right away, before hc answers
     expect((await waitStatus(id, 'succeeded', 'failed')).status).toBe('succeeded');
-    expect(await task('T11')).toMatchObject({ status: 'backlog', terminal: expect.stringMatching(/^t\d+$/), jobId: id });
+    expect(await task('T11')).toMatchObject({ status: 'in_lucru', terminal: expect.stringMatching(/^t\d+$/), jobId: id });
   });
 
   it('uses the chosen prompt instead of building one', async () => {
@@ -269,7 +271,7 @@ describe('launching a package', () => {
     await expect(launch('T20', { model: 'sonnet; rm -rf /' })).rejects.toThrow(/invalid model/);
   });
 
-  it('fails the job, and leaves the package alone, when hc fails', async () => {
+  it('fails the job, and hands the package back to its earlier status, when hc fails', async () => {
     await newTask('T21');
     process.env.FAKE_HC_FAIL = "name 'bb-t21' is already in use";
     try {
@@ -280,7 +282,7 @@ describe('launching a package', () => {
     } finally {
       delete process.env.FAKE_HC_FAIL;
     }
-    expect(await task('T21')).toMatchObject({ status: 'gata', terminal: null });
+    expect(await task('T21')).toMatchObject({ status: 'gata', terminal: null, claimedBy: null });
   });
 
   it('launcher claude is a normal claude -p job that records the job and session on the package', async () => {
@@ -294,7 +296,7 @@ describe('launching a package', () => {
     expect(init.fake_argv.slice(0, 3)).toEqual(['-p', '--output-format', 'stream-json']);
     expect(hcRuns()).toHaveLength(before); // hc was not involved
     const t = await task('T30');
-    expect(t).toMatchObject({ status: 'gata', terminal: null, jobId: id, sessionId: j.sessionId });
+    expect(t).toMatchObject({ status: 'in_lucru', terminal: null, jobId: id, sessionId: j.sessionId });
   });
 });
 
@@ -315,7 +317,7 @@ describe('options and argv', () => {
 
   it('builds the hc run argv without a shell, keeping flags in the prompt out of the way', () => {
     const o = { maxBudgetUsd: 1, launcher: 'hc', taskId: 'T5' };
-    const a = buildHcRunArgs(o, { jobId: 'job-1', cwd: '/w', title: '-sneaky title', prompt: '- do a thing --and "quote" $(x)', program: '/bin/claude', pluginDirs: ['/p'] });
+    const a = buildHcRunArgs(o, { jobId: 'job-1', cwd: '/w', title: '-sneaky title', prompt: '- do a thing --and "quote" $(x)', program: ['/bin/claude'], pluginDirs: ['/p'] });
     expect(a).toEqual([
       'run', '--bg', '--json', '--name', 'bb-t5', '--cwd', '/w', '--label', 'owner=buildyboy', '--label', 'bb.task=T5', '--label', 'bb.job=job-1', '--no-parent',
       '/bin/claude', '--plugin-dir', '/p', '-n', 'sneaky title', 'Task: - do a thing --and "quote" $(x)',

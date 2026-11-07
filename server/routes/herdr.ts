@@ -68,12 +68,14 @@ export function terminalViews(ctx: Ctx, now = Date.now()): TerminalView[] {
      WHERE t.seen_at > ? AND m.revoked = 0 ORDER BY m.name, t.machine_id, LENGTH(t.address), t.address`,
     now - TERMINAL_FRESH_MS,
   );
-  // packages that name a terminal; one set by an agent has no job, so it matches on any machine
+  // packages that name a terminal, on the machine of their job or session (hc numbers terminals per machine);
+  // one with neither is matched by its bb-<id> name only
   const owned = db.all<{ id: string; terminal: string; machine_id: string | null }>(
-    'SELECT t.id, t.terminal, j.machine_id FROM tasks t LEFT JOIN jobs j ON j.id = t.job_id WHERE t.terminal IS NOT NULL',
+    `SELECT t.id, t.terminal, COALESCE(j.machine_id, s.machine_id) AS machine_id FROM tasks t
+     LEFT JOIN jobs j ON j.id = t.job_id LEFT JOIN sessions s ON s.id = t.session_id WHERE t.terminal IS NOT NULL`,
   );
   return rows.map((r) => {
-    const own = owned.find((t) => t.terminal === r.address && (!t.machine_id || t.machine_id === r.machine_id));
+    const own = owned.find((t) => t.terminal === r.address && t.machine_id === r.machine_id);
     const session = db.get<{ id: string }>('SELECT id FROM sessions WHERE machine_id = ? AND hc_terminal = ? ORDER BY last_event_at DESC LIMIT 1', r.machine_id, r.address);
     return {
       machineId: r.machine_id,
@@ -152,7 +154,8 @@ export function herdrRoutes(ctx: Ctx) {
         title: `${task.id}: ${task.title}`.slice(0, 200),
         options: { maxBudgetUsd: b.maxBudgetUsd ?? 5, model: b.model || undefined, permissionMode: b.permissionMode || undefined, launcher: b.launcher, taskId: task.id },
       });
-      updateTask(ctx, { id: task.id }, 'launch', { jobId });
+      // launching is claiming: tasks_claim must not hand the same package to another worker meanwhile
+      updateTask(ctx, { id: task.id, ...(task.status === 'in_lucru' ? {} : { status: 'in_lucru' as const }) }, 'launch', { jobId, claimedBy: task.claimedBy ?? 'web' });
       db.audit('web', 'task_launch', task.id, { jobId, machineId: b.machineId, cwd: b.cwd, launcher: b.launcher });
       return c.json({ id: jobId, jobId, launcher: b.launcher }, 201);
     } catch (e) {

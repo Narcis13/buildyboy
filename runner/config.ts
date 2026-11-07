@@ -36,7 +36,7 @@ export function loadConfig(configPath?: string): RunnerConfig {
     concurrency: Math.floor(n(raw.concurrency, 2)),
     claudePath: typeof raw.claudePath === 'string' && raw.claudePath ? raw.claudePath : undefined,
     hcPath: typeof raw.hcPath === 'string' && raw.hcPath ? raw.hcPath : undefined,
-    hcPollSeconds: n(raw.hcPollSeconds, 15),
+    hcPollSeconds: Math.max(1, n(raw.hcPollSeconds, 15)),
     pluginDirs: Array.isArray(raw.pluginDirs) ? raw.pluginDirs.filter((d): d is string => typeof d === 'string' && d.trim() !== '').map((d) => resolve(d)) : [],
     idleExitSeconds: n(raw.idleExitSeconds, 120),
     stopGraceSeconds: n(raw.stopGraceSeconds, 10),

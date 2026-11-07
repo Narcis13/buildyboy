@@ -90,6 +90,12 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
     });
   }
 
+  /** claude as an absolute program plus prefix (a .cmd shim is unwrapped), so hc never hands the prompt to a shell. */
+  const claudeArgv = (): string[] => {
+    const c = exe();
+    return [c.command, ...c.prefix];
+  };
+
   /** launcher "hc": start an interactive claude in a herdr terminal (argv only, no shell) and report where it went. */
   function startInTerminal(job: JobView, cwd: string, fail: (reason: string) => void) {
     if (hcLaunching.has(job.id)) return;
@@ -98,7 +104,7 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
       const hc = resolveHc(cfg.hcPath);
       if (!hc) return fail('herdr (hc) is not installed on this machine; set "hcPath" in runner.json or launch with claude -p');
       if (typeof job.promptText !== 'string' || !job.promptText.trim()) return fail('empty prompt');
-      args = buildHcRunArgs(checkOptions(job.options), { jobId: job.id, cwd, title: job.title, prompt: job.promptText, program: cfg.claudePath, pluginDirs: cfg.pluginDirs });
+      args = buildHcRunArgs(checkOptions(job.options), { jobId: job.id, cwd, title: job.title, prompt: job.promptText, program: claudeArgv(), pluginDirs: cfg.pluginDirs });
       hcLaunching.add(job.id);
       void runInTerminal(hc, args).then(
         (t) => {

@@ -135,3 +135,17 @@ export function orderByDeps<T extends { id?: string; dependsOn: string[] }>(task
   tasks.forEach(visit);
   return out;
 }
+
+/**
+ * tasks_create arguments for one file (always an upsert). Absent lists stay absent, so a re-import never wipes
+ * dependencies or criteria added elsewhere; a file without an `id` is matched again by `ref` (its path).
+ */
+export function taskFileToCreate(t: TaskFile, ref: string) {
+  return {
+    ...t,
+    dependsOn: t.dependsOn.length ? t.dependsOn : undefined,
+    acceptance: t.acceptance.length ? t.acceptance : undefined,
+    extRef: t.id ? undefined : `md:${ref.split('\\').join('/')}`.slice(0, 300),
+    upsert: true,
+  };
+}
