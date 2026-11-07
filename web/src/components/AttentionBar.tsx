@@ -12,12 +12,15 @@ export function AttentionBar() {
   if (data.waiting) parts.push(`${data.waiting} waiting for you`);
   if (data.jobsFailed) parts.push(`${data.jobsFailed} job${data.jobsFailed > 1 ? 's' : ''} failed`);
   if (data.stale) parts.push(`${data.stale} stale`);
+  if (data.decisions) parts.push(`${data.decisions} decision${data.decisions > 1 ? 's' : ''} to answer`);
   const flags = [global?.walk ? 'Walk mode on' : null, global?.pauseAll ? 'Everything paused' : null].filter(Boolean);
   if (!parts.length && !flags.length) return null;
-  const urgent = data.waiting > 0 || data.jobsFailed > 0;
+  const urgent = data.waiting > 0 || data.jobsFailed > 0 || data.decisions > 0;
+  // decisions have their own page; anything else is in the Inbox
+  const to = data.waiting || data.jobsFailed || data.stale || !data.decisions ? '/inbox' : '/decisions';
   return (
     <Link
-      to="/inbox"
+      to={to}
       data-testid="attention-bar"
       className={`sticky top-0 z-40 flex min-h-[44px] items-center justify-center gap-3 px-4 text-center text-[15px] font-medium ${urgent ? 'bg-waiting text-[#1d1300]' : 'bg-panel-2 text-ink border-b border-line'}`}
     >

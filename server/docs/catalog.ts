@@ -37,6 +37,8 @@ export const SECTIONS: DocSection[] = [
       { slug: 'composer', title: 'The Composer', summary: 'Writing a harness prompt that Claude can run unattended: the slots, the lint, the library and Spec-ify.' },
       { slug: 'jobs', title: 'Jobs and schedules', summary: 'Launching a prompt as a job on one of your machines, watching it, verifying it and running it on a schedule.' },
       { slug: 'runner', title: 'Setting up the runner', summary: 'The small daemon that lets the server start Claude Code on a machine, and the folders it is allowed to touch.' },
+      { slug: 'backlog', title: 'Backlog, gates and decisions', summary: 'The packages the factory works on, their gates and screenshots, stopping or reverting one, and answering the coordinator.' },
+      { slug: 'coordinator', title: 'Running a coordinator', summary: 'Connecting a Claude Code coordinator through the MCP server, the consumption governor, herdr terminals, and turning it all on.' },
     ],
   },
   {

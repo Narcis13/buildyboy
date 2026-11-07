@@ -268,6 +268,8 @@ export interface AttentionSummary {
   pending: number;
   jobsFailed: number;
   stale: number;
+  /** factory decisions waiting for an answer */
+  decisions: number;
 }
 
 export interface JobOptions {

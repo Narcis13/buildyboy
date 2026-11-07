@@ -16,6 +16,9 @@ const Settings = lazy(() => import('./pages/Settings.tsx'));
 const Projects = lazy(() => import('./pages/Projects.tsx'));
 const Analytics = lazy(() => import('./pages/Analytics.tsx'));
 const Search = lazy(() => import('./pages/Search.tsx'));
+const Backlog = lazy(() => import('./pages/Backlog.tsx'));
+const Task = lazy(() => import('./pages/Task.tsx'));
+const Decisions = lazy(() => import('./pages/Decisions.tsx'));
 
 /** Route table. Pages are default exports taking their URL params as props. */
 const routes: [string, (p: Record<string, string>) => ReactNode][] = [
@@ -32,14 +35,19 @@ const routes: [string, (p: Record<string, string>) => ReactNode][] = [
   ['/projects/:id', (p) => <Projects id={p.id} />],
   ['/analytics', () => <Analytics />],
   ['/search', () => <Search />],
+  ['/backlog', () => <Backlog />],
+  ['/backlog/:id', (p) => <Task id={p.id} />],
+  ['/decisions', () => <Decisions />],
 ];
 
 /** `doc` entries are server-rendered pages (the manual), reached with a full page load rather than the client router. */
 const NAV: { to: string; label: string; icon: string; phone?: boolean; doc?: boolean }[] = [
   { to: '/', label: 'Floor', icon: '▦', phone: true },
   { to: '/inbox', label: 'Inbox', icon: '✉', phone: true },
+  { to: '/backlog', label: 'Backlog', icon: '☰', phone: true },
   { to: '/composer', label: 'Composer', icon: '✎', phone: true },
   { to: '/jobs', label: 'Jobs', icon: '⚙', phone: true },
+  { to: '/decisions', label: 'Decisions', icon: '⚖' },
   { to: '/machines', label: 'Machines', icon: '🖧' },
   { to: '/projects', label: 'Projects', icon: '▤' },
   { to: '/analytics', label: 'Insights', icon: '📈' },
@@ -86,7 +94,7 @@ function ThemeToggle() {
 
 function Shell({ children }: { children: ReactNode }) {
   const { path } = useLocation();
-  const { data: inbox } = useQuery({ queryKey: ['attention'], queryFn: () => api.get<{ pending: number }>('/api/attention') });
+  const { data: inbox } = useQuery({ queryKey: ['attention'], queryFn: () => api.get<{ pending: number; decisions: number }>('/api/attention') });
   return (
     <div className="flex min-h-dvh flex-col">
       <AttentionBar />
@@ -98,6 +106,7 @@ function Shell({ children }: { children: ReactNode }) {
           <NavLink key={n.to} item={n} className={`relative flex min-h-12 items-center px-3 text-[15px] ${isActive(n.to, path) ? 'text-ink shadow-[inset_0_-2px_0_var(--bb-accent)]' : 'text-muted hover:text-ink'}`}>
             {n.label}
             {n.to === '/inbox' && !!inbox?.pending && <span className="ml-1.5 rounded-full bg-waiting px-1.5 text-xs font-bold text-[#1d1300]">{inbox.pending}</span>}
+            {n.to === '/decisions' && !!inbox?.decisions && <span className="ml-1.5 rounded-full bg-waiting px-1.5 text-xs font-bold text-[#1d1300]">{inbox.decisions}</span>}
           </NavLink>
         ))}
         <div className="ml-auto">
@@ -107,7 +116,7 @@ function Shell({ children }: { children: ReactNode }) {
       <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 pb-24 pt-4 md:pb-8">{children}</main>
       <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-line bg-bg-2/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden" aria-label="Main">
         {NAV.filter((n) => n.phone).map((n) => (
-          <NavLink key={n.to} item={n} className={`relative flex min-h-14 flex-1 flex-col items-center justify-center text-xs ${isActive(n.to, path) ? 'text-accent' : 'text-muted'}`}>
+          <NavLink key={n.to} item={n} className={`relative flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center px-0.5 text-[11px] ${isActive(n.to, path) ? 'text-accent' : 'text-muted'}`}>
             <span className="text-lg leading-none">{n.icon}</span>
             {n.label}
             {n.to === '/inbox' && !!inbox?.pending && <span className="absolute right-[22%] top-1.5 rounded-full bg-waiting px-1.5 text-[11px] font-bold text-[#1d1300]">{inbox.pending}</span>}

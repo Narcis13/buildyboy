@@ -21,16 +21,15 @@ const promptSchema = z.object({
 });
 const templateSchema = z.object({ name: z.string().trim().min(1).max(80), body: z.string().min(1).max(200_000) });
 
-interface TemplateRow { id: number; name: string; source: string; body: string; updated_at: number }
+export interface TemplateRow { id: number; name: string; source: string; body: string; updated_at: number }
 interface PromptRow { id: number; template_id: number | null; title: string; slots_json: string; extra_md: string; rendered: string; tags: string; created_at: number; updated_at: number; template_name: string | null; version: number | null }
 interface StatRow { prompt_id: number; runs: number; ok: number; finished: number; avg_cost: number | null; avg_dur: number | null }
 
 const cleanTags = (tags: string[]) => [...new Set(tags.map((t) => t.toLowerCase().replace(/[\s,]+/g, '-').replace(/^-+|-+$/g, '')).filter(Boolean))];
 const noStats = (): PromptStats => ({ runs: 0, finished: 0, succeeded: 0, successRate: null, avgCostUsd: null, avgDurationMs: null });
 
-export function promptsRoutes(ctx: Ctx) {
-  const app = new Hono();
-  const auth = requireWeb(ctx);
+/** Prompt storage shared by the web routes and the agent API (prompts_render / prompts_lint / prompts_save). */
+export function promptStore(ctx: Ctx) {
   const { db } = ctx;
   const harnessPath = join(ctx.config.rootDir, 'harness-prompt.md');
   let seen = '';
@@ -105,6 +104,39 @@ export function promptsRoutes(ctx: Ctx) {
       return id;
     });
   }
+
+  /** Saves a new version of a prompt; returns null when the template is unknown. */
+  function update(cur: PromptView, d: Partial<{ templateId: number | null; title: string; slots: Values; extraMd: string; tags: string[] }>): PromptView | null {
+    const title = d.title ?? cur.title;
+    const slots = d.slots ?? cur.slots;
+    const extraMd = d.extraMd ?? cur.extraMd;
+    const tags = cleanTags(d.tags ?? cur.tags);
+    const r = render(d.templateId === undefined ? cur.templateId : d.templateId, slots, extraMd);
+    if (!r) return null;
+    db.tx(() => {
+      const now = Date.now();
+      db.run('UPDATE prompts SET template_id = ?, title = ?, slots_json = ?, extra_md = ?, rendered = ?, tags = ?, updated_at = ? WHERE id = ?', r.templateId, title, JSON.stringify(slots), extraMd, r.rendered, tags.join(','), now, cur.id);
+      db.run('INSERT INTO prompt_versions (prompt_id, version, slots_json, extra_md, rendered, created_at) VALUES (?, ?, ?, ?, ?, ?)', cur.id, cur.version + 1, JSON.stringify(slots), extraMd, r.rendered, now);
+      reindex(cur.id, title, r.rendered);
+    });
+    return load(cur.id);
+  }
+
+  /** A template by id or name; the harness template when neither is given. */
+  function template(ref: { templateId?: number; template?: string }): TemplateRow | null {
+    syncHarness();
+    if (ref.templateId != null) return db.get<TemplateRow>('SELECT * FROM templates WHERE id = ?', ref.templateId) ?? null;
+    return db.get<TemplateRow>('SELECT * FROM templates WHERE name = ?', ref.template ?? HARNESS) ?? null;
+  }
+
+  return { syncHarness, info, detail, statsFor, SELECT, view, load, render, create, update, template };
+}
+
+export function promptsRoutes(ctx: Ctx) {
+  const app = new Hono();
+  const auth = requireWeb(ctx);
+  const { db } = ctx;
+  const { syncHarness, info, detail, statsFor, SELECT, view, load, render, create, update } = promptStore(ctx);
 
   // ---------- templates ----------
 
@@ -183,21 +215,10 @@ export function promptsRoutes(ctx: Ctx) {
     if (!cur) return c.json({ error: 'not found' }, 404);
     const p = promptSchema.partial().safeParse(await c.req.json().catch(() => null));
     if (!p.success) return c.json({ error: 'invalid prompt' }, 400);
-    const d = p.data;
-    const title = d.title ?? cur.title;
-    const slots = d.slots ?? cur.slots;
-    const extraMd = d.extraMd ?? cur.extraMd;
-    const tags = cleanTags(d.tags ?? cur.tags);
-    const r = render(d.templateId === undefined ? cur.templateId : d.templateId, slots, extraMd);
-    if (!r) return c.json({ error: 'unknown template' }, 400);
-    db.tx(() => {
-      const now = Date.now();
-      db.run('UPDATE prompts SET template_id = ?, title = ?, slots_json = ?, extra_md = ?, rendered = ?, tags = ?, updated_at = ? WHERE id = ?', r.templateId, title, JSON.stringify(slots), extraMd, r.rendered, tags.join(','), now, id);
-      db.run('INSERT INTO prompt_versions (prompt_id, version, slots_json, extra_md, rendered, created_at) VALUES (?, ?, ?, ?, ?, ?)', id, cur.version + 1, JSON.stringify(slots), extraMd, r.rendered, now);
-      reindex(id, title, r.rendered);
-    });
-    db.audit('web', 'prompt_update', String(id), { title, version: cur.version + 1 });
-    return c.json(load(id));
+    const next = update(cur, p.data);
+    if (!next) return c.json({ error: 'unknown template' }, 400);
+    db.audit('web', 'prompt_update', String(id), { title: next.title, version: next.version });
+    return c.json(next);
   });
 
   /** Spec-ify: a runner job (Opus, structured output) turns a rough idea into Goal / Done when / Scope and a draft spec. */

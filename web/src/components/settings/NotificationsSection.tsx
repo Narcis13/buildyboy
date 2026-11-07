@@ -15,6 +15,8 @@ const TYPES: { id: PushType; label: string }[] = [
   { id: 'ci', label: 'CI result on a PR' },
   { id: 'budget', label: 'Budget or rate limit' },
   { id: 'context', label: 'Context nearly full' },
+  { id: 'decision', label: 'Factory decision needed' },
+  { id: 'digest', label: 'Factory daily digest' },
 ];
 
 function urlBase64ToUint8Array(b64: string): Uint8Array<ArrayBuffer> {

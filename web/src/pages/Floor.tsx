@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import type { TerminalView } from '../../../shared/factory.ts';
 import type { MachineSummary, SessionStatus, SessionSummary } from '../../../shared/types.ts';
 import { api } from '../lib/api.ts';
 import { Empty } from '../components/ui.tsx';
 import { FloorCanvas, type Bay } from '../components/floor/FloorCanvas.tsx';
 import { FloorList } from '../components/floor/FloorList.tsx';
 import { STATUS_COLOR, STATUS_RANK } from '../components/floor/Station.tsx';
+import { Terminals } from '../components/floor/Terminals.tsx';
 import { isPhoneQuery, readStore, useMedia, writeStore } from '../components/floor/hooks.ts';
 
 type Scope = 'live' | 'today' | 'all';
@@ -67,6 +69,10 @@ export default function Floor() {
   });
   const machines = useQuery({ queryKey: ['machines'], queryFn: () => api.get<MachineSummary[]>('/api/machines') });
   const projects = useQuery({ queryKey: ['projects'], queryFn: () => api.get<{ id: number; name: string; machineName: string }[]>('/api/projects') });
+
+  // herdr terminals; the floor SSE topic invalidates ['sessions', …], so this refreshes with it
+  const terminals = useQuery({ queryKey: ['sessions', 'terminals'], queryFn: () => api.get<TerminalView[]>('/api/terminals'), refetchInterval: 15_000, retry: false });
+  const shownTerminals = useMemo(() => (terminals.data ?? []).filter((t) => !f.machine || t.machineId === f.machine), [terminals.data, f.machine]);
 
   const bays = useMemo<Bay[]>(() => {
     const byId = new Map((machines.data ?? []).map((m) => [m.id, m]));
@@ -143,6 +149,8 @@ export default function Floor() {
           </select>
         </div>
       </div>
+
+      <Terminals terminals={shownTerminals} />
 
       {sessions.isLoading ? (
         <div className="bb-grid h-64 animate-pulse rounded-2xl border border-line" />

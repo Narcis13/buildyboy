@@ -126,6 +126,20 @@ async function main() {
     await shot(d, 'insights-desktop', '/analytics');
     await shot(d, 'search-desktop', '/search?q=test');
 
+    // The factory: the backlog board, a package with its gates and screenshots, and the decisions inbox.
+    await shot(d, 'backlog-desktop', '/backlog', (pg) => pg.getByTestId('task-card').first().waitFor());
+    await shot(p, 'backlog-phone', '/backlog', (pg) => pg.getByTestId('task-card').first().waitFor());
+    const factoryReady = async (pg: Page) => {
+      await pg.getByTestId('gate-row').first().waitFor();
+      await pg.getByTestId('gate-shot').first().locator('img').evaluate('(img) => img.decode()');
+      // the interesting part of the page is the gates, under the header
+      await pg.getByTestId('task-gates').evaluate('(el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 64)');
+    };
+    await shot(d, 'task-desktop', '/backlog/P4', factoryReady);
+    await shot(p, 'task-phone', '/backlog/P4', factoryReady);
+    await shot(d, 'decisions-desktop', '/decisions', (pg) => pg.getByTestId('decision-card').first().waitFor());
+    await shot(p, 'decisions-phone', '/decisions', (pg) => pg.getByTestId('decision-card').first().waitFor());
+
     await d.request.post('/api/global/walk', { data: { on: false }, headers: { 'x-bb-csrf': await csrf(d) } });
   } finally {
     for (const c of parked) c.kill();

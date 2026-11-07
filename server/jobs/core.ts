@@ -8,6 +8,8 @@ import { json } from '../db.ts';
 import { jobView } from '../queries.ts';
 import { redactText } from '../../shared/redact.ts';
 import { checkOptions, OptionError, type StoredJobOptions } from '../../runner/options.ts';
+import { updateTask } from '../factory/tasks.ts';
+import { TASK_STATUSES, type TaskStatus } from '../../shared/factory.ts';
 
 export const OUTPUT_CAP = 20_000;
 export const LOST_AFTER_MS = 2 * 60_000;
@@ -198,8 +200,45 @@ export function applyRunnerEvents(ctx: Ctx, machineId: string, jobId: string, ev
   ctx.bus.publish('jobs', 'changed', { id: jobId });
   if (output) ctx.bus.publish(`job:${jobId}`, 'output');
   if (ended) {
+    linkTask(ctx, jobId);
     notifyEnd(ctx, jobId);
     dispatch(ctx, machineId);
+  }
+}
+
+/**
+ * A job started for a backlog package (POST /api/tasks/:id/launch) tells the package where the work went: the herdr
+ * terminal it was started in (and `in_lucru` if it was `gata`), or the session of a `claude -p` run.
+ */
+function linkTask(ctx: Ctx, jobId: string) {
+  const j = jobView(ctx, jobId);
+  const o = j?.options as StoredJobOptions | undefined;
+  if (!j || !o?.taskId) return;
+  const t = ctx.db.get<{ status: string; session_id: string | null; job_id: string | null; terminal: string | null }>('SELECT status, session_id, job_id, terminal FROM tasks WHERE id = ?', o.taskId);
+  if (!t) return;
+  try {
+    // a launch that never got going hands the package back: the status it had before the launch claimed it
+    if (j.status !== 'succeeded' && t.status === 'in_lucru' && t.job_id === jobId && !t.session_id && !t.terminal) {
+      const before = ctx.db.get<{ from_status: string | null }>(
+        "SELECT from_status FROM task_events WHERE task_id = ? AND actor = 'launch' AND kind = 'status' AND to_status = 'in_lucru' ORDER BY id DESC LIMIT 1", o.taskId,
+      )?.from_status;
+      if (before && (TASK_STATUSES as readonly string[]).includes(before)) {
+        updateTask(ctx, { id: o.taskId, status: before as TaskStatus, note: `launch ${j.status}` }, 'launch', { claimedBy: null });
+      }
+      return;
+    }
+    if (o.launcher === 'hc') {
+      if (j.status !== 'succeeded' || typeof j.result?.terminal !== 'string') return;
+      // the worker's SessionStart may have arrived before this result: link it now
+      const s = t.session_id ? null : ctx.db.get<{ id: string }>(
+        'SELECT id FROM sessions WHERE machine_id = ? AND hc_terminal = ? AND started_at >= ? ORDER BY started_at DESC LIMIT 1', j.machineId, j.result.terminal, j.createdAt,
+      );
+      updateTask(ctx, { id: o.taskId, terminal: j.result.terminal, ...(s ? { sessionId: s.id } : {}), ...(t.status === 'gata' ? { status: 'in_lucru' as const } : {}) }, 'launch', { jobId });
+    } else if (j.sessionId && !t.session_id) {
+      updateTask(ctx, { id: o.taskId, sessionId: j.sessionId }, 'launch', { jobId });
+    }
+  } catch {
+    // the package was deleted or changed under us: the job result still stands
   }
 }
 

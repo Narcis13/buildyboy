@@ -23,7 +23,7 @@ export interface SettingsData {
   vapid_public_key: string | null;
 }
 
-export type PushType = 'pending' | 'turn_done' | 'job' | 'stale' | 'loop' | 'ci' | 'budget' | 'context';
+export type PushType = 'pending' | 'turn_done' | 'job' | 'stale' | 'loop' | 'ci' | 'budget' | 'context' | 'decision' | 'digest';
 
 export function useSettings() {
   const qc = useQueryClient();

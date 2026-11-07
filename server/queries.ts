@@ -179,6 +179,7 @@ export function attention(ctx: Ctx): AttentionSummary {
     pending: q("SELECT COUNT(*) n FROM pending_actions WHERE status = 'pending' AND kind != 'pause'"),
     jobsFailed: q("SELECT COUNT(*) n FROM jobs WHERE status IN ('failed','lost') AND COALESCE(ended_at, created_at) > ?", since),
     stale: working.filter((w) => isStale('working', w.last_event_at)).length,
+    decisions: q("SELECT COUNT(*) n FROM decisions WHERE status = 'pending'"),
   };
 }
 

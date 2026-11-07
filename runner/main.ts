@@ -13,7 +13,8 @@ import { makeApi, readSSE, type Api } from './api.ts';
 import { resolveClaude, type Exe } from './claude.ts';
 import { loadConfig, type RunnerConfig } from './config.ts';
 import { startJob, type RunningJob } from './job.ts';
-import { buildClaudeArgs } from './options.ts';
+import { listTerminals, resolveHc, runInTerminal } from './herdr.ts';
+import { buildClaudeArgs, buildHcRunArgs, checkOptions, type StoredJobOptions } from './options.ts';
 import { checkCwd, pathKey, repoRoot } from './paths.ts';
 import { runVerify } from './proc.ts';
 
@@ -37,6 +38,8 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
   const jobs = new Map<string, RunningJob>();
   /** where finished jobs ran, for Verify (most recent 200) */
   const places = new Map<string, string>();
+  /** hc launches in flight, so a re-sent job isn't started twice */
+  const hcLaunching = new Set<string>();
   const verifiable = new Map<string, Set<string>>();
   const ac = new AbortController();
   const timers: NodeJS.Timeout[] = [];
@@ -56,6 +59,7 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
     if (places.has(job.id)) return; // already finished here
     const where = checkCwd(job.cwd, cfg.allowedRoots);
     if (!where.ok) return fail(where.reason);
+    if ((job.options as StoredJobOptions | undefined)?.launcher === 'hc') return void startInTerminal(job, where.cwd, fail);
     const sessionId = randomUUID();
     let args: string[];
     let bin: Exe;
@@ -84,6 +88,38 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
       if (places.size > 200) places.delete(places.keys().next().value!);
       void heartbeat();
     });
+  }
+
+  /** claude as an absolute program plus prefix (a .cmd shim is unwrapped), so hc never hands the prompt to a shell. */
+  const claudeArgv = (): string[] => {
+    const c = exe();
+    return [c.command, ...c.prefix];
+  };
+
+  /** launcher "hc": start an interactive claude in a herdr terminal (argv only, no shell) and report where it went. */
+  function startInTerminal(job: JobView, cwd: string, fail: (reason: string) => void) {
+    if (hcLaunching.has(job.id)) return;
+    let args: string[];
+    try {
+      const hc = resolveHc(cfg.hcPath);
+      if (!hc) return fail('herdr (hc) is not installed on this machine; set "hcPath" in runner.json or launch with claude -p');
+      if (typeof job.promptText !== 'string' || !job.promptText.trim()) return fail('empty prompt');
+      args = buildHcRunArgs(checkOptions(job.options), { jobId: job.id, cwd, title: job.title, prompt: job.promptText, program: claudeArgv(), pluginDirs: cfg.pluginDirs });
+      hcLaunching.add(job.id);
+      void runInTerminal(hc, args).then(
+        (t) => {
+          log(`job ${job.id}: started in herdr terminal ${t.address}${t.name ? ` (${t.name})` : ''}`);
+          places.set(job.id, cwd);
+          void report(job.id, [
+            { type: 'output', lines: [`Started in herdr terminal ${t.address}${t.name ? ` (${t.name})` : ''} in ${cwd}`] },
+            { type: 'status', status: 'succeeded', exitCode: 0, result: { launcher: 'hc', terminal: t.address, name: t.name } },
+          ]);
+        },
+        (e: Error) => fail(`hc run failed: ${e.message}`),
+      ).finally(() => hcLaunching.delete(job.id));
+    } catch (e) {
+      fail((e as Error).message);
+    }
   }
 
   async function onVerify(cmd: { jobId: string; commands: string[]; cwd?: string }) {
@@ -137,6 +173,16 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
     }
   }
 
+  async function reportTerminals() {
+    try {
+      const hc = resolveHc(cfg.hcPath);
+      if (!hc) return;
+      await api.post('/api/runner/terminals', { terminals: await listTerminals(hc) });
+    } catch {
+      // best effort: hc not running, older hc, or server away
+    }
+  }
+
   async function connectLoop() {
     let backoff = 1000;
     while (!ac.signal.aborted) {
@@ -173,10 +219,12 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
     }
     log(`allowed roots: ${cfg.allowedRoots.join(', ')} · concurrency ${cfg.concurrency} · claude ${claudeVersion ?? 'not found'}`);
     void reportAgents();
+    void reportTerminals();
   })();
   const every = (ms: number, fn: () => void) => timers.push(setInterval(fn, ms));
   every(15_000, () => void heartbeat());
   every(60_000, () => void reportAgents());
+  every(cfg.hcPollSeconds * 1000, () => void reportTerminals());
   void connectLoop();
 
   return {

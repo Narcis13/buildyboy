@@ -14,7 +14,7 @@ interface Target {
   sessionId: string;
 }
 
-async function gh<T>(token: string, path: string): Promise<T> {
+export async function gh<T>(token: string, path: string): Promise<T> {
   const res = await fetch(`${API()}${path}`, {
     headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'buildyboy' },
     signal: AbortSignal.timeout(15_000),

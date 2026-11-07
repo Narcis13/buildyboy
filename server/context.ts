@@ -33,7 +33,7 @@ export interface Ctx {
 }
 
 export interface Notification {
-  type: 'pending' | 'turn_done' | 'job' | 'stale' | 'loop' | 'ci' | 'budget' | 'context' | 'test';
+  type: 'pending' | 'turn_done' | 'job' | 'stale' | 'loop' | 'ci' | 'budget' | 'context' | 'test' | 'decision' | 'digest' | 'factory';
   title: string;
   body: string;
   sessionId?: string;

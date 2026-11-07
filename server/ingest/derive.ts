@@ -223,6 +223,12 @@ export interface IngestResult {
   eventId: number | null;
 }
 
+/** The herdr terminal a session runs in (`HC_TERMINAL_ID`, e.g. `t7` or `box/t7`), if the hook saw one. */
+function hcTerminal(env: Record<string, string> | undefined): string | null {
+  const v = env?.HC_TERMINAL_ID;
+  return typeof v === 'string' && /^[\w./-]{1,64}$/.test(v) ? v : null;
+}
+
 /** Ingests one hook envelope from an authenticated machine. Idempotent by event hash. */
 export function ingestEnvelope(ctx: Ctx, machineId: string, env: HookEnvelope): IngestResult {
   const { db } = ctx;
@@ -342,13 +348,22 @@ function applyEvent(
      activity = COALESCE(?, activity), cwd = COALESCE(cwd, ?), project_id = COALESCE(project_id, ?),
      permission_mode = COALESCE(?, permission_mode), effort = COALESCE(?, effort), transcript_path = COALESCE(transcript_path, ?),
      model = COALESCE(?, model), name = COALESCE(name, ?), remote_control = COALESCE(?, remote_control),
-     job_id = COALESCE(job_id, ?) WHERE id = ?`, // job_id is set (machine-checked) when the session is created
+     hc_terminal = COALESCE(?, hc_terminal), job_id = COALESCE(job_id, ?) WHERE id = ?`, // job_id is set (machine-checked) when the session is created
     ts, status, name === 'StopFailure' ? summarize(e, cwd) : name === 'Notification' ? str(e.message) : null, waitingSince, waitAdd,
     activity, cwd, projectId,
     isSub ? null : str(e.permission_mode), str(e.effort), str(e.transcript_path),
     str(e.model), str(e.session_title), env.env?.CLAUDE_CODE_BRIDGE_SESSION_ID ?? null,
-    null, sid,
+    hcTerminal(env.env), null, sid,
   );
+  // a package started in this herdr terminal (on this machine) gets its session once the worker's hooks fire
+  const hcT = name === 'SessionStart' && !isSub ? hcTerminal(env.env) : null;
+  if (hcT) {
+    db.run(
+      `UPDATE tasks SET session_id = ?, updated_at = ? WHERE terminal = ? AND session_id IS NULL AND status IN ('in_lucru', 'la_porti')
+       AND job_id IN (SELECT id FROM jobs WHERE machine_id = (SELECT machine_id FROM sessions WHERE id = ?))`,
+      sid, ts, hcT, sid,
+    );
+  }
   if (name === 'SessionStart' && e.source === 'resume') db.run('UPDATE sessions SET ended_at = NULL, end_reason = NULL WHERE id = ?', sid);
   if (name === 'SessionEnd') db.run('UPDATE sessions SET ended_at = ?, end_reason = ?, activity = NULL WHERE id = ?', ts, str(e.reason) ?? 'other', sid);
   if (name === 'PreCompact') db.run('UPDATE sessions SET compactions = compactions + 1 WHERE id = ?', sid);

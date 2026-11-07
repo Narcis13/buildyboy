@@ -1,0 +1,210 @@
+layout "layout.faqir"
+
+block content
+  p
+    | In the
+    strong factory
+    | , a Claude Code session called the
+    strong coordinator
+    | runs in a herdr terminal and does the orchestration: it picks the next package from the
+    a(href="/docs/backlog") backlog
+    | , starts a worker for it, runs the gates and integrates what passes. Buildyboy is its control tower. The
+    | coordinator reads and writes everything through Buildyboy's MCP server, and you follow along on your phone.
+  p This page sets up that link, explains the consumption governor, and shows how herdr terminals appear in Buildyboy.
+
+  h2#pieces The three pieces
+  dl
+    dt Claude Code
+    dd The agents: one coordinator and the workers, each with its own subagents.
+    dt herdr (hc)
+    dd The execution: terminals that stay alive, so a worker can be watched and corrected while it runs.
+    dt Buildyboy
+    dd The memory and the phone: backlog, usage and the governor, gates, decisions and the daily digest.
+
+  h2#token Step 1 · Create an agent key
+  p
+    | The coordinator does not use a machine's key. It uses an
+    strong agent key
+    | , which can only reach the factory's tools, not your sessions' controls or settings, and which you can revoke at
+    | any time.
+  ol
+    li
+      | Open
+      strong Settings
+      | and find the
+      strong Factory
+      | section.
+    li
+      | Under
+      strong Agent tokens
+      | , type a name such as
+      code coordinator
+      | and create it.
+    li
+      | Copy the key (it starts with
+      code bba_
+      | ) right away: it is shown only once. The section also shows a ready
+      code claude mcp add
+      | line with it filled in.
+  p
+    | On the server itself,
+    code node cli/bb.ts agent-token coordinator
+    | does the same and prints the key.
+
+  h2#register Step 2 · Register the MCP server
+  p
+    | Run this once on the machine where the coordinator will run, with your server's address, your key and the folder
+    | where the Buildyboy code is:
+  pre
+    code
+      | claude mcp add buildyboy --scope user -e BUILDYBOY_URL=https://buildyboy.example -e BUILDYBOY_AGENT_TOKEN=bba_… -- node C:\path\to\buildyboy\cli\bb.ts mcp
+  p
+    | Claude Code then starts
+    code bb mcp
+    | by itself in every session. Check it with
+    code claude mcp list
+    | ; inside a session,
+    code /mcp
+    | shows the buildyboy tools.
+  +callout(variant="warning")
+    @content
+      p
+        | The key goes into Claude Code's own configuration file. Treat it like a password, and revoke it in Settings if
+        | it leaks; a revoked key stops working at once.
+
+  h2#tools The tools
+  p Each tool answers with JSON. A refused call says why, for example "task P3 waits on P1".
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") Tool
+          th(data-part="th" scope="col") What it does
+      tbody(data-part="tbody")
+        tr(data-part="tr")
+          td(data-part="td")
+            code usage_get
+          td(data-part="td") The 5-hour and 7-day windows: percent used, when each resets, and how old the data is.
+        tr(data-part="tr")
+          td(data-part="td")
+            code governor_get
+          td(data-part="td") May a new worker start now? See the governor below.
+        tr(data-part="tr")
+          td(data-part="td")
+            code sessions_list, sessions_get
+          td(data-part="td") Status, context, cost and branch of the sessions Buildyboy knows.
+        tr(data-part="tr")
+          td(data-part="td")
+            code tasks_list, tasks_get
+          td(data-part="td") The backlog, or only the packages ready to start; one package with its history, gates and requests.
+        tr(data-part="tr")
+          td(data-part="td")
+            code tasks_create, tasks_update
+          td(data-part="td") Add a package, or change its status, branch, cost, prompt version, terminal or note.
+        tr(data-part="tr")
+          td(data-part="td")
+            code tasks_claim
+          td(data-part="td") Take the next ready package (or a given one) and mark it În lucru. Refused while the governor says no.
+        tr(data-part="tr")
+          td(data-part="td")
+            code prompts_render, prompts_lint, prompts_save
+          td(data-part="td") Fill the harness template, check it, and save it as a versioned prompt tied to a package.
+        tr(data-part="tr")
+          td(data-part="td")
+            code gates_record
+          td(data-part="td") Record a gate result (G1 to G5) with a summary and screenshots taken from local files.
+        tr(data-part="tr")
+          td(data-part="td")
+            code decision_ask, decision_get
+          td(data-part="td") Ask you something on your phone; read your answer later.
+        tr(data-part="tr")
+          td(data-part="td")
+            code digest_post
+          td(data-part="td") Send the digest now, with an optional note.
+        tr(data-part="tr")
+          td(data-part="td")
+            code control_get
+          td(data-part="td") Your requests to stop a package or revert its integration, so the coordinator can act on them.
+
+  h2#governor The consumption governor
+  p
+    | Your subscription has a rolling 5-hour window and a weekly 7-day window. The governor reads them from the
+    | statusline bridge and answers the coordinator's question: can I start a worker now, or until when should I wait?
+  ul
+    li
+      strong 7-day window at 80% or more:
+      | the factory stops entirely until that window resets, so the rest of the week stays for the sessions you run
+      | yourself.
+    li
+      strong 5-hour window at 85% or more:
+      | no new workers until it resets; the ones already running finish.
+    li
+      strong A window missing from the data
+      | (for example after a plan change) is ignored.
+    li
+      strong Data older than 30 minutes, or none at all:
+      | no new workers, and the reason says so.
+  p
+    | The three numbers are in Settings → Factory. The backlog page shows the governor's answer at the top, and
+    code GET /api/governor
+    | returns it as JSON.
+
+  h2#herdr herdr terminals
+  p
+    | When a machine's
+    a(href="/docs/runner") runner
+    | finds
+    code hc
+    | , it reports herdr's terminals every 15 seconds, and the
+    a(href="/docs/floor") Floor
+    | lists them with their status. A terminal is linked to the Claude Code session running inside it, and to its
+    | package when it was started for one.
+  p
+    | The runner looks for
+    code hc
+    | in this order:
+    code hcPath
+    | in
+    code runner.json
+    | , the
+    code BUILDYBOY_HC
+    | variable, herdr-core's usual install folder on Windows, then your PATH. Set either one to
+    code off
+    | to turn the integration off.
+  p
+    | From a package's page you can also start it as an interactive agent in a new herdr terminal, rather than as a
+    | one-shot job: see
+    a(href="/docs/backlog#launch") Starting a package
+    | .
+
+  h2#activate Turning it on for this machine
+  p The governor needs usage data, and nothing in Buildyboy edits Claude Code's settings for you. On the machine where the coordinator runs:
+  ol
+    li
+      | Pair the machine and install the plugin, as in
+      a(href="/docs/machines") Pairing machines
+      | .
+    li
+      | Add the statusline bridge to
+      code ~/.claude/settings.json
+      | . This is where the usage windows come from:
+      pre
+        code
+          | "statusLine": { "type": "command", "command": "node C:/path/to/buildyboy/plugin/statusline/bb-statusline.mjs" }
+      | If you already have a status line, put its command in the
+      code BUILDYBOY_STATUSLINE_NEXT
+      | variable and the bridge runs it after itself.
+    li
+      | Optionally paste the OTEL block from Settings → Snippets into the
+      code env
+      | section of the same file, for exact costs and tokens.
+    li
+      | Create an agent key and register the MCP server (steps 1 and 2 above).
+    li
+      | Run the doctor with the key set. Its
+      strong factory
+      | block lists exactly what is still missing, with the next step for each:
+      pre
+        code
+          | $env:BUILDYBOY_AGENT_TOKEN='bba_…'; node cli/bb.ts doctor
+    li Start an interactive claude session (the status line only runs there), wait a minute, and check that the backlog page shows fresh usage.

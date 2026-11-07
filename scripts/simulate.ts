@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util';
 import { DB } from '../server/db.ts';
 import { createMachine, sha256 } from '../server/auth.ts';
 import type { Ctx } from '../server/context.ts';
+import { seedFactory } from '../fixtures/factory.ts';
 import { buildScenario, MACHINES, scenarioStart, type MachineKey } from '../fixtures/scenario.ts';
 
 export async function simulate(opts: { url: string; dataDir: string; live?: boolean; speed?: number; log?: (s: string) => void }) {
@@ -65,5 +66,8 @@ if (process.argv[1]?.endsWith('simulate.ts')) {
       speed: { type: 'string', default: '1' },
     },
   });
-  await simulate({ url: values.url!.replace(/\/$/, ''), dataDir: resolve(values.data!), live: values.live, speed: Number(values.speed) });
+  const url = values.url!.replace(/\/$/, '');
+  const dataDir = resolve(values.data!);
+  await simulate({ url, dataDir, live: values.live, speed: Number(values.speed) });
+  seedFactory({ url, dataDir });
 }

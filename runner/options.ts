@@ -7,7 +7,13 @@ export interface StoredJobOptions extends JobOptions {
   resumeSessionId?: string;
   /** id of a built-in structured-output schema (passed as --json-schema); arbitrary schemas are not accepted */
   outputSchema?: keyof typeof OUTPUT_SCHEMAS;
+  /** `hc`: start an interactive `claude` in a herdr terminal instead of running `claude -p` (default `claude`) */
+  launcher?: 'claude' | 'hc';
+  /** the backlog package this job works on; names the herdr terminal and links it back */
+  taskId?: string;
 }
+
+export const LAUNCHERS = ['claude', 'hc'] as const;
 
 /** Structured-output schemas jobs may ask for, by id. `specify` turns a rough idea into harness slots + a draft spec. */
 export const OUTPUT_SCHEMAS = {
@@ -30,6 +36,7 @@ export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 const MODEL_RE = /^\w[\w.:[\]-]{0,99}$/;
 const TOOL_RE = /^[\w*][\w*().:, -]{0,199}$/;
 const WORKTREE_RE = /^[\w.-]{1,64}$/;
+const TASK_RE = /^[\w.-]{1,64}$/;
 const SESSION_RE = /^[0-9a-zA-Z][0-9a-zA-Z-]{7,63}$/;
 
 export class OptionError extends Error {}
@@ -68,6 +75,7 @@ export function checkOptions(o: unknown): StoredJobOptions {
   if (r.walkMode !== undefined && typeof r.walkMode !== 'boolean') throw new OptionError('walkMode must be true or false');
   if (r.outputSchema !== undefined && !Object.hasOwn(OUTPUT_SCHEMAS, String(r.outputSchema))) throw new OptionError(`unknown outputSchema: ${JSON.stringify(r.outputSchema)}`);
   if (r.verify !== undefined && (!Array.isArray(r.verify) || r.verify.some((c) => typeof c !== 'string' || c.length > 2000) || r.verify.length > 30)) throw new OptionError('verify must be a list of commands');
+  if (r.launcher !== undefined && r.launcher !== '' && !LAUNCHERS.includes(r.launcher as never)) throw new OptionError(`invalid launcher: ${JSON.stringify(r.launcher)}`);
   const out: StoredJobOptions = {
     model: str(r.model, 'model', MODEL_RE),
     fallbackModel: str(r.fallbackModel, 'fallbackModel', MODEL_RE),
@@ -83,6 +91,8 @@ export function checkOptions(o: unknown): StoredJobOptions {
     limitMinutes: num(r.limitMinutes, 'limitMinutes', false, 7 * 24 * 60),
     resumeSessionId: str(r.resumeSessionId, 'resumeSessionId', SESSION_RE),
     outputSchema: r.outputSchema as StoredJobOptions['outputSchema'],
+    launcher: (r.launcher || undefined) as StoredJobOptions['launcher'],
+    taskId: str(r.taskId, 'taskId', TASK_RE),
   };
   for (const k of Object.keys(out) as (keyof StoredJobOptions)[]) if (out[k] === undefined) delete out[k];
   return out;
@@ -114,4 +124,37 @@ export function buildClaudeArgs(raw: unknown, opts: { sessionId: string; title: 
   if (o.outputSchema) a.push('--json-schema', JSON.stringify(OUTPUT_SCHEMAS[o.outputSchema]));
   a.push('--max-budget-usd', String(o.maxBudgetUsd));
   return a;
+}
+
+/** hc terminal name for a package: 1-32 of a-z 0-9 - _, so `T12` becomes `bb-t12`. */
+export function hcTerminalName(taskId: string | null | undefined, jobId?: string): string {
+  const clean = (taskId ?? '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  const base = clean || `job-${(jobId ?? '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8) || 'x'}`;
+  return `bb-${base}`.slice(0, 32).replace(/-+$/, '');
+}
+
+const HC_ID_RE = /^[\w.-]{1,64}$/;
+/** Longest prompt we put on a command line (Windows allows about 32k characters in all). */
+export const HC_PROMPT_MAX = 24_000;
+
+/**
+ * The validated argument list for `hc run`, which starts an interactive `claude` in a persistent terminal.
+ * `program` is the claude executable as argv (absolute path, or node plus a script; never a .cmd shim); `pluginDirs` are extra --plugin-dir paths.
+ */
+export function buildHcRunArgs(raw: unknown, a: { jobId: string; cwd: string; title: string | null; prompt: string; program?: string[]; pluginDirs?: string[] }): string[] {
+  const o = checkOptions(raw);
+  if (!HC_ID_RE.test(a.jobId)) throw new OptionError('invalid job id');
+  const prompt = a.prompt.trim();
+  if (!prompt) throw new OptionError('empty prompt');
+  if (prompt.length > HC_PROMPT_MAX) throw new OptionError(`prompt is too long for a terminal command line (${prompt.length} > ${HC_PROMPT_MAX} characters); launch it with claude -p`);
+  const args = ['run', '--bg', '--json', '--name', hcTerminalName(o.taskId, a.jobId), '--cwd', a.cwd, '--label', 'owner=buildyboy'];
+  if (o.taskId) args.push('--label', `bb.task=${o.taskId}`);
+  args.push('--label', `bb.job=${a.jobId}`, '--no-parent', ...(a.program?.length ? a.program : ['claude']));
+  if (o.model) args.push('--model', o.model);
+  if (o.permissionMode) args.push('--permission-mode', o.permissionMode);
+  for (const d of a.pluginDirs ?? []) args.push('--plugin-dir', d);
+  args.push('-n', cleanTitle(a.title));
+  // the prompt is a positional argument: a leading dash must not read as a flag
+  args.push(prompt.startsWith('-') ? `Task: ${prompt}` : prompt);
+  return args;
 }
