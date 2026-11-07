@@ -194,6 +194,7 @@ Create the tables in migrations. Store raw payloads as JSON text next to the ext
 - **otel_events:** ts, session_id, name, attrs_json.
 - **push_subscriptions:** id, device_name, endpoint, keys_json, created_at, last_ok_at.
 - **pairing_codes**, **web_sessions**, **audit_log** (ts, actor, action, target, detail) and **settings** (key, value).
+- **Factory (§11):** tasks, task_deps, task_events, gate_results, gate_shots, decisions, control_requests, agent_tokens, hc_terminals, digests; sessions.hc_terminal.
 - **FTS5 index** over messages.text, tool_calls.command and input, prompts.rendered and session names.
 
 **Redaction.** Before anything is stored, `shared/redact.ts` masks likely secrets: API keys and tokens (`sk-…`, `ghp_…`, `gho_…`, AWS keys, JWTs, `Bearer …`, `password=…`) and the content of `.env*` files read with Read. The rules are testable and can be extended in Settings.
@@ -383,6 +384,7 @@ Note: Windows and WSL have separate `~/.claude` folders, so install on both.
 ## 7. HTTP API (sketch; refine as you build)
 
 - **Public:** `GET /api/health`, `GET /install.sh`, `GET /install.ps1`, `GET /plugin.tgz`, `POST /api/pair`.
+- **Agent token (§11.1):** `POST /api/agent/<tool>` (one per MCP tool), `GET /api/governor`, `GET /api/usage`.
 - **Machine token:** `POST /api/ingest` (batch of envelopes, idempotent by an event hash), `POST /api/hook/:event` (sync control; may long-poll), `POST /v1/metrics`, `POST /v1/logs` (OTLP http/json), `POST /api/statusline`, `GET /api/runner/stream` (SSE jobs and control), `POST /api/runner/jobs/:id/events`.
 - **Web (cookie):**
   - Sessions: `GET /api/sessions`, `GET /api/sessions/:id`, `GET /api/sessions/:id/timeline?cursor=`.
@@ -391,6 +393,7 @@ Note: Windows and WSL have separate `~/.claude` folders, so install on both.
   - Session control: `POST /api/sessions/:id/messages`, `POST /api/sessions/:id/{stop,pause,resume,walk}`.
   - Prompts and templates: `GET|POST|PUT /api/prompts…`, `GET /api/templates`.
   - Jobs: `POST /api/jobs`, `POST /api/jobs/:id/{stop,message,resume,verify}`.
+  - Factory (§11): `GET|POST /api/tasks`, `GET|PUT|DELETE /api/tasks/:id`, `POST /api/tasks/:id/{control,launch}`, `POST /api/tasks/import/{markdown,github}`, `GET /api/gate-shots/:id`, `GET /api/decisions`, `POST /api/decisions/:id/{answer,cancel}`, `GET|POST /api/agent-tokens`, `POST /api/agent-tokens/:id/revoke`, `GET|POST /api/digests`, `GET /api/terminals`, `GET /api/governor`.
   - Everything else: `GET /api/machines…`, `GET /api/projects…`, `GET /api/analytics…`, `GET /api/search?q=`, `POST /api/push/subscribe`, `GET|PUT /api/settings`, `POST /api/auth/{login,logout}`.
 
 ---
@@ -454,5 +457,71 @@ Note: Windows and WSL have separate `~/.claude` folders, so install on both.
 
 - Reimplementing Remote Control's interactive terminal.
 - Multi-user or teams.
-- Running Claude on the server itself (the server never executes Claude or shell commands).
+- Running Claude on the server itself (the server never executes Claude, `hc` or shell commands; the runner does, §5.5 and §11.4).
 - Editing code in the browser.
+- Running git on other repositories. Stop and revert requests for a package are recorded for the coordinator (§11.5); the coordinator does the git work.
+- Orchestrating the factory itself. Buildyboy is the control tower; a Claude Code coordinator in a herdr terminal decides what runs next (§11).
+
+An MCP server and a backlog are **no longer** non-goals: they are §11.1 and §11.2.
+
+---
+
+## 11. The factory (P0)
+
+Buildyboy is the control tower of an autonomous factory (decided 2026-11-07): a **coordinator** Claude Code session runs in a herdr terminal, starts interactive **workers** (one worktree per package) with `hc run --bg`, runs short `claude -p` verifiers, and integrates packages that pass the gates. Buildyboy holds the memory: the backlog, usage and the governor, the gates, the decisions inbox and the daily digest, and it shows all of it on the phone.
+
+```
+ Narcis (phone) ──► Buildyboy: backlog · usage 5h/7d · governor · gates · decisions · digest
+                         ▲ MCP (bb mcp, agent token)            ▲ hooks + statusline bridge
+ hc terminal: COORDINATOR ── hc run/wait/send ──► WORKERS (interactive claude, a worktree each)
+                         └── claude -p --json-schema ──► VERIFIERS (review, QA, visual)
+```
+
+### 11.1 MCP server: `bb mcp`
+
+- A thin stdio process (`cli/mcp.ts`, official MCP TypeScript SDK v2). Every tool is one call to `POST /api/agent/<tool>`. The tool list and its zod schemas live in `shared/factory.ts` (`TOOLS`), so `bb mcp` and the server validate the same arguments.
+- **Agent tokens** (`bba_…`) are separate from machine tokens: stored as hashes in `agent_tokens`, created in Settings → Factory (or `bb agent-token <name>` on the server host), shown once, revocable from the PWA. An agent token reaches only `/api/agent/*`, `GET /api/governor` and `GET /api/usage`; a machine token or a web cookie does not reach `/api/agent/*`.
+- Config: `BUILDYBOY_URL` (default: the url in `~/.buildyboy/config.json`) and `BUILDYBOY_AGENT_TOKEN`. Register with `claude mcp add buildyboy --scope user -e BUILDYBOY_URL=… -e BUILDYBOY_AGENT_TOKEN=… -- node <repo>/cli/bb.ts mcp`.
+- Tools: `usage_get`, `governor_get`, `sessions_list`, `sessions_get`, `tasks_list`, `tasks_get`, `tasks_create`, `tasks_claim`, `tasks_update`, `prompts_render`, `prompts_lint`, `prompts_save`, `gates_record`, `decision_ask`, `decision_get`, `digest_post`, `control_get`. Results are JSON text; failures come back as `isError` with the server's message.
+- `gates_record` takes screenshots as local paths; `bb mcp` reads them and uploads base64 (PNG, JPEG, WebP or GIF, at most 5 MB each, 12 per call).
+- `npm run smoke:mcp` starts a server on a temporary DB, sends a SessionStart and a statusline sample the real way, spawns `bb mcp` over stdio and calls every tool, then checks that a revoked token is refused.
+
+### 11.2 Backlog
+
+- **tasks** (packages): id (given, like `P2`, or `T<n>`), title, body, acceptance criteria, status, repo, branch, priority, cost, prompt id and version, sensitive flag, note, claimed by, job, terminal, session, source (`web`, `markdown`, `github`, `agent`), external ref, integrated_at. **task_deps** (task → depends on, no cycles), **task_events** (history: created, status, update, note, gate, control).
+- Statuses: `backlog`, `gata`, `in_lucru`, `la_porti`, `integrata`, `blocata`. A task is **ready** when it is `gata` and every dependency is `integrata`.
+- `tasks_claim` takes the given ready task or the best ready one (priority, then age), sets `in_lucru` and `claimed_by`, atomically. It is refused while the governor says `canStart: false`, unless `force: true`.
+- Inputs: the PWA (also on the phone); Markdown files with frontmatter (`bb tasks import <file|dir>`, generic: `id`, `title`, `status`, `depends_on`/`after`, `repo`, `branch`, `priority`, `sensitive`, `acceptance` or an "Acceptance criteria" section; upsert by id, dependencies ordered); GitHub issues of a repo (optional label) through the existing GitHub token, upserted by `owner/repo#n`.
+- PWA: `/backlog` (board: six columns on desktop, a status filter on the phone), `/backlog/:id` (the package page, §11.5).
+
+### 11.3 Consumption governor
+
+`GET /api/governor` and `governor_get` answer `{ canStart, stopAll, waitUntil, reason, usage, thresholds }` from the newest statusline sample (`rate_limits.five_hour` / `seven_day`, `used_percentage` and `resets_at` in epoch seconds):
+
+- the 7-day window at or above **80%** → `stopAll: true`, `canStart: false`, `waitUntil` = its reset;
+- the 5-hour window at or above **85%** → `canStart: false` (active workers finish), `waitUntil` = its reset;
+- a window missing from the data, or whose `resets_at` has passed, is ignored;
+- data older than **30 min**, or no data at all, → `canStart: false`, with the reason.
+
+The three thresholds are settings (`governor_five_hour_pct`, `governor_seven_day_pct`, `governor_max_age_min`). The existing 80% watcher (§5.8) still notifies.
+
+### 11.4 herdr integration
+
+- The **runner** finds `hc` (`hcPath` in runner.json, `BUILDYBOY_HC`, herdr-core's default install, or PATH), reports `hc ls --json` every 15 s to `POST /api/runner/terminals`, and the Floor shows the terminals with their status, linked to their Claude Code session through `HC_TERMINAL_ID` (hook env allowlist → `sessions.hc_terminal`) and to their package.
+- A package starts as an interactive agent from its page: `POST /api/tasks/:id/launch` with `launcher: 'hc'` makes a job that the runner turns into `hc run --bg --name bb-<task> --cwd <dir> --label owner=buildyboy --label bb.task=<id> … claude …` (a checked argv, inside the allowed roots, no shell). `launcher: 'claude'` is a normal `claude -p` job.
+
+### 11.5 Gates, controls, decisions and the digest
+
+- **gate_results** (task, gate G1–G5, verdict pass/fail/skip, summary, details, actor) and **gate_shots** (images, in the DB so backups keep them). The package page shows each gate's latest verdict, summary and screenshots, and earlier attempts.
+- **Oprește pachetul** and **Cere revenirea integrării** record a **control_request** (`stop` or `revert`, with a note). `control_get` returns the open ones; `ack: true` marks them handled. Buildyboy never runs git on other repositories.
+- **decisions**: `decision_ask` puts a question (with options and context, optionally tied to a package) in `/decisions` and pushes a notification; the answer is read back with `decision_get`. Pending decisions count in the attention bar.
+- **Digest**: once a day at `digest_time` (default 08:00 server time, `digest_enabled`), and on demand with `digest_post` or Settings: what was integrated in 24 h (sensitive packages marked), gate passes and failures, packages in progress and blocked, 5 h/7 d usage and the governor, decisions waiting, unhandled stop/revert requests. Sent through Web Push/ntfy and kept in **digests**.
+
+### 11.6 Activation on a machine
+
+The factory needs usage data, so on each machine where the coordinator runs:
+
+1. Pair the machine and install the plugin (§6.2).
+2. Configure the statusline bridge in `~/.claude/settings.json` (`plugin/statusline/bb-statusline.mjs`) and, optionally, the OTEL env block (Settings → Snippets). Nothing in Buildyboy edits these files.
+3. Create an agent token and register `bb mcp` with `claude mcp add`.
+4. Run `bb doctor` (with `BUILDYBOY_AGENT_TOKEN` set): it lists exactly what is still missing (statusline bridge, OTEL, MCP registration, `hc`, fresh usage data) and the step for each.
