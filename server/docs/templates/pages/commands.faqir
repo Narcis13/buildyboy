@@ -51,7 +51,12 @@ block content
       | Checks a machine: whether
       code ~/.buildyboy/config.json
       | exists, whether the server is reachable, whether it accepts this machine's key, how much is in the spool, and
-      | whether the hook has recently backed off after a failure. Each line starts with ✔ or ✘.
+      | whether the hook has recently backed off after a failure. Each line starts with ✔ or ✘. A last
+      strong factory
+      | block lists what the
+      a(href="/docs/coordinator#activate") factory
+      | still needs on this machine (statusline bridge, OTEL, the MCP registration, hc and fresh usage data), each with
+      | the exact next step; those lines start with ✔ or ! and never make the check fail.
     dt#pair
       code node cli/bb.ts pair <server> <code> [name]
     dd
@@ -95,6 +100,33 @@ block content
     dd
       | Run on the server. Creates a machine and prints its id and key, for setting up a machine completely by hand.
       | Pairing codes are easier.
+    dt#mcp
+      code node cli/bb.ts mcp
+    dd
+      | The MCP server for a coordinator, over standard input and output. Claude Code starts it for you once it is
+      | registered; it needs
+      code BUILDYBOY_URL
+      | and an agent key in
+      code BUILDYBOY_AGENT_TOKEN
+      | . See
+      a(href="/docs/coordinator#register") Registering the MCP server
+      | .
+    dt#tasks-import
+      code node cli/bb.ts tasks import <file or folder> [--dry-run]
+    dd
+      | Adds Markdown task files to the backlog, or updates the ones already there by id. A folder imports every
+      code .md
+      | file in it that starts with frontmatter.
+      code --dry-run
+      | only prints what it would import. Needs the same two variables as
+      code mcp
+      | . The file format is in
+      a(href="/docs/backlog#markdown") Importing from Markdown
+      | .
+    dt#agent-token
+      code node cli/bb.ts agent-token <name>
+    dd
+      | Run on the server. Creates an agent key and prints it once. Settings → Factory does the same from the browser.
     dt#server-cmd
       code node cli/bb.ts server
     dd Starts the server in this window (the same as npm start). Normally the server runs as a service instead.

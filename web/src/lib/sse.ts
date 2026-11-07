@@ -38,7 +38,14 @@ function invalidateFor(qc: QueryClient, m: StreamMessage) {
     if (m.type === 'global' || m.type === 'machines') qc.invalidateQueries({ queryKey: ['global'] });
   } else if (m.topic === 'inbox') {
     qc.invalidateQueries({ queryKey: ['inbox'] });
+    qc.invalidateQueries({ queryKey: ['decisions'] });
     qc.invalidateQueries({ queryKey: ['attention'] });
+  } else if (m.topic === 'tasks') {
+    qc.invalidateQueries({ queryKey: ['tasks'] });
+    qc.invalidateQueries({ queryKey: ['digests'] });
+    qc.invalidateQueries({ queryKey: ['governor'] });
+    const id = (m.data as { id?: string } | undefined)?.id;
+    if (id) qc.invalidateQueries({ queryKey: ['task', id] });
   } else if (m.topic.startsWith('session:')) {
     qc.invalidateQueries({ queryKey: ['session', m.topic.slice('session:'.length)] });
   } else if (m.topic === 'machines') {

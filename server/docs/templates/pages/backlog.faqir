@@ -1,0 +1,161 @@
+layout "layout.faqir"
+
+block content
+  p
+    | The
+    strong backlog
+    | holds the factory's
+    strong packages
+    | : large pieces of work, each one taken from start to finish by one worker. The
+    a(href="/docs/coordinator") coordinator
+    | picks them from here, records how they did at each gate, and asks you when it cannot decide alone. You watch,
+    | answer and, when needed, stop or revert from your phone.
+
+  h2#board The board
+  include "partials/shot.faqir" (assets=site.assets file="backlog-desktop.png" alt="The backlog on a desktop: the governor banner with the 5-hour and 7-day usage bars, then six columns of package cards from Backlog to Blocată." caption="The backlog on a desktop, one column per status.")
+  p
+    | Open
+    strong Backlog
+    | in the menu. On a desktop each status is a column; on a phone you pick a status at the top and see one list. A
+    | card shows the package's id and title, the G1 to G5 gate chips, its cost, and these marks:
+  ul
+    li
+      strong ready
+      | : it is Gata and everything it depends on is integrated, so it can start now.
+    li
+      strong waits on …
+      | : the packages it still waits for.
+    li
+      strong sensitive
+      | : authentication, access rules, imports or pseudonymisation; such packages get an extra security review and are
+      | marked in the digest.
+    li An open stop or revert request.
+  include "partials/shot.faqir" (assets=site.assets file="backlog-phone.png" alt="The backlog on a phone: the governor banner, a row of status filters with counts, and a list of package cards." caption="On a phone, filter by status." phone)
+
+  h3#statuses The six statuses
+  dl
+    dt Backlog
+    dd Written down, not ready yet.
+    dt Gata
+    dd Specified and ready to start once its dependencies are integrated.
+    dt În lucru
+    dd A worker has it.
+    dt La porți
+    dd The work is done and the gates are running.
+    dt Integrată
+    dd It passed the gates and was merged.
+    dt Blocată
+    dd It failed the gates three times, or something outside it stops it.
+
+  h3#governor-banner The banner at the top
+  p
+    | It shows the
+    a(href="/docs/coordinator#governor") governor's
+    | answer: whether new workers may start, or until when the factory waits, with the 5-hour and 7-day usage and how
+    | old that data is.
+
+  h2#new Adding packages
+  p
+    | Use
+    strong New task
+    | on the board, also from a phone: a title, an optional id (such as
+    code P3
+    | ; otherwise one like
+    code T12
+    | is made), a description, the acceptance criteria one per line, what it depends on, its status and its priority.
+    | Higher priority starts first among ready packages.
+
+  h3#markdown Importing from Markdown
+  p
+    | A package can live as a Markdown file in any repository: frontmatter between two
+    code ---
+    | lines, then the description. Upload the files on the board, or run
+    a(href="/docs/commands#tasks-import") bb tasks import
+    | with a file or a folder. Importing the same id again updates the package and keeps its status, unless the file
+    | sets one.
+  pre
+    code
+      | ---
+      | id: P2
+      | title: Inventory
+      | status: gata
+      | depends_on: [P1]
+      | priority: 10
+      | sensitive: false
+      | ---
+      | What the package covers.
+      |
+      | ## Acceptance criteria
+      | - Stock moves post to the ledger
+      | - The monthly report matches the old one
+  p
+    code after
+    | works as well as
+    code depends_on
+    | , and the criteria can also be an
+    code acceptance
+    | list in the frontmatter.
+
+  h3#github Importing GitHub issues
+  p
+    | With a GitHub token in
+    a(href="/docs/settings") Settings
+    | , the board can import a repository's open issues, optionally only those with a given label. Pull requests are
+    | skipped, and importing again updates the same packages.
+
+  h2#package A package's page
+  include "partials/shot.faqir" (assets=site.assets file="task-desktop.png" alt="A package page on a desktop: header with status, branch and cost, the acceptance criteria, and the gates G1 to G5 with verdicts, summaries and a screenshot thumbnail." caption="A package with its gates and their screenshots.")
+  p
+    | Tap a card to open its page: status (you can change it), repository, branch, cost, the prompt and its version,
+    | the Claude Code session and herdr terminal working on it, the acceptance criteria, its dependencies and its full
+    | history.
+
+  h3#gates The gates
+  p Each gate shows its latest verdict, its summary and any screenshots; earlier attempts fold away below it.
+  dl
+    dt G1
+    dd Typecheck, lint, unit and end-to-end tests.
+    dt G2
+    dd Acceptance tests written before the work by another agent, which the worker cannot change.
+    dt G3
+    dd An independent review with a structured verdict.
+    dt G4
+    dd Screenshots at desktop and phone width, judged against the design rules.
+    dt G5
+    dd Rebase on main, then G1 and G2 again on the result.
+
+  h3#stop Stopping or reverting
+  p
+    strong Oprește pachetul
+    | asks the coordinator to stop work on this package.
+    strong Cere revenirea integrării
+    | asks it to revert the package's merge. Both only record your request, with an optional note: the coordinator
+    | reads it and does the git work, because Buildyboy never runs git on your repositories. The page shows whether it
+    | has picked the request up yet.
+  include "partials/shot.faqir" (assets=site.assets file="task-phone.png" alt="A package page on a phone: the gates as a list, followed by the Oprește pachetul and Cere revenirea integrării buttons." caption="The same package on a phone." phone)
+
+  h3#launch Starting a package
+  p
+    | A package can also be started from its page on one of your machines: as an interactive agent in a new herdr
+    | terminal (the default, so it stays visible and correctable), or as a one-shot
+    a(href="/docs/jobs") job
+    | . Both need the machine's
+    a(href="/docs/runner") runner
+    | , and the folder must be inside its allowed roots.
+
+  h2#decisions Decisions
+  include "partials/shot.faqir" (assets=site.assets file="decisions-desktop.png" alt="The Decisions page: a pending question with its context and one button per option, and answered questions below." caption="A question from the coordinator, waiting for you.")
+  p
+    | When the coordinator cannot settle something alone, it asks you. The question arrives as a notification and waits
+    | on the
+    strong Decisions
+    | page (the Inbox links to it, and the attention bar counts it). Tap one of the offered answers or write your own;
+    | the coordinator reads it the next time it checks. Cancel a question that no longer matters.
+  include "partials/shot.faqir" (assets=site.assets file="decisions-phone.png" alt="The Decisions page on a phone, with option buttons sized for a thumb." caption="Answering from a phone." phone)
+
+  h2#digest The daily digest
+  p
+    | Once a day, at the time set in Settings → Factory (08:00 by default, the server's time), a notification sums up
+    | the last 24 hours: what was integrated, which gates passed or failed, what is in progress or blocked, usage and
+    | the governor, and the decisions and requests still waiting. The coordinator can send one at any time, and so can
+    | you from Settings.

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { PendingActionView } from '../../../shared/types.ts';
+import type { AttentionSummary, PendingActionView } from '../../../shared/types.ts';
 import { api } from '../lib/api.ts';
-import { useLocation } from '../lib/router.tsx';
+import { Link, useLocation } from '../lib/router.tsx';
 import { Card, Empty, PageTitle, Toggle } from '../components/ui.tsx';
 import { ActionCard, HistoryRow } from '../components/inbox/ActionCard.tsx';
 
@@ -43,6 +43,24 @@ function GlobalControls() {
   );
 }
 
+/** Factory questions have their own page; this is the pointer to it. */
+function DecisionsBanner() {
+  const { data } = useQuery({ queryKey: ['attention'], queryFn: () => api.get<AttentionSummary>('/api/attention') });
+  if (!data?.decisions) return null;
+  return (
+    <Link
+      to="/decisions"
+      data-testid="inbox-decisions-banner"
+      className="mb-4 flex min-h-[44px] items-center justify-between gap-3 rounded-xl border border-waiting bg-panel px-4 py-2 text-[15px] hover:border-accent"
+    >
+      <span>
+        <strong>{data.decisions}</strong> decision{data.decisions > 1 ? 's' : ''} waiting for your answer
+      </span>
+      <span className="text-accent">Open Decisions →</span>
+    </Link>
+  );
+}
+
 export default function Inbox() {
   const { hash } = useLocation();
   const target = hash.slice(1);
@@ -57,6 +75,7 @@ export default function Inbox() {
   return (
     <div data-testid="inbox-page" className="mx-auto max-w-3xl">
       <PageTitle right={data && <span className="text-muted" data-testid="inbox-count">{data.pending.length} waiting</span>}>Inbox</PageTitle>
+      <DecisionsBanner />
       <GlobalControls />
       {error && <div role="alert" className="mb-3 text-error">Could not load the inbox: {(error as Error).message}</div>}
       {isLoading && <div className="text-muted">Loading…</div>}
