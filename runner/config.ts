@@ -7,6 +7,10 @@ export interface RunnerConfig {
   allowedRoots: string[];
   concurrency: number;
   claudePath?: string;
+  /** herdr's `hc` (default: BUILDYBOY_HC, herdr-core's install, PATH); "off" turns the integration off */
+  hcPath?: string;
+  /** how often to report `hc ls` to the server (default 15) */
+  hcPollSeconds: number;
   /** extra `--plugin-dir` directories for every job (machine-local, e.g. a dev checkout of the plugin) */
   pluginDirs: string[];
   /** close stdin this long after a `result` with no follow-up, so the job can finish (default 120) */
@@ -31,6 +35,8 @@ export function loadConfig(configPath?: string): RunnerConfig {
     allowedRoots: roots,
     concurrency: Math.floor(n(raw.concurrency, 2)),
     claudePath: typeof raw.claudePath === 'string' && raw.claudePath ? raw.claudePath : undefined,
+    hcPath: typeof raw.hcPath === 'string' && raw.hcPath ? raw.hcPath : undefined,
+    hcPollSeconds: n(raw.hcPollSeconds, 15),
     pluginDirs: Array.isArray(raw.pluginDirs) ? raw.pluginDirs.filter((d): d is string => typeof d === 'string' && d.trim() !== '').map((d) => resolve(d)) : [],
     idleExitSeconds: n(raw.idleExitSeconds, 120),
     stopGraceSeconds: n(raw.stopGraceSeconds, 10),

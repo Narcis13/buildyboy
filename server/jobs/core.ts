@@ -8,6 +8,7 @@ import { json } from '../db.ts';
 import { jobView } from '../queries.ts';
 import { redactText } from '../../shared/redact.ts';
 import { checkOptions, OptionError, type StoredJobOptions } from '../../runner/options.ts';
+import { updateTask } from '../factory/tasks.ts';
 
 export const OUTPUT_CAP = 20_000;
 export const LOST_AFTER_MS = 2 * 60_000;
@@ -198,8 +199,31 @@ export function applyRunnerEvents(ctx: Ctx, machineId: string, jobId: string, ev
   ctx.bus.publish('jobs', 'changed', { id: jobId });
   if (output) ctx.bus.publish(`job:${jobId}`, 'output');
   if (ended) {
+    linkTask(ctx, jobId);
     notifyEnd(ctx, jobId);
     dispatch(ctx, machineId);
+  }
+}
+
+/**
+ * A job started for a backlog package (POST /api/tasks/:id/launch) tells the package where the work went: the herdr
+ * terminal it was started in (and `in_lucru` if it was `gata`), or the session of a `claude -p` run.
+ */
+function linkTask(ctx: Ctx, jobId: string) {
+  const j = jobView(ctx, jobId);
+  const o = j?.options as StoredJobOptions | undefined;
+  if (!j || !o?.taskId) return;
+  const t = ctx.db.get<{ status: string; session_id: string | null }>('SELECT status, session_id FROM tasks WHERE id = ?', o.taskId);
+  if (!t) return;
+  try {
+    if (o.launcher === 'hc') {
+      if (j.status !== 'succeeded' || typeof j.result?.terminal !== 'string') return;
+      updateTask(ctx, { id: o.taskId, terminal: j.result.terminal, ...(t.status === 'gata' ? { status: 'in_lucru' as const } : {}) }, 'launch', { jobId });
+    } else if (j.sessionId && !t.session_id) {
+      updateTask(ctx, { id: o.taskId, sessionId: j.sessionId }, 'launch', { jobId });
+    }
+  } catch {
+    // the package was deleted or changed under us: the job result still stands
   }
 }
 

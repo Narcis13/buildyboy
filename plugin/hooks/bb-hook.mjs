@@ -22,7 +22,7 @@ const SPOOL_CAP = 50 * 1024 * 1024;
 const BATCH_CAP = 2 * 1024 * 1024;
 const BREAKER_MS = 60_000;
 const CONNECT_MS = 1000;
-const ENV_ALLOW = ['CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_PROJECT_DIR', 'TERM_PROGRAM', 'BUILDYBOY_JOB_ID', 'CLAUDE_CODE_BRIDGE_SESSION_ID', 'CLAUDE_CODE_REMOTE'];
+const ENV_ALLOW = ['CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_PROJECT_DIR', 'TERM_PROGRAM', 'BUILDYBOY_JOB_ID', 'HC_TERMINAL_ID', 'CLAUDE_CODE_BRIDGE_SESSION_ID', 'CLAUDE_CODE_REMOTE'];
 const TRANSCRIPT_EVENTS = new Set(['PostToolUse', 'PostToolUseFailure', 'Stop', 'SubagentStop', 'PreCompact', 'PostCompact', 'SessionEnd', 'UserPromptSubmit']);
 const GIT_EVENTS = new Set(['SessionStart', 'Stop', 'SessionEnd']);
 

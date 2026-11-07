@@ -75,6 +75,7 @@ beforeAll(async () => {
   writeFileSync(join(home, 'runner.json'), JSON.stringify({ allowedRoots: [roots], concurrency: 2, idleExitSeconds: 1, stopGraceSeconds: 1 }));
   process.env.BUILDYBOY_HOME = home;
   process.env.BUILDYBOY_CLAUDE_BIN = FAKE;
+  process.env.BUILDYBOY_HC = 'off'; // these tests must never reach a real herdr on the machine
   delete process.env.BUILDYBOY_URL;
   delete process.env.BUILDYBOY_TOKEN;
   runner = startRunner({ log: () => {} });
@@ -87,6 +88,7 @@ afterAll(async () => {
   await srv?.stop();
   delete process.env.BUILDYBOY_HOME;
   delete process.env.BUILDYBOY_CLAUDE_BIN;
+  delete process.env.BUILDYBOY_HC;
   try {
     rmSync(tmp, { recursive: true, force: true });
   } catch {
