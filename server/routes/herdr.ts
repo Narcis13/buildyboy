@@ -31,6 +31,8 @@ const terminalsSchema = z.object({
       }),
     )
     .max(500),
+  /** runner clock when `hc ls` ran */
+  takenAt: z.number().int().positive().optional(),
 });
 
 const launchSchema = z.object({
@@ -111,6 +113,8 @@ export function herdrRoutes(ctx: Ctx) {
     const now = Date.now();
     // packages by their terminal name (`bb-t12`), so a terminal we started links back without asking hc for labels
     const byName = new Map(db.all<{ id: string }>('SELECT id FROM tasks').map((t) => [hcTerminalName(t.id), t.id]));
+    const takenAt = Math.min(p.data.takenAt ?? now, now); // when the runner ran `hc ls` (older runners: on arrival)
+    const closed: string[] = [];
     db.tx(() => {
       const seen = new Set<string>();
       for (const t of p.data.terminals) {
@@ -127,7 +131,25 @@ export function herdrRoutes(ctx: Ctx) {
       for (const r of db.all<{ address: string }>('SELECT address FROM hc_terminals WHERE machine_id = ?', machineId)) {
         if (!seen.has(r.address)) db.run('DELETE FROM hc_terminals WHERE machine_id = ? AND address = ?', machineId, r.address);
       }
+      // A killed or removed terminal sends no SessionEnd: its session ends when the terminal is finished or missing
+      // from a listing taken after the session's last event (a session started after the listing is left alone).
+      const live = new Set(p.data.terminals.filter((t) => t.state?.toLowerCase() !== 'finished').map((t) => t.address));
+      const open = db.all<{ id: string; hc_terminal: string }>(
+        "SELECT id, hc_terminal FROM sessions WHERE machine_id = ? AND hc_terminal IS NOT NULL AND status != 'ended' AND last_event_at < ?", machineId, takenAt,
+      );
+      // `box/t7` and `t7` count as the same terminal: when unsure, a session stays open
+      const tail = (a: string) => a.slice(a.lastIndexOf('/') + 1);
+      const liveTails = new Set([...live].map(tail));
+      for (const s of open.filter((x) => !live.has(x.hc_terminal) && !liveTails.has(tail(x.hc_terminal)))) {
+        db.run("UPDATE sessions SET status = 'ended', ended_at = ?, end_reason = 'terminal closed', activity = NULL, waiting_since = NULL WHERE id = ?", now, s.id);
+        db.run("UPDATE tool_calls SET status = 'interrupted', ended_at = ? WHERE session_id = ? AND status = 'running'", now, s.id);
+        closed.push(s.id);
+      }
     });
+    for (const sid of closed) {
+      bus.publish('floor', 'session', { id: sid });
+      bus.publish(`session:${sid}`, 'timeline');
+    }
     if (before !== mine()) bus.publish('floor', 'terminals', { machineId });
     return c.json({ ok: true, count: p.data.terminals.length });
   });

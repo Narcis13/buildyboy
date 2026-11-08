@@ -58,7 +58,10 @@ export async function tasksCli(args: string[]): Promise<number> {
     throw e;
   }
   if (values['dry-run']) {
-    for (const t of batch) console.log(`${t.id ?? '(new id)'}\t${t.status ?? 'backlog'}\t${t.title}${t.dependsOn.length ? `\tafter ${t.dependsOn.join(', ')}` : ''}`);
+    for (const t of batch) {
+      console.log(`${t.id ?? '(new id)'}\t${t.status ?? 'backlog'}\t${t.title}${t.dependsOn.length ? `\tafter ${t.dependsOn.join(', ')}` : ''}\t${t.acceptance.length} criteria`);
+      for (const [i, a] of t.acceptance.entries()) console.log(`  ${i + 1}. ${a}`);
+    }
     return 0;
   }
   const url = process.env.BUILDYBOY_URL || readClientConfig().url;

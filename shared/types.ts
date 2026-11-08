@@ -3,7 +3,8 @@
 export type Platform = 'win32' | 'linux' | 'darwin' | 'wsl' | string;
 export type SessionStatus = 'working' | 'waiting' | 'idle' | 'compacting' | 'stale' | 'ended' | 'error';
 export type SessionSource = 'cli' | 'desktop' | 'headless' | 'bg' | 'sdk' | 'unknown';
-export type ToolCallStatus = 'ok' | 'error' | 'denied' | 'interrupted' | 'running';
+/** `blocked`: refused before it ran (a PreToolUse hook or a deny rule); Claude Code sends no result event for it. */
+export type ToolCallStatus = 'ok' | 'error' | 'denied' | 'blocked' | 'interrupted' | 'running';
 export type PendingKind = 'permission' | 'question' | 'plan' | 'stop_wait' | 'pause';
 export type PendingStatus = 'pending' | 'answered' | 'timeout' | 'superseded';
 export type JobStatus = 'queued' | 'starting' | 'running' | 'succeeded' | 'failed' | 'stopped' | 'lost';
@@ -38,6 +39,8 @@ export interface GitInfo {
   dirty?: number;
   remote?: string;
   worktree?: boolean;
+  /** for a linked worktree: the main checkout's root, which the project is keyed on (absent from older plugins) */
+  mainRoot?: string;
   /** `git diff --shortstat <start_sha>` at Stop */
   shortstat?: string;
   /** set when the Bash command ran `git commit` */

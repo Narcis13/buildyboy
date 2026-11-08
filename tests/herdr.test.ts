@@ -161,6 +161,36 @@ describe('terminal reports', () => {
   });
 });
 
+describe('sessions in closed terminals', () => {
+  it('a session whose terminal is finished or missing from the runner report ends; the others stay', async () => {
+    const box = createMachine(srv.ctx, 'hc-kill-box');
+    const now = Date.now();
+    const start = (sid: string, ts: number, env: Record<string, string>) => ingest(box.token, envelope(sid, ts, env)).then((r) => expect(r.status).toBe(200));
+    await start('hc-killed', now - 60_000, { HC_TERMINAL_ID: 't5' }); // `hc kill t5` + `hc rm t5`: no SessionEnd
+    await start('hc-finished', now - 60_000, { HC_TERMINAL_ID: 't8' });
+    await start('hc-alive', now - 60_000, { HC_TERMINAL_ID: 't6' });
+    await start('hc-newer', now - 1000, { HC_TERMINAL_ID: 't9' }); // started after the listing was taken
+    await start('no-terminal', now - 60_000, {});
+    const row = (sid: string) => srv.ctx.db.get<{ status: string; end_reason: string | null }>('SELECT status, end_reason FROM sessions WHERE id = ?', sid)!;
+    expect(row('hc-killed').status).toBe('idle');
+    const listing = { terminals: [{ address: 't6', agent: 'claude-code', state: 'live', status: 'idle' }, { address: 't8', agent: 'claude-code', state: 'finished' }], takenAt: now - 5000 };
+    expect((await report(box.token, listing)).status).toBe(200);
+    expect(row('hc-killed')).toEqual({ status: 'ended', end_reason: 'terminal closed' });
+    expect(row('hc-finished')).toEqual({ status: 'ended', end_reason: 'terminal closed' });
+    expect(row('hc-alive').status).toBe('idle');
+    expect(row('hc-newer').status).toBe('idle');
+    expect(row('no-terminal').status).toBe('idle');
+    expect((await web.get<{ id: string; status: string }[]>('/api/sessions')).find((s) => s.id === 'hc-killed')!.status).toBe('ended');
+    // `box/t6` and `t6` are the same terminal; a session that speaks after being closed this way is alive again
+    await start('hc-boxed', now - 60_000, { HC_TERMINAL_ID: 'box/t6' });
+    expect((await report(box.token, listing)).status).toBe(200);
+    expect(row('hc-boxed').status).toBe('idle');
+    const later = { ...envelope('hc-killed', Date.now() + 1000, {}), event: { session_id: 'hc-killed', hook_event_name: 'UserPromptSubmit', prompt: 'still here', cwd: repoA } };
+    expect((await ingest(box.token, later)).status).toBe(200);
+    expect(row('hc-killed')).toEqual({ status: 'working', end_reason: null });
+  });
+});
+
 describe('HC_TERMINAL_ID from the real hook', () => {
   it('is on the hook allowlist and ends up in sessions.hc_terminal', async () => {
     const home = mkdtempSync(join(tmpdir(), 'bb-hchook-'));

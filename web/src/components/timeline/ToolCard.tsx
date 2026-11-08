@@ -33,6 +33,7 @@ function StatusPill({ item }: { item: ToolItem }) {
   const map: Record<string, [string, string]> = {
     error: ['failed', 'var(--bb-error)'],
     denied: ['denied', 'var(--bb-error)'],
+    blocked: ['blocked', 'var(--bb-error)'],
     interrupted: ['interrupted', 'var(--bb-waiting)'],
     running: ['running', 'var(--bb-working)'],
   };
@@ -111,7 +112,7 @@ function EditBody({ item, cwd }: { item: ToolItem; cwd: string | null }) {
         </Counts>
       </div>
       {patch && <Diff patch={patch} />}
-      {item.status === 'error' && item.output && <Pre tone="error">{item.output}</Pre>}
+      {(item.status === 'error' || item.status === 'blocked') && item.output && <Pre tone="error">{item.output}</Pre>}
     </div>
   );
 }
@@ -386,7 +387,7 @@ function body(item: ToolItem, ctx: TimelineCtx) {
 export function ToolCard({ item, ctx }: { item: ToolItem; ctx: TimelineCtx }) {
   const color = toolColor(item.tool);
   const mcp = mcpName(item);
-  const bad = item.status === 'error' || item.status === 'denied';
+  const bad = item.status === 'error' || item.status === 'denied' || item.status === 'blocked';
   return (
     <div
       data-testid={`tool-${item.tool}`}

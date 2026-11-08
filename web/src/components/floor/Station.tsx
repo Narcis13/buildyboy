@@ -37,7 +37,7 @@ export function Belt({ tokens, className = '' }: { tokens: ToolToken[]; classNam
     >
       {!tokens.length && <span className="mr-auto font-mono text-[11px] uppercase tracking-widest text-muted">belt idle</span>}
       {tokens.map((t) => {
-        const bad = t.status === 'error' || t.status === 'denied' || t.status === 'interrupted';
+        const bad = t.status === 'error' || t.status === 'denied' || t.status === 'blocked' || t.status === 'interrupted';
         const c = toolColor(t.tool);
         return (
           <span
