@@ -107,6 +107,62 @@ describe('idempotency and auth', () => {
   });
 });
 
+describe('tool calls refused before they run', () => {
+  // Claude Code sends only PreToolUse for a call a hook (exit 2 / deny) or a deny rule refuses: no Post*, no PermissionDenied.
+  const T0 = 1_800_000_000_000;
+  const ingest = async (sid: string, events: { ts: number; event: Record<string, unknown>; transcripts?: unknown[] }[]) => {
+    const envelopes = events.map((x) => ({ v: 1, hostname: 'h', platform: 'linux', user: 'u', pid: 1, ppid: 1, hookVersion: 't', ts: x.ts, env: {}, transcripts: x.transcripts, event: { session_id: sid, ...x.event } }));
+    const r = await fetch(`${srv.url}/api/ingest`, { method: 'POST', headers: { authorization: `Bearer ${tokens.A.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ envelopes }) });
+    expect(r.ok).toBe(true);
+  };
+  const pre = (ts: number, id: string, tool: string, extra: Record<string, unknown> = {}) => ({ ts, event: { hook_event_name: 'PreToolUse', tool_name: tool, tool_use_id: id, tool_input: { command: 'x', file_path: '/x' }, ...extra } });
+  const post = (ts: number, id: string, tool: string, transcripts?: unknown[]) => ({ ts, transcripts, event: { hook_event_name: 'PostToolUse', tool_name: tool, tool_use_id: id, tool_input: { command: 'x' }, tool_response: { stdout: 'ok' } } });
+  const status = (id: string) => srv.ctx.db.get<{ status: string; output_text: string | null }>('SELECT status, output_text FROM tool_calls WHERE tool_use_id = ?', id);
+
+  it('a Write blocked by a hook and a push refused by deny end blocked, not running', async () => {
+    const sid = 'blocked-belt-1';
+    await ingest(sid, [
+      { ts: T0, event: { hook_event_name: 'SessionStart', source: 'startup' } },
+      pre(T0 + 1000, 'bw-1', 'Write'), // a PreToolUse hook exits 2
+      pre(T0 + 6000, 'bp-1', 'Bash'), // `git push --force --dry-run`, refused by a deny rule
+      { ts: T0 + 9000, event: { hook_event_name: 'Stop' } },
+    ]);
+    expect(status('bw-1')!.status).toBe('blocked');
+    expect(status('bp-1')!.status).toBe('blocked');
+    const belt = (await web.get<SessionSummary[]>('/api/sessions')).find((s) => s.id === sid)!.belt;
+    expect(belt.map((t) => t.status)).toEqual(['blocked', 'blocked']);
+  });
+
+  it('the transcript closes a refused call with its reason; real results still win', async () => {
+    const sid = 'blocked-belt-2';
+    const result = (id: string, text: string) => JSON.stringify({ type: 'user', uuid: `u-${id}`, timestamp: new Date(T0 + 3000).toISOString(), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: text }] } });
+    await ingest(sid, [
+      pre(T0 + 1000, 'tw-1', 'Write'),
+      pre(T0 + 2000, 'tr-1', 'Read'),
+      post(T0 + 4000, 'tr-1', 'Read', [{ path: '/t.jsonl', offset: 0, lines: [result('tw-1', 'PreToolUse:Write hook error: blocked by test hook')] }]),
+    ]);
+    expect(status('tw-1')).toEqual({ status: 'blocked', output_text: 'PreToolUse:Write hook error: blocked by test hook' });
+    expect(status('tr-1')!.status).toBe('ok');
+    // a late PostToolUse for a call the safety net closed puts it right
+    await ingest(sid, [pre(T0 + 5000, 'tb-1', 'Bash'), pre(T0 + 9000, 'tb-2', 'Bash')]);
+    expect(status('tb-1')!.status).toBe('blocked');
+    await ingest(sid, [post(T0 + 9500, 'tb-1', 'Bash')]);
+    expect(status('tb-1')!.status).toBe('ok');
+  });
+
+  it('parallel calls and subagent calls are not closed by a sibling PreToolUse', async () => {
+    const sid = 'blocked-belt-3';
+    await ingest(sid, [
+      pre(T0 + 1000, 'pa-1', 'Agent'),
+      pre(T0 + 1050, 'pa-2', 'Agent'), // same assistant message
+      pre(T0 + 30_000, 'ps-1', 'Bash', { agent_id: 'sub-1' }), // inside the first subagent
+    ]);
+    expect([status('pa-1')!.status, status('pa-2')!.status, status('ps-1')!.status]).toEqual(['running', 'running', 'running']);
+    await ingest(sid, [{ ts: T0 + 40_000, event: { hook_event_name: 'SubagentStop', agent_id: 'sub-1' } }]);
+    expect([status('pa-1')!.status, status('ps-1')!.status]).toEqual(['running', 'blocked']);
+  });
+});
+
 describe('per-session notification mute', () => {
   it('mutes and unmutes push for one session', async () => {
     await web.post(`/api/sessions/${S1}/mute`, { on: true });
@@ -116,5 +172,69 @@ describe('per-session notification mute', () => {
     expect(shouldNotify(srv.ctx, { type: 'pending', title: 't', body: 'b', sessionId: S2 })).toBe(true);
     await web.post(`/api/sessions/${S1}/mute`, { on: false });
     expect((await web.get<SessionDetail>(`/api/sessions/${S1}`)).pushMuted).toBe(false);
+  });
+});
+
+describe('worktree sessions', () => {
+  const env = (sid: string, ts: number, git: Record<string, unknown>) => ({ v: 1, hostname: 'h', platform: 'win32', user: 'u', pid: 1, ppid: 1, hookVersion: 't', ts, env: {}, git, event: { session_id: sid, hook_event_name: 'SessionStart', cwd: git.root, source: 'startup' } });
+  const send = async (envelopes: unknown[]) => {
+    const r = await fetch(`${srv.url}/api/ingest`, { method: 'POST', headers: { authorization: `Bearer ${tokens.A.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ envelopes }) });
+    expect(r.ok).toBe(true);
+  };
+  const projectOf = (sid: string) => srv.ctx.db.get<{ root_path: string; name: string }>('SELECT p.root_path, p.name FROM sessions s JOIN projects p ON p.id = s.project_id WHERE s.id = ?', sid)!;
+
+  it('files a worktree session under the main checkout; without mainRoot (old plugin) it keeps the worktree folder', async () => {
+    const remote = 'https://github.com/o/arond-like.git';
+    await send([
+      env('wt-new-1', 1_800_000_000_000, { root: 'C:/w/arond-wt/proba', mainRoot: 'C:/w/arond', worktree: true, remote, branch: 'proba' }),
+      env('wt-old-1', 1_800_000_000_000, { root: 'C:/w/arond-wt/veche', worktree: true, remote, branch: 'veche' }),
+    ]);
+    expect(projectOf('wt-new-1')).toEqual({ root_path: 'C:/w/arond', name: 'arond' });
+    expect(projectOf('wt-old-1')).toEqual({ root_path: 'C:/w/arond-wt/veche', name: 'veche' });
+  });
+
+  it('migration 006 re-attaches worktree projects it can tie to one main project and leaves the rest', async () => {
+    const { DB } = await import('../server/db.ts');
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const path = join(mkdtempSync(join(tmpdir(), 'bb-mig-')), 'db.sqlite');
+    let db = new DB(path);
+    db.run("INSERT INTO machines (id, name, first_seen) VALUES ('m1', 'pc', 0), ('m2', 'other', 0)");
+    const project = (id: number, machine: string, root: string, remote: string | null) =>
+      db.run('INSERT INTO projects (id, machine_id, root_path, name, git_remote) VALUES (?, ?, ?, ?, ?)', id, machine, root, root.split('/').pop()!, remote);
+    const R = 'https://github.com/o/arond.git';
+    project(1, 'm1', 'C:/w/arond', R); // main checkout
+    project(2, 'm1', 'C:/w/arond-wt/proba-fabrica', R); // worktree: ties to 1
+    project(3, 'm1', 'C:/w/other-wt/x', null); // worktree without a remote: left alone
+    project(4, 'm2', 'D:/arond-wt/y', R); // worktree on another machine with no main project there: left alone
+    project(5, 'm1', 'C:/w/lib-wt/z', 'https://github.com/o/lib.git'); // two main candidates: left alone
+    project(6, 'm1', 'C:/w/lib', 'https://github.com/o/lib.git');
+    project(7, 'm1', 'C:/w/lib-copy', 'https://github.com/o/lib.git');
+    let n = 0;
+    const session = (pid: number, machine: string, worktree: boolean | null) => {
+      const sid = `mig-${++n}`;
+      db.run("INSERT INTO sessions (id, machine_id, project_id, cwd, status, started_at, last_event_at) VALUES (?, ?, ?, 'c', 'idle', 0, 0)", sid, machine, pid);
+      const payload = JSON.stringify({ hook_event_name: 'SessionStart', _git: worktree === null ? null : { root: 'r', worktree } });
+      db.run("INSERT INTO events (hash, session_id, ts, event, payload_json) VALUES (?, ?, 0, 'SessionStart', ?)", `h-${sid}`, sid, payload);
+      return sid;
+    };
+    const main = session(1, 'm1', false);
+    const wt = [session(2, 'm1', true), session(2, 'm1', true)];
+    const left = [session(3, 'm1', true), session(4, 'm2', true), session(5, 'm1', true)];
+    session(6, 'm1', false);
+    session(7, 'm1', false);
+    db.run("INSERT INTO commits (sha, project_id, session_id, ts) VALUES ('abc', 2, ?, 0)", wt[0]);
+    db.run("INSERT INTO pull_requests (project_id, number, url, session_id, updated_at) VALUES (2, 1, 'https://github.com/o/arond/pull/1', ?, 0)", wt[0]);
+    db.run("DELETE FROM schema_migrations WHERE name = '006_worktree_projects.sql'");
+    db.close();
+    db = new DB(path); // runs 006 again on this data
+    const pid = (sid: string) => db.get<{ project_id: number }>('SELECT project_id FROM sessions WHERE id = ?', sid)!.project_id;
+    expect([pid(main), ...wt.map(pid)]).toEqual([1, 1, 1]);
+    expect(left.map(pid)).toEqual([3, 4, 5]);
+    expect(db.get('SELECT project_id FROM commits')).toEqual({ project_id: 1 });
+    expect(db.get('SELECT project_id FROM pull_requests')).toEqual({ project_id: 1 });
+    expect(db.all<{ id: number }>('SELECT id FROM projects ORDER BY id').map((p) => p.id)).toEqual([1, 3, 4, 5, 6, 7]);
+    db.close();
   });
 });

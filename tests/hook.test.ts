@@ -1,7 +1,7 @@
 // Integration: spawns the real plugin/hooks/bb-hook.mjs with fixture stdin against a test server and asserts
 // its stdout JSON for every row of the SPEC §3.2 control table, plus fail-open behavior.
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -435,5 +435,32 @@ describe('review regressions', () => {
     expect(expireOrphans(srv.ctx, false, Date.now() + 10_000)).toBeGreaterThanOrEqual(1);
     const { history } = await web.get<{ history: PendingActionView[] }>('/api/inbox');
     expect(history.find((h) => h.id === id)?.status).toBe('timeout');
+  });
+});
+
+describe('git worktrees', () => {
+  it('a session in a linked worktree joins the main checkout project, keeping its own cwd and branch', async () => {
+    await web.post('/api/global/walk', { on: false });
+    const top = mkdtempSync(join(tmpdir(), 'bb-wt-'));
+    const main = join(top, 'repo');
+    const g = (cwd: string, ...a: string[]) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd, encoding: 'utf8' }).trim();
+    execFileSync('git', ['init', '-q', '-b', 'main', main]);
+    g(main, 'commit', '-q', '--allow-empty', '-m', 'init');
+    g(main, 'remote', 'add', 'origin', 'https://github.com/o/wt-repo.git');
+    g(main, 'worktree', 'add', '-q', '-b', 'feat/x', join(top, 'wt-x'));
+    const wt = join(top, 'wt-x');
+    const [sMain, sWt] = [newSid(), newSid()];
+    await runHook([], { session_id: sMain, cwd: main, transcript_path: join(home, 'none.jsonl'), hook_event_name: 'SessionStart', source: 'startup' });
+    // the prompt (no git info) lands before the async SessionStart, as with `claude -p`
+    await runHook([], { session_id: sWt, cwd: wt, transcript_path: join(home, 'none.jsonl'), hook_event_name: 'Notification', message: 'x' }, { CLAUDE_PROJECT_DIR: wt });
+    await runHook([], { session_id: sWt, cwd: wt, transcript_path: join(home, 'none.jsonl'), hook_event_name: 'SessionStart', source: 'startup' }, { CLAUDE_PROJECT_DIR: wt });
+    const row = (sid: string) => srv.ctx.db.get<{ project_id: number; cwd: string; git_branch: string | null; root_path: string; name: string }>(
+      'SELECT s.project_id, s.cwd, s.git_branch, p.root_path, p.name FROM sessions s JOIN projects p ON p.id = s.project_id WHERE s.id = ?', sid)!;
+    expect(row(sWt).project_id).toBe(row(sMain).project_id);
+    expect(row(sWt)).toMatchObject({ name: 'repo', cwd: wt, git_branch: 'feat/x' });
+    expect(row(sWt).root_path).toBe(g(main, 'rev-parse', '--show-toplevel'));
+    // the folder-only project the early prompt created is gone, and a non-worktree session is unaffected
+    expect(srv.ctx.db.get('SELECT 1 FROM projects WHERE root_path = ?', wt)).toBeUndefined();
+    expect(row(sMain).root_path).toBe(g(main, 'rev-parse', '--show-toplevel'));
   });
 });

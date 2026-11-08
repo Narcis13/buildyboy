@@ -264,8 +264,8 @@ export function ingestEnvelope(ctx: Ctx, machineId: string, env: HookEnvelope): 
     const duplicate = ins.changes === 0;
     const eventId = duplicate ? null : Number(ins.lastInsertRowid);
 
-    // project
-    const root = env.git?.root ?? envVars.CLAUDE_PROJECT_DIR ?? cwd;
+    // project: a linked worktree belongs to its main checkout's project (the session keeps its own cwd and branch)
+    const root = env.git?.mainRoot ?? env.git?.root ?? envVars.CLAUDE_PROJECT_DIR ?? cwd;
     let projectId: number | null = null;
     if (root) {
       const remote = env.git?.remote ?? null;
@@ -297,6 +297,13 @@ export function ingestEnvelope(ctx: Ctx, machineId: string, env: HookEnvelope): 
         db.run("UPDATE jobs SET session_id = COALESCE(session_id, ?), status = CASE WHEN status IN ('queued','starting') THEN 'running' ELSE status END WHERE id = ?", sid, jobId);
       }
       indexText(db, 'session', sid, sid, `${sid} ${cwd ?? ''}`);
+    } else if (env.git?.mainRoot && projectId !== null) {
+      // an event without git info (e.g. a prompt ahead of the async SessionStart) may have filed it under the worktree folder
+      const prev = db.get<{ project_id: number | null }>('SELECT project_id FROM sessions WHERE id = ?', sid)?.project_id ?? null;
+      if (prev !== projectId) {
+        db.run('UPDATE sessions SET project_id = ? WHERE id = ?', projectId, sid);
+        if (prev !== null) dropIfEmpty(db, prev);
+      }
     }
 
     if (!duplicate) applyEvent(ctx, sid, e, ts, env, cwd, projectId, s);
@@ -370,6 +377,14 @@ function applyEvent(
   // a Stop pressed for an earlier turn must not kill a new one
   if (!isSub && (name === 'UserPromptSubmit' || name === 'SessionStart' || name === 'SessionEnd')) db.run('UPDATE sessions SET kill_requested = 0 WHERE id = ? AND kill_requested = 1', sid);
 
+  // A call refused by a PreToolUse hook or a deny rule gets no result event (only its PreToolUse fires), so the belt
+  // would show it running forever. The transcript closes it with its reason (applyTranscript); as a safety net, the
+  // next event of the same context closes whatever is still open. A PostToolUse that does arrive later wins.
+  if (name === 'PreToolUse' && tuid) closeOpenCalls(db, sid, ts - PARALLEL_MS, e.agent_id ?? null, tuid);
+  else if ((name === 'Stop' || name === 'UserPromptSubmit') && !isSub) closeOpenCalls(db, sid, ts, null);
+  else if (name === 'SubagentStop' && e.agent_id) closeOpenCalls(db, sid, ts, e.agent_id);
+  else if (name === 'SessionEnd') closeOpenCalls(db, sid, ts);
+
   // tool calls
   if (tool && tuid) {
     const mcp = mcpServerOf(tool);
@@ -438,6 +453,27 @@ function applyEvent(
   if (name === 'UserPromptSubmit' && typeof e.prompt === 'string') indexText(db, 'prompt', `ev-${sid}-${ts}`, sid, e.prompt);
 }
 
+/** Removes a project nothing points at any more (no sessions, commits or pull requests). */
+function dropIfEmpty(db: Ctx['db'], projectId: number) {
+  db.run(
+    `DELETE FROM projects WHERE id = ? AND NOT EXISTS (SELECT 1 FROM sessions WHERE project_id = ?)
+     AND NOT EXISTS (SELECT 1 FROM commits WHERE project_id = ?) AND NOT EXISTS (SELECT 1 FROM pull_requests WHERE project_id = ?)`,
+    projectId, projectId, projectId, projectId,
+  );
+}
+
+/** Calls in one assistant message start together; one started this long before a new PreToolUse is not a sibling. */
+const PARALLEL_MS = 2000;
+
+/** Marks still-running calls that started at or before `before` as blocked: all of them, or one context's (null = main). */
+function closeOpenCalls(db: Ctx['db'], sid: string, before: number, agentId?: string | null, except?: string) {
+  db.run(
+    `UPDATE tool_calls SET status = 'blocked', ended_at = ? WHERE session_id = ? AND status = 'running' AND started_at <= ?
+     AND (? = 0 OR agent_id IS ?) AND tool_use_id IS NOT ?`,
+    before, sid, before, agentId === undefined ? 0 : 1, agentId ?? null, except ?? null,
+  );
+}
+
 function applyTaskTool(ctx: Ctx, sid: string, ts: number, tool: string, input: Record<string, unknown>, resp: unknown) {
   const last = ctx.db.get<{ items_json: string }>('SELECT items_json FROM todos WHERE session_id = ? ORDER BY ts DESC, id DESC LIMIT 1', sid);
   let items: Record<string, unknown>[] = [];
@@ -502,6 +538,7 @@ export function applyTranscript(ctx: Ctx, sid: string, lines: string[], agentId:
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         m.uuid, sid, m.parentUuid, m.agentId, m.role, m.kind, m.ts, m.model, m.apiMessageId, m.text, m.contentJson, m.usage ? JSON.stringify(m.usage) : null, m.isSidechain ? 1 : 0,
       );
+      if (m.kind === 'tool_result') closeFromResult(db, sid, line, m.ts);
       if (r.changes) {
         if (m.usage) usageChanged = true;
         if (m.model && !m.isSidechain) db.run('UPDATE sessions SET model = ? WHERE id = ?', m.model, sid);
@@ -524,6 +561,25 @@ export function applyTranscript(ctx: Ctx, sid: string, lines: string[], agentId:
     }
   }
   if (usageChanged) recomputeTokens(ctx, sid);
+}
+
+/** An error tool_result for a call still running means it never ran (a hook or deny rule refused it): blocked, with the reason. */
+function closeFromResult(db: Ctx['db'], sid: string, line: string, ts: number) {
+  let content: unknown;
+  try {
+    content = JSON.parse(line)?.message?.content;
+  } catch {
+    return;
+  }
+  if (!Array.isArray(content)) return;
+  for (const b of content as Record<string, unknown>[]) {
+    if (b?.type !== 'tool_result' || b.is_error !== true || typeof b.tool_use_id !== 'string') continue;
+    const text = typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? b.content.map((c: { text?: unknown }) => (typeof c?.text === 'string' ? c.text : '')).join('\n') : '';
+    db.run(
+      "UPDATE tool_calls SET status = 'blocked', ended_at = ?, output_text = ?, output_len = ? WHERE tool_use_id = ? AND session_id = ? AND status = 'running'",
+      ts, cap(text), text.length, b.tool_use_id, sid,
+    );
+  }
 }
 
 export function recomputeTokens(ctx: Ctx, sid: string) {

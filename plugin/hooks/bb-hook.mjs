@@ -13,9 +13,9 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync, statSync, renam
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { homedir, hostname, userInfo, arch } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
-const HOOK_VERSION = '0.1.0';
+const HOOK_VERSION = '0.1.1';
 const TRANSCRIPT_CAP = 256 * 1024;
 const PROGRESS_CAP = 32 * 1024;
 const SPOOL_CAP = 50 * 1024 * 1024;
@@ -23,7 +23,7 @@ const BATCH_CAP = 2 * 1024 * 1024;
 const BREAKER_MS = 60_000;
 const CONNECT_MS = 1000;
 const ENV_ALLOW = ['CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_PROJECT_DIR', 'TERM_PROGRAM', 'BUILDYBOY_JOB_ID', 'HC_TERMINAL_ID', 'CLAUDE_CODE_BRIDGE_SESSION_ID', 'CLAUDE_CODE_REMOTE'];
-const TRANSCRIPT_EVENTS = new Set(['PostToolUse', 'PostToolUseFailure', 'Stop', 'SubagentStop', 'PreCompact', 'PostCompact', 'SessionEnd', 'UserPromptSubmit']);
+const TRANSCRIPT_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SubagentStop', 'PreCompact', 'PostCompact', 'SessionEnd', 'UserPromptSubmit']);
 const GIT_EVENTS = new Set(['SessionStart', 'Stop', 'SessionEnd']);
 
 const args = process.argv.slice(2);
@@ -125,6 +125,14 @@ function stripCreds(url) {
   return url ? url.replace(/\/\/[^@/]+@/, '//') : url;
 }
 
+/** A linked worktree's main checkout: the folder holding the common `.git` dir (none for a bare repo), written like `root`. */
+function mainCheckout(cwd, root, commonDir) {
+  const common = isAbsolute(commonDir) ? commonDir : resolve(cwd, commonDir);
+  if (basename(common) !== '.git') return undefined;
+  const main = dirname(common);
+  return root.includes('\\') ? main : main.split('\\').join('/');
+}
+
 async function gitInfo(e, state) {
   const cwd = e.cwd || process.cwd();
   const name = e.hook_event_name;
@@ -156,7 +164,8 @@ async function gitInfo(e, state) {
       ]).then(([head, remote]) => {
         if (!head) return;
         const [root, gitDir, commonDir] = head.split(/\r?\n/);
-        state.git = { root, worktree: !!gitDir && !!commonDir && gitDir !== commonDir && !gitDir.endsWith(commonDir), remote: remote ? stripCreds(remote) : undefined };
+        const worktree = !!gitDir && !!commonDir && gitDir !== commonDir && !gitDir.endsWith(commonDir);
+        state.git = { root, worktree, mainRoot: worktree ? mainCheckout(cwd, root, commonDir) : undefined, remote: remote ? stripCreds(remote) : undefined };
       }),
     );
   }
