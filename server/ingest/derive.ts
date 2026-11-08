@@ -386,10 +386,10 @@ function applyEvent(
   // A call refused by a PreToolUse hook or a deny rule gets no result event (only its PreToolUse fires), so the belt
   // would show it running forever. The transcript closes it with its reason (applyTranscript); as a safety net, the
   // next event of the same context closes whatever is still open. A PostToolUse that does arrive later wins.
-  if (name === 'PreToolUse' && tuid) closeOpenCalls(db, sid, ts - PARALLEL_MS, e.agent_id ?? null, tuid);
-  else if ((name === 'Stop' || name === 'UserPromptSubmit') && !isSub) closeOpenCalls(db, sid, ts, null);
-  else if (name === 'SubagentStop' && e.agent_id) closeOpenCalls(db, sid, ts, e.agent_id);
-  else if (name === 'SessionEnd') closeOpenCalls(db, sid, ts);
+  if (name === 'PreToolUse' && tuid) closeOpenCalls(db, sid, ts, ts - PARALLEL_MS, e.agent_id ?? null, tuid);
+  else if ((name === 'Stop' || name === 'UserPromptSubmit') && !isSub) closeOpenCalls(db, sid, ts, ts, null);
+  else if (name === 'SubagentStop' && e.agent_id) closeOpenCalls(db, sid, ts, ts, e.agent_id);
+  else if (name === 'SessionEnd') closeOpenCalls(db, sid, ts, ts);
 
   // tool calls
   if (tool && tuid) {
@@ -401,6 +401,13 @@ function applyEvent(
         `INSERT INTO tool_calls (tool_use_id, session_id, agent_id, tool_name, mcp_server, input_json, status, started_at, file_path, command)
          VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?) ON CONFLICT(tool_use_id) DO NOTHING`,
         tuid, sid, str(e.agent_id), tool, mcp, JSON.stringify(input), ts, filePath, command,
+      );
+      // arriving after its context already closed (spool or async order): it never got a result either
+      db.run(
+        `UPDATE tool_calls SET status = 'blocked', ended_at = ? WHERE tool_use_id = ? AND status = 'running' AND EXISTS (
+           SELECT 1 FROM events WHERE session_id = ? AND ts >= ? AND (event = 'SessionEnd'
+           OR (? IS NULL AND agent_id IS NULL AND event IN ('Stop', 'UserPromptSubmit')) OR (event = 'SubagentStop' AND agent_id = ?)))`,
+        ts, tuid, sid, ts, str(e.agent_id), str(e.agent_id),
       );
       if (command) indexText(db, 'command', tuid, sid, command);
     } else if (name === 'PostToolUse' || name === 'PostToolUseFailure' || name === 'PermissionDenied') {
@@ -471,12 +478,12 @@ function dropIfEmpty(db: Ctx['db'], projectId: number) {
 /** Calls in one assistant message start together; one started this long before a new PreToolUse is not a sibling. */
 const PARALLEL_MS = 2000;
 
-/** Marks still-running calls that started at or before `before` as blocked: all of them, or one context's (null = main). */
-function closeOpenCalls(db: Ctx['db'], sid: string, before: number, agentId?: string | null, except?: string) {
+/** Marks still-running calls that started at or before `before` as blocked, as of `at`: all of them, or one context's (null = main). */
+function closeOpenCalls(db: Ctx['db'], sid: string, at: number, before: number, agentId?: string | null, except?: string) {
   db.run(
     `UPDATE tool_calls SET status = 'blocked', ended_at = ? WHERE session_id = ? AND status = 'running' AND started_at <= ?
      AND (? = 0 OR agent_id IS ?) AND tool_use_id IS NOT ?`,
-    before, sid, before, agentId === undefined ? 0 : 1, agentId ?? null, except ?? null,
+    at, sid, before, agentId === undefined ? 0 : 1, agentId ?? null, except ?? null,
   );
 }
 

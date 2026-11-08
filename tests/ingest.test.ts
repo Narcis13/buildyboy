@@ -131,6 +131,9 @@ describe('tool calls refused before they run', () => {
     expect(status('bp-1')!.status).toBe('blocked');
     const belt = (await web.get<SessionSummary[]>('/api/sessions')).find((s) => s.id === sid)!.belt;
     expect(belt.map((t) => t.status)).toEqual(['blocked', 'blocked']);
+    // a PreToolUse that lands after the Stop that followed it (spooled, async) is closed too
+    await ingest(sid, [{ ts: T0 + 20_000, event: { hook_event_name: 'Stop' } }, pre(T0 + 19_000, 'bl-1', 'Bash')]);
+    expect(status('bl-1')!.status).toBe('blocked');
   });
 
   it('the transcript closes a refused call with its reason; real results still win', async () => {
