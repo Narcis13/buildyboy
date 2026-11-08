@@ -195,6 +195,10 @@ describe('worktree sessions', () => {
     ]);
     expect(projectOf('wt-new-1')).toEqual({ root_path: 'C:/w/arond', name: 'arond' });
     expect(projectOf('wt-old-1')).toEqual({ root_path: 'C:/w/arond-wt/veche', name: 'veche' });
+    // later events carry no git info (cwd and CLAUDE_PROJECT_DIR are the worktree): no project appears for the folder
+    await send([{ ...env('wt-new-1', 1_800_000_001_000, {}), git: undefined, env: { CLAUDE_PROJECT_DIR: 'C:/w/arond-wt/proba' }, event: { session_id: 'wt-new-1', hook_event_name: 'UserPromptSubmit', prompt: 'x', cwd: 'C:/w/arond-wt/proba' } }]);
+    expect(projectOf('wt-new-1').root_path).toBe('C:/w/arond');
+    expect(srv.ctx.db.get("SELECT 1 FROM projects WHERE root_path = 'C:/w/arond-wt/proba'")).toBeUndefined();
   });
 
   it('migration 006 re-attaches worktree projects it can tie to one main project and leaves the rest', async () => {

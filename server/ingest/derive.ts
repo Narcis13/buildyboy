@@ -266,8 +266,10 @@ export function ingestEnvelope(ctx: Ctx, machineId: string, env: HookEnvelope): 
 
     // project: a linked worktree belongs to its main checkout's project (the session keeps its own cwd and branch)
     const root = env.git?.mainRoot ?? env.git?.root ?? envVars.CLAUDE_PROJECT_DIR ?? cwd;
-    let projectId: number | null = null;
-    if (root) {
+    // without git info the folder is only a guess: a session that already has a project keeps it, and no new
+    // project is made for the folder (in a worktree that would be an empty project named after the worktree)
+    let projectId: number | null = env.git?.root ? null : (db.get<{ project_id: number | null }>('SELECT project_id FROM sessions WHERE id = ?', sid)?.project_id ?? null);
+    if (root && projectId === null) {
       const remote = env.git?.remote ?? null;
       const gh = parseRemote(remote ?? undefined);
       const pname = root.split(/[\\/]/).filter(Boolean).pop() ?? root;
