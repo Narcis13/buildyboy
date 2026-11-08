@@ -177,7 +177,8 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
     try {
       const hc = resolveHc(cfg.hcPath);
       if (!hc) return;
-      await api.post('/api/runner/terminals', { terminals: await listTerminals(hc) });
+      const takenAt = Date.now(); // lets the server tell a closed terminal from one newer than this listing
+      await api.post('/api/runner/terminals', { terminals: await listTerminals(hc), takenAt });
     } catch {
       // best effort: hc not running, older hc, or server away
     }

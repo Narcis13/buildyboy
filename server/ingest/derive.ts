@@ -284,6 +284,10 @@ export function ingestEnvelope(ctx: Ctx, machineId: string, env: HookEnvelope): 
     let s = db.get<{ status: SessionStatus; start_sha: string | null; waiting_since: number | null; source: string; started_at: number; last_event_at: number }>(
       'SELECT status, start_sha, waiting_since, source, started_at, last_event_at FROM sessions WHERE id = ?', sid,
     );
+    // ended because its hc terminal looked closed, yet it speaks again: it was alive after all
+    if (s?.status === 'ended' && !duplicate && name !== 'SessionEnd' && db.run("UPDATE sessions SET status = 'idle', ended_at = NULL, end_reason = NULL WHERE id = ? AND end_reason = 'terminal closed' AND ended_at < ?", sid, ts).changes) {
+      s.status = 'idle';
+    }
     if (!s) {
       db.run(
         `INSERT INTO sessions (id, machine_id, project_id, cwd, source, transcript_path, job_id, status, started_at, last_event_at, remote_control, parent_session_id)
