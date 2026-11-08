@@ -9,7 +9,7 @@ import { DEFAULT_THRESHOLDS, evaluate, governor } from '../server/factory/govern
 import { maybeDailyDigest, scheduledAt } from '../server/factory/digest.ts';
 import { factoryChecks } from '../cli/doctor.ts';
 import { tasksCli } from '../cli/tasks.ts';
-import { orderByDeps, parseTaskFile, TaskFileError } from '../shared/tasks-md.ts';
+import { acceptanceSection, orderByDeps, parseTaskFile, TaskFileError } from '../shared/tasks-md.ts';
 import type { Usage } from '../shared/factory.ts';
 
 const NOW = Date.UTC(2026, 10, 7, 12, 0, 0);
@@ -65,6 +65,34 @@ describe('task files', () => {
     expect(u).toMatchObject({ title: 'Heading title', dependsOn: ['P2'], acceptance: ['one', 'two'] });
     expect(() => parseTaskFile('no frontmatter', 'a.md')).toThrow(TaskFileError);
     expect(() => parseTaskFile('---\ntitle: x\nstatus: done\n---\n', 'a.md')).toThrow(/unknown status/);
+  });
+
+  it('acceptance criteria: wrapped items stay whole, only the criteria heading counts', () => {
+    const body = [
+      '## Contractul pentru testele de acceptare', '- not a criterion', '',
+      '## Criterii de Acceptare', 'Intro paragraph.', '', '1. _(G1)_ first line', '   second line', '2. single', '- [x] done item',
+      '  continued', '', '  indented after a blank line is not a continuation', '### Sub-heading inside', '- third', '',
+      '## Next', '- outside',
+    ].join('\n');
+    expect(parseTaskFile(`---\ntitle: t\n---\n${body}\n`, 't.md').acceptance).toEqual(['_(G1)_ first line second line', 'single', 'done item continued', 'third']);
+    // no exact heading: the first one containing the phrase; headings that merely mention "acceptare" never count
+    expect(acceptanceSection('# Testele de acceptare\n- no\n## 3. Acceptance Criteria (draft):\n* yes\n  wrapped\n')).toEqual(['yes wrapped']);
+    expect(acceptanceSection('## Criteriile de acceptanță\n- da\n')).toEqual(['da']);
+    expect(acceptanceSection('## Contractul pentru testele de acceptare\n- no\n')).toEqual([]);
+  });
+
+  it('bb tasks import --dry-run lists every criterion whole', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bb-dry-'));
+    writeFileSync(join(dir, 'p1.md'), '---\nid: P1\ntitle: One\n---\n## Criterii de acceptare\n1. starts here\n   and ends here.\n2. second.\n');
+    const log = console.log;
+    const out: string[] = [];
+    console.log = (s: string) => void out.push(s);
+    try {
+      expect(await tasksCli(['import', dir, '--dry-run'])).toBe(0);
+    } finally {
+      console.log = log;
+    }
+    expect(out).toEqual(['P1\tbacklog\tOne\t2 criteria', '  1. starts here and ends here.', '  2. second.']);
   });
 
   it('orders by dependencies and rejects cycles', () => {
@@ -276,7 +304,8 @@ describe('factory API', () => {
       if (req.url?.startsWith('/repos/o/r/issues')) {
         expect(req.headers.authorization).toBe('Bearer ghp_test');
         res.end(JSON.stringify([
-          { number: 7, title: 'Add import', body: 'Text\n\n## Acceptance criteria\n- imports CSV', html_url: 'https://github.com/o/r/issues/7', labels: [] },
+          // CRLF, a decoy heading that mentions "acceptare" and a criterion wrapped over two lines
+          { number: 7, title: 'Add import', body: 'Text\r\n\r\n## Contractul pentru testele de acceptare\r\n- not a criterion\r\n\r\n## Acceptance criteria\r\n- imports CSV\r\n  with a header row\r\n- reports bad rows', html_url: 'https://github.com/o/r/issues/7', labels: [] },
           { number: 8, title: 'A PR', body: '', html_url: 'https://github.com/o/r/pull/8', pull_request: {}, labels: [] },
         ]));
       } else res.end('[]');
@@ -290,7 +319,7 @@ describe('factory API', () => {
       expect(first.imported).toHaveLength(1);
       const again = await web.post('/api/tasks/import/github', { owner: 'o', repo: 'r' });
       expect(again.imported).toEqual(first.imported);
-      expect(await web.get(`/api/tasks/${first.imported[0]}`)).toMatchObject({ title: 'Add import', extRef: 'o/r#7', acceptance: ['imports CSV'], source: 'github', repo: 'o/r' });
+      expect(await web.get(`/api/tasks/${first.imported[0]}`)).toMatchObject({ title: 'Add import', extRef: 'o/r#7', acceptance: ['imports CSV with a header row', 'reports bad rows'], source: 'github', repo: 'o/r' });
     } finally {
       delete process.env.BUILDYBOY_GITHUB_API;
       gh.close();

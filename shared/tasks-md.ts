@@ -70,17 +70,36 @@ export function parseFrontmatter(text: string): { data: Record<string, Value>; b
 const list = (v: Value | undefined): string[] => (v === undefined ? [] : Array.isArray(v) ? v : v.split(',').map((s) => s.trim())).filter(Boolean);
 const str = (v: Value | undefined): string | undefined => (typeof v === 'string' && v ? v : Array.isArray(v) && v.length ? v.join(', ') : undefined);
 
-/** The `- item` lines under a heading named like "Acceptance criteria" / "Criterii de acceptare". */
+/** Heading text without numbering, trailing colon, emphasis, case or diacritics: "## 5. Criterii de acceptare:" → "criterii de acceptare". */
+const headingKey = (h: string) =>
+  h.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/[*_`]/g, '').replace(/^[\d.)\s]+/, '').replace(/[\s:.]+$/, '').trim();
+const EXACT = new Set(['acceptance criteria', 'criterii de acceptare']);
+/** Fallback when no heading is exactly one of EXACT: the phrase inside a longer heading ("Acceptance criteria (v2)"). */
+const LOOSE = /\b(?:acceptance criteria|criteri(?:i|ile) de accept(?:are|anta))\b/;
+
+/**
+ * The list items under the "Acceptance criteria" / "Criterii de acceptare" heading (case and diacritics ignored);
+ * without one, under the first heading that contains that phrase. The section runs to the next heading of the same or
+ * a higher level. An item continues on its indented lines until the next item, a blank line or a heading.
+ */
 export function acceptanceSection(body: string): string[] {
+  const lines = body.split(/\r?\n/);
+  const headings = lines.flatMap((l, i) => {
+    const m = /^(#{1,6})\s+(.+?)(?:\s+#+)?\s*$/.exec(l);
+    return m ? [{ i, level: m[1].length, key: headingKey(m[2]) }] : [];
+  });
+  const h = headings.find((x) => EXACT.has(x.key)) ?? headings.find((x) => LOOSE.test(x.key));
+  if (!h) return [];
+  const end = headings.find((x) => x.i > h.i && x.level <= h.level)?.i ?? lines.length;
   const out: string[] = [];
-  let inside = false;
-  for (const line of body.split(/\r?\n/)) {
-    if (/^#{1,6}\s/.test(line)) {
-      inside = /acceptan|acceptare/i.test(line);
-      continue;
-    }
-    const item = inside ? /^\s*(?:[-*]|\d+[.)])\s+(?:\[[ x]\]\s+)?(.+)$/.exec(line) : null;
-    if (item) out.push(item[1].trim());
+  let open = false; // the previous line belongs to an item, so an indented line continues it
+  for (const line of lines.slice(h.i + 1, end)) {
+    const item = /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.+)$/.exec(line);
+    if (item) {
+      out.push(item[1].trim());
+      open = true;
+    } else if (open && /^\s+[^\s#]/.test(line)) out[out.length - 1] += ` ${line.trim()}`;
+    else open = false;
   }
   return out;
 }
