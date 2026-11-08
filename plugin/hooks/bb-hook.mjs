@@ -15,7 +15,7 @@ import { execFile } from 'node:child_process';
 import { homedir, hostname, userInfo, arch } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
-const HOOK_VERSION = '0.1.1';
+const HOOK_VERSION = '0.1.0';
 const TRANSCRIPT_CAP = 256 * 1024;
 const PROGRESS_CAP = 32 * 1024;
 const SPOOL_CAP = 50 * 1024 * 1024;

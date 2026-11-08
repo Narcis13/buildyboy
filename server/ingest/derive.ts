@@ -576,7 +576,7 @@ function closeFromResult(db: Ctx['db'], sid: string, line: string, ts: number) {
     if (b?.type !== 'tool_result' || b.is_error !== true || typeof b.tool_use_id !== 'string') continue;
     const text = typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? b.content.map((c: { text?: unknown }) => (typeof c?.text === 'string' ? c.text : '')).join('\n') : '';
     db.run(
-      "UPDATE tool_calls SET status = 'blocked', ended_at = ?, output_text = ?, output_len = ? WHERE tool_use_id = ? AND session_id = ? AND status = 'running'",
+      "UPDATE tool_calls SET status = 'blocked', ended_at = ?, output_text = ?, output_len = ? WHERE tool_use_id = ? AND session_id = ? AND (status = 'running' OR (status = 'blocked' AND output_text IS NULL))",
       ts, cap(text), text.length, b.tool_use_id, sid,
     );
   }

@@ -39,7 +39,7 @@ export interface GitInfo {
   dirty?: number;
   remote?: string;
   worktree?: boolean;
-  /** for a linked worktree: the main checkout's root, which the project is keyed on (plugin ≥ 0.1.1) */
+  /** for a linked worktree: the main checkout's root, which the project is keyed on (absent from older plugins) */
   mainRoot?: string;
   /** `git diff --shortstat <start_sha>` at Stop */
   shortstat?: string;

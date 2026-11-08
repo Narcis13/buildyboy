@@ -148,6 +148,10 @@ describe('tool calls refused before they run', () => {
     expect(status('tb-1')!.status).toBe('blocked');
     await ingest(sid, [post(T0 + 9500, 'tb-1', 'Bash')]);
     expect(status('tb-1')!.status).toBe('ok');
+    // the reason riding on the next PreToolUse still lands after the safety net closed the call
+    const denied = 'Permission to use Bash with command git push --force --dry-run has been denied.';
+    await ingest(sid, [pre(T0 + 20_000, 'tb-3', 'Bash'), { ...pre(T0 + 25_000, 'tb-4', 'Read'), transcripts: [{ path: '/t.jsonl', offset: 1, lines: [result('tb-3', denied)] }] }]);
+    expect(status('tb-3')).toEqual({ status: 'blocked', output_text: denied });
   });
 
   it('parallel calls and subagent calls are not closed by a sibling PreToolUse', async () => {
