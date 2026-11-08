@@ -20,6 +20,21 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
+// A tab opened before a deploy still names the previous build's chunks, which are gone. Reload once to pick up the new
+// build instead of leaving the page blank; the timestamp guard stops a loop if the chunk is missing for another reason.
+window.addEventListener('vite:preloadError', (e) => {
+  let last = 0;
+  try {
+    last = Number(sessionStorage.getItem('bb-chunk-reload')) || 0;
+  } catch {}
+  if (Date.now() - last < 30_000) return;
+  try {
+    sessionStorage.setItem('bb-chunk-reload', String(Date.now()));
+  } catch {}
+  e.preventDefault();
+  location.reload();
+});
+
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }

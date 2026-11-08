@@ -27,13 +27,26 @@ export function createApp(ctx: Ctx) {
 
   app.all('/api/*', (c) => c.json({ error: 'not found' }, 404));
 
-  // PWA (web/dist), with SPA fallback to index.html
+  // PWA (web/dist), with SPA fallback to index.html.
+  // Hashed /assets/* never change, so they cache forever; everything else (index.html, sw.js, manifest) is revalidated,
+  // so a deploy reaches open browsers on the next load instead of a heuristically cached index.html naming old chunks.
   const dist = process.env.BUILDYBOY_WEB_DIST ? resolve(process.env.BUILDYBOY_WEB_DIST) : join(ctx.config.rootDir, 'web', 'dist');
   const root = relative(process.cwd(), dist) || '.';
-  app.use('/*', serveStatic({ root }));
+  app.use(
+    '/*',
+    serveStatic({
+      root,
+      onFound: (path, c) => {
+        c.header('cache-control', /[\\/]assets[\\/]/.test(path) ? 'public, max-age=31536000, immutable' : 'no-cache');
+      },
+    }),
+  );
   app.get('/*', (c) => {
+    // A missing chunk (an old build's, after a deploy) is a 404, not the app shell served as JavaScript.
+    if (c.req.path.startsWith('/assets/')) return c.text('not found', 404);
     const index = join(dist, 'index.html');
     if (!existsSync(index)) return c.text('Buildyboy server is running. Build the web app with `npm run build`.', 200);
+    c.header('cache-control', 'no-cache');
     return c.html(readFileSync(index, 'utf8'));
   });
 
