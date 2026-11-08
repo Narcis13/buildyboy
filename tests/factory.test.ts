@@ -79,6 +79,8 @@ describe('task files', () => {
     expect(acceptanceSection('# Testele de acceptare\n- no\n## 3. Acceptance Criteria (draft):\n* yes\n  wrapped\n')).toEqual(['yes wrapped']);
     expect(acceptanceSection('## Criteriile de acceptanță\n- da\n')).toEqual(['da']);
     expect(acceptanceSection('## Contractul pentru testele de acceptare\n- no\n')).toEqual([]);
+    // fenced code is never a heading, an item or a continuation; an indented `#123` continues an item
+    expect(acceptanceSection('## Context\n```md\n## Acceptance criteria\n- fake\n```\n## Acceptance criteria\n- Runs:\n\n```bash\n# build first\n- not one\n```\n- Fixes\n  #123 properly\n')).toEqual(['Runs:', 'Fixes #123 properly']);
   });
 
   it('bb tasks import --dry-run lists every criterion whole', async () => {

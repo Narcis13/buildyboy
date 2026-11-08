@@ -80,10 +80,17 @@ const LOOSE = /\b(?:acceptance criteria|criteri(?:i|ile) de accept(?:are|anta))\
 /**
  * The list items under the "Acceptance criteria" / "Criterii de acceptare" heading (case and diacritics ignored);
  * without one, under the first heading that contains that phrase. The section runs to the next heading of the same or
- * a higher level. An item continues on its indented lines until the next item, a blank line or a heading.
+ * a higher level. An item continues on its indented lines until the next item, a blank line or a heading. Fenced code
+ * blocks (``` or ~~~) are skipped: their lines are never headings, items or continuations.
  */
 export function acceptanceSection(body: string): string[] {
-  const lines = body.split(/\r?\n/);
+  let fence = false;
+  const lines = body.split(/\r?\n/).map((l) => {
+    const marker = /^\s*(?:```|~~~)/.test(l);
+    const code = fence || marker;
+    if (marker) fence = !fence;
+    return code ? '' : l; // a blank line: it also ends an item
+  });
   const headings = lines.flatMap((l, i) => {
     const m = /^(#{1,6})\s+(.+?)(?:\s+#+)?\s*$/.exec(l);
     return m ? [{ i, level: m[1].length, key: headingKey(m[2]) }] : [];
@@ -98,7 +105,7 @@ export function acceptanceSection(body: string): string[] {
     if (item) {
       out.push(item[1].trim());
       open = true;
-    } else if (open && /^\s+[^\s#]/.test(line)) out[out.length - 1] += ` ${line.trim()}`;
+    } else if (open && /^\s+\S/.test(line)) out[out.length - 1] += ` ${line.trim()}`; // `  #123` too: headings start at column 0
     else open = false;
   }
   return out;
