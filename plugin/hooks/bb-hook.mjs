@@ -164,7 +164,8 @@ async function gitInfo(e, state) {
       ]).then(([head, remote]) => {
         if (!head) return;
         const [root, gitDir, commonDir] = head.split(/\r?\n/);
-        const worktree = !!gitDir && !!commonDir && gitDir !== commonDir && !gitDir.endsWith(commonDir);
+        // git prints either path relative to cwd or absolute (in a subfolder: `C:/r/.git` and `../.git`), so compare them resolved
+        const worktree = !!gitDir && !!commonDir && resolve(cwd, gitDir).toLowerCase() !== resolve(cwd, commonDir).toLowerCase();
         state.git = { root, worktree, mainRoot: worktree ? mainCheckout(cwd, root, commonDir) : undefined, remote: remote ? stripCreds(remote) : undefined };
       }),
     );

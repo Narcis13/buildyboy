@@ -2,7 +2,7 @@
 // its stdout JSON for every row of the SPEC §3.2 control table, plus fail-open behavior.
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startTestServer, type TestServer, type WebClient } from './helpers.ts';
@@ -462,5 +462,13 @@ describe('git worktrees', () => {
     // the folder-only project the early prompt created is gone, and a non-worktree session is unaffected
     expect(srv.ctx.db.get('SELECT 1 FROM projects WHERE root_path = ?', wt)).toBeUndefined();
     expect(row(sMain).root_path).toBe(g(main, 'rev-parse', '--show-toplevel'));
+    // a subfolder of the main checkout is not a worktree (git prints `--git-common-dir` there as `../.git`)
+    const sSub = newSid();
+    mkdirSync(join(main, 'pkg'));
+    await runHook([], { session_id: sSub, cwd: join(main, 'pkg'), transcript_path: join(home, 'none.jsonl'), hook_event_name: 'SessionStart', source: 'startup' });
+    expect(row(sSub).project_id).toBe(row(sMain).project_id);
+    const payload = srv.ctx.db.get<{ p: string }>("SELECT payload_json p FROM events WHERE session_id = ? AND event = 'SessionStart'", sSub)!.p;
+    expect(JSON.parse(payload)._git).toMatchObject({ worktree: false });
+    expect(JSON.parse(payload)._git.mainRoot).toBeUndefined();
   });
 });

@@ -1,13 +1,16 @@
 -- Sessions started in a linked git worktree used to get a project of their own, keyed on the worktree folder.
 -- They now belong to the main checkout's project. This moves the old ones there when it is certain:
---   * every git-reporting session of the project said `worktree: true` (and at least one did);
+--   * every git-reporting session of the project said `worktree: true` (and at least one did). Older hooks also said
+--     so in a subfolder of a normal checkout, so `worktree: true` only counts from an event whose cwd is the git root;
 --   * exactly one other project on the same machine has the same git remote, and it is not a worktree project.
 -- Its sessions, commits and pull requests move over and the emptied worktree project is removed.
 -- Anything else (no remote, no main project seen yet, several candidates) is left as it is.
 
 CREATE TEMP TABLE wt_flags AS
   SELECT s.project_id AS id,
-         MAX(CASE WHEN json_valid(e.payload_json) THEN json_extract(e.payload_json, '$._git.worktree') = 1 END) AS any_wt,
+         MAX(CASE WHEN json_valid(e.payload_json) THEN json_extract(e.payload_json, '$._git.worktree') = 1
+           AND lower(rtrim(replace(json_extract(e.payload_json, '$.cwd'), char(92), '/'), '/'))
+             = lower(rtrim(replace(json_extract(e.payload_json, '$._git.root'), char(92), '/'), '/')) END) AS any_wt,
          MAX(CASE WHEN json_valid(e.payload_json) THEN json_extract(e.payload_json, '$._git.worktree') = 0 END) AS any_main
   FROM events e JOIN sessions s ON s.id = e.session_id
   WHERE s.project_id IS NOT NULL AND e.payload_json LIKE '%"worktree":%'

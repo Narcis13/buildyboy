@@ -219,11 +219,13 @@ describe('worktree sessions', () => {
     project(5, 'm1', 'C:/w/lib-wt/z', 'https://github.com/o/lib.git'); // two main candidates: left alone
     project(6, 'm1', 'C:/w/lib', 'https://github.com/o/lib.git');
     project(7, 'm1', 'C:/w/lib-copy', 'https://github.com/o/lib.git');
+    project(8, 'm1', 'C:/w/mono', 'https://github.com/o/mono.git'); // a normal checkout only ever used from a subfolder,
+    project(9, 'm1', 'C:/w/mono-copy', 'https://github.com/o/mono.git'); // which older hooks flagged `worktree: true`
     let n = 0;
-    const session = (pid: number, machine: string, worktree: boolean | null) => {
+    const session = (pid: number, machine: string, worktree: boolean | null, cwd = 'C:\\w\\r') => {
       const sid = `mig-${++n}`;
       db.run("INSERT INTO sessions (id, machine_id, project_id, cwd, status, started_at, last_event_at) VALUES (?, ?, ?, 'c', 'idle', 0, 0)", sid, machine, pid);
-      const payload = JSON.stringify({ hook_event_name: 'SessionStart', _git: worktree === null ? null : { root: 'r', worktree } });
+      const payload = JSON.stringify({ hook_event_name: 'SessionStart', cwd, _git: worktree === null ? null : { root: 'C:/w/r', worktree } });
       db.run("INSERT INTO events (hash, session_id, ts, event, payload_json) VALUES (?, ?, 0, 'SessionStart', ?)", `h-${sid}`, sid, payload);
       return sid;
     };
@@ -232,6 +234,8 @@ describe('worktree sessions', () => {
     const left = [session(3, 'm1', true), session(4, 'm2', true), session(5, 'm1', true)];
     session(6, 'm1', false);
     session(7, 'm1', false);
+    left.push(session(8, 'm1', true, 'C:\\w\\r\\packages\\api'));
+    session(9, 'm1', false);
     db.run("INSERT INTO commits (sha, project_id, session_id, ts) VALUES ('abc', 2, ?, 0)", wt[0]);
     db.run("INSERT INTO pull_requests (project_id, number, url, session_id, updated_at) VALUES (2, 1, 'https://github.com/o/arond/pull/1', ?, 0)", wt[0]);
     db.run("DELETE FROM schema_migrations WHERE name = '006_worktree_projects.sql'");
@@ -239,10 +243,10 @@ describe('worktree sessions', () => {
     db = new DB(path); // runs 006 again on this data
     const pid = (sid: string) => db.get<{ project_id: number }>('SELECT project_id FROM sessions WHERE id = ?', sid)!.project_id;
     expect([pid(main), ...wt.map(pid)]).toEqual([1, 1, 1]);
-    expect(left.map(pid)).toEqual([3, 4, 5]);
+    expect(left.map(pid)).toEqual([3, 4, 5, 8]);
     expect(db.get('SELECT project_id FROM commits')).toEqual({ project_id: 1 });
     expect(db.get('SELECT project_id FROM pull_requests')).toEqual({ project_id: 1 });
-    expect(db.all<{ id: number }>('SELECT id FROM projects ORDER BY id').map((p) => p.id)).toEqual([1, 3, 4, 5, 6, 7]);
+    expect(db.all<{ id: number }>('SELECT id FROM projects ORDER BY id').map((p) => p.id)).toEqual([1, 3, 4, 5, 6, 7, 8, 9]);
     db.close();
   });
 });
