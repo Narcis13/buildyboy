@@ -167,7 +167,7 @@ block content
       | , folded away by default.
     li
       strong Tool cards
-      | , one per tool call (below).
+      | , one per tool call (below). In compact mode each is a single line until you open it.
     li
       strong Event rows
       | with a coloured dot: grey for information, amber for warnings, red for errors. Tap one to see its details. Two
@@ -176,6 +176,28 @@ block content
       | rows record how a request was answered ("Allowed Bash by web after 12s"), and
       code Watcher
       | rows record Buildyboy's own warnings (stale, loop suspected, budget, context).
+    li
+      strong Unrecognised transcript lines
+      | , a single
+      code raw
+      | line naming the line's type, for kinds of transcript line Buildyboy does not know yet. Tap it to see the JSON.
+  h3#compact Compact and detailed
+  p
+    | Next to the lane chips,
+    strong Compact
+    | and
+    strong Detailed
+    | switch how tool calls are shown. Compact is the default: prompts and Claude's replies are shown in full, and each
+    | tool call is one line with its tool, a short summary (the command's description, the file with
+    code +added −removed
+    | , the pattern and match count, the page address) and how long it took. Tap a line to open its full card; tap the
+    | card's top row to fold it again. Three or more tool calls in a row with nothing between them fold into one line
+    | such as
+    code 8 tools · Bash ×5, Read ×2, Edit ×1
+    | (flagged when one of them was interrupted or exited non-zero). Failed, denied and blocked calls, questions and
+    | plans always stay as full cards.
+    strong Detailed
+    | shows every card open, as below. Your choice is remembered in this browser.
   h3#tool-cards Tool cards
   p
     | Every card shows the tool's name, a

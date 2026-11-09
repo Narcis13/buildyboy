@@ -74,6 +74,17 @@ describe('ingestion of the fixture scenario', () => {
     const s2 = await web.get<SessionDetail>(`/api/sessions/${S2}`);
     expect(s2.compactions).toBe(1);
   });
+
+  it('hides request-log rows stored as raw before they were ignored', async () => {
+    const before = (await web.get<TimelinePage>(`/api/sessions/${S3}/timeline`)).items.filter((i) => i.kind === 'raw').length;
+    const ins = (uuid: string, line: unknown) =>
+      srv.ctx.db.run("INSERT INTO messages (uuid, session_id, kind, ts, content_json, is_sidechain) VALUES (?, ?, 'raw', ?, ?, 0)", uuid, S3, Date.now() - 1000, JSON.stringify(line));
+    for (const type of ['api-request', 'api-request-blob', 'api-request-shape', 'tools-used', 'session-owner']) ins(`old-${type}`, { type, sessionId: S3 });
+    ins('old-unparsed', { unparsed: '{not json' });
+    const raw = (await web.get<TimelinePage>(`/api/sessions/${S3}/timeline`)).items.filter((i) => i.kind === 'raw');
+    expect(raw).toHaveLength(before + 1);
+    expect(raw.some((i) => i.id === 'old-unparsed')).toBe(true);
+  });
 });
 
 describe('idempotency and auth', () => {

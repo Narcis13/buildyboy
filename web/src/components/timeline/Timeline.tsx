@@ -1,14 +1,19 @@
 // Virtualized, chat-like timeline. Sticks to the bottom while live; scrolling up pauses that and shows a pill.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+// Compact mode folds tool calls into one-line rows (see Compact.tsx); which rows are open lives here so it
+// survives rows scrolling out of the virtualized window.
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { TimelineItem } from '../../../../shared/types.ts';
 import { Empty } from '../ui.tsx';
+import { ToolGroup, ToolLine } from './Compact.tsx';
+import { compactRows, isStandalone, type Row } from './summary.ts';
 import { ItemView } from './Item.tsx';
 import type { TimelineCtx } from './ToolCard.tsx';
 
-export function Timeline({ items, ctx, hasOlder, loadingOlder, onLoadOlder, empty = 'Nothing here yet.' }: {
+export function Timeline({ items, ctx, compact = false, hasOlder, loadingOlder, onLoadOlder, empty = 'Nothing here yet.' }: {
   items: TimelineItem[];
   ctx: TimelineCtx;
+  compact?: boolean;
   hasOlder?: boolean;
   loadingOlder?: boolean;
   onLoadOlder?: () => void;
@@ -20,14 +25,19 @@ export function Timeline({ items, ctx, hasOlder, loadingOlder, onLoadOlder, empt
   const [atBottom, setAtBottom] = useState(true);
   const [nearTop, setNearTop] = useState(false);
   const [unseen, setUnseen] = useState(0);
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
 
+  const rows = useMemo<Row[]>(() => (compact ? compactRows(items) : items.map((i) => ({ id: i.id, item: i }))), [items, compact]);
   const v = useVirtualizer({
-    count: items.length,
+    count: rows.length,
     getScrollElement: () => ref.current,
-    estimateSize: () => 110,
-    overscan: 6,
-    getItemKey: (i) => items[i].id,
+    estimateSize: () => (compact ? 44 : 110),
+    overscan: compact ? 12 : 6,
+    getItemKey: (i) => rows[i].id,
   });
+  const lastRow = rows.length - 1;
+  // the same rows have very different heights in each mode: drop the measurements on a switch
+  useLayoutEffect(() => v.measure(), [compact]);
 
   // last scrollTop we set ourselves; anything above it means the reader scrolled up
   const lastPos = useRef(0);
@@ -46,7 +56,7 @@ export function Timeline({ items, ctx, hasOlder, loadingOlder, onLoadOlder, empt
     prevCount.current = items.length;
     if (!items.length) return;
     if (stick.current) {
-      v.scrollToIndex(items.length - 1, { align: 'end' });
+      v.scrollToIndex(lastRow, { align: 'end' });
       requestAnimationFrame(toBottom);
     } else if (grew > 0) setUnseen((u) => u + grew);
   }, [lastId]);
@@ -56,20 +66,24 @@ export function Timeline({ items, ctx, hasOlder, loadingOlder, onLoadOlder, empt
   const anchor = useRef<string | null>(null);
   useLayoutEffect(() => {
     if (!anchor.current) return;
-    const idx = items.findIndex((i) => i.id === anchor.current);
+    const a = anchor.current;
+    const idx = rows.findIndex((r) => r.id === a || ('group' in r && r.group.some((t) => t.id === a)));
     anchor.current = null;
     if (idx > 0) v.scrollToIndex(idx, { align: 'start' });
   }, [firstId]);
 
-  // items measured taller after render: stay glued to the bottom
+  // items measured taller after render: stay glued to the bottom. Otherwise the new size decides: a row opened
+  // above the fold leaves something below to jump to, a row folded at the bottom lands back on live.
   useEffect(() => {
     const el = inner.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
       const sc = ref.current;
-      if (!stick.current || !sc) return;
-      if (sc.scrollTop < lastPos.current - 4) stick.current = false;
-      else toBottom();
+      if (!sc) return;
+      if (stick.current && sc.scrollTop >= lastPos.current - 4) return toBottom();
+      const b = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 64;
+      stick.current = b;
+      setAtBottom(b);
     });
     ro.observe(el);
     if (ref.current) ro.observe(ref.current);
@@ -83,14 +97,31 @@ export function Timeline({ items, ctx, hasOlder, loadingOlder, onLoadOlder, empt
     stick.current = b;
     setAtBottom(b);
     setNearTop(el.scrollTop < 400);
-    if (b) setUnseen(0);
+    if (b) {
+      setUnseen(0);
+      lastPos.current = el.scrollTop;
+    }
+  };
+
+  // opening or folding a row unpins the timeline, so the row stays where it was clicked instead of being pushed
+  // up by the bottom-follow (the last row can only grow downwards, so it keeps the pin); scrolling back down or
+  // "Jump to live" pins it again. Folding a group also folds the cards open inside it.
+  const toggle = (id: string, members: string[] = []) => {
+    const last = rows[lastRow];
+    if (last && last.id !== id && !('group' in last && last.group.some((t) => t.id === id))) stick.current = false;
+    setOpen((o) => {
+      const n = new Set(o);
+      if (n.has(id) || members.some((m) => n.has(m))) [id, ...members].forEach((m) => n.delete(m));
+      else n.add(id);
+      return n;
+    });
   };
 
   const jump = () => {
     stick.current = true;
     setAtBottom(true);
     setUnseen(0);
-    v.scrollToIndex(items.length - 1, { align: 'end' });
+    v.scrollToIndex(lastRow, { align: 'end' });
     requestAnimationFrame(toBottom);
   };
 
@@ -104,18 +135,26 @@ export function Timeline({ items, ctx, hasOlder, loadingOlder, onLoadOlder, empt
         )}
         <div ref={inner} style={{ height: v.getTotalSize(), position: 'relative', width: '100%' }}>
           {v.getVirtualItems().map((vi) => {
-            const item = items[vi.index];
+            const row = rows[vi.index];
+            const line = !('group' in row) && compact && row.item.kind === 'tool' && !isStandalone(row.item) ? row.item : null;
+            const tight = 'group' in row || (line && !open.has(line.id));
             return (
               <div
                 key={vi.key}
                 data-index={vi.index}
                 ref={v.measureElement}
                 data-testid="timeline-item"
-                data-kind={item.kind}
-                className="absolute left-0 top-0 w-full pb-3"
+                data-kind={'group' in row ? 'tool-group' : row.item.kind}
+                className={`absolute left-0 top-0 w-full ${tight ? 'pb-1' : 'pb-3'}`}
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
-                <ItemView item={item} ctx={ctx} />
+                {'group' in row ? (
+                  <ToolGroup id={row.id} tools={row.group} ctx={ctx} open={open} toggle={toggle} />
+                ) : line ? (
+                  <ToolLine item={line} ctx={ctx} open={open.has(line.id)} onToggle={() => toggle(line.id)} />
+                ) : (
+                  <ItemView item={row.item} ctx={ctx} />
+                )}
               </div>
             );
           })}

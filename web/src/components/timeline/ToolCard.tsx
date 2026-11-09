@@ -1,11 +1,11 @@
 // One renderer per tool. Anything we don't recognise still shows its input and output as JSON.
 import type { ReactNode } from 'react';
-import type { TimelineItem } from '../../../../shared/types.ts';
-import { duration, shortPath, toolColor } from '../../lib/format.ts';
+import { duration, toolColor } from '../../lib/format.ts';
 import { Markdown, RelTime } from '../ui.tsx';
-import { asObj, Collapsible, Diff, Json, parseJson, patchFromEdits, Pre, prettyOutput, str } from './parts.tsx';
+import { Collapsible, Diff, Json, Pre, prettyOutput } from './parts.tsx';
+import { asObj, editStats, mcpName, parseJson, plural, relPath, searchCounts, str, type ToolItem } from './summary.ts';
 
-export type ToolItem = Extract<TimelineItem, { kind: 'tool' }>;
+export { relPath, type ToolItem };
 export interface SubagentRef {
   agentId: string;
   agentType: string | null;
@@ -19,16 +19,9 @@ export interface TimelineCtx {
   openLane: (agentId: string) => void;
 }
 
-export function relPath(p: string | null | undefined, cwd: string | null): string {
-  if (!p) return '';
-  if (cwd && p.toLowerCase().startsWith(cwd.toLowerCase())) return p.slice(cwd.length).replace(/^[\\/]/, '') || p;
-  return shortPath(p, 3);
-}
-
 const lineCount = (s: string) => (s ? s.replace(/\n$/, '').split('\n').length : 0);
-const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
-function StatusPill({ item }: { item: ToolItem }) {
+export function StatusPill({ item }: { item: ToolItem }) {
   if (item.status === 'ok') return null;
   const map: Record<string, [string, string]> = {
     error: ['failed', 'var(--bb-error)'],
@@ -89,26 +82,14 @@ function BashBody({ item }: { item: ToolItem }) {
 
 function EditBody({ item, cwd }: { item: ToolItem; cwd: string | null }) {
   const input = asObj(item.input);
-  const edits = Array.isArray(input.edits) ? (input.edits as Record<string, unknown>[]) : [input];
-  const patch =
-    item.patch ??
-    (item.tool === 'Write'
-      ? str(input.content)
-          .replace(/\n$/, '')
-          .split('\n')
-          .map((l) => `+${l}`)
-          .join('\n')
-      : patchFromEdits(edits));
-  const lines = patch.split('\n');
-  const added = lines.filter((l) => l.startsWith('+') && !l.startsWith('+++')).length;
-  const removed = lines.filter((l) => l.startsWith('-') && !l.startsWith('---')).length;
+  const { patch, added, removed, edits } = editStats(item);
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <PathLine path={item.filePath ?? str(input.file_path)} cwd={cwd} />
         <Counts>
           <span className="text-working">+{added}</span> <span className="text-error">−{removed}</span>
-          {item.tool === 'MultiEdit' ? ` · ${plural(edits.length, 'edit')}` : ''}
+          {item.tool === 'MultiEdit' ? ` · ${plural(edits, 'edit')}` : ''}
         </Counts>
       </div>
       {patch && <Diff patch={patch} />}
@@ -120,17 +101,8 @@ function EditBody({ item, cwd }: { item: ToolItem; cwd: string | null }) {
 function SearchBody({ item, cwd }: { item: ToolItem; cwd: string | null }) {
   const input = asObj(item.input);
   const out = asObj(parseJson(item.output));
-  const file = asObj(out.file);
   const files = Array.isArray(out.filenames) ? (out.filenames as string[]) : [];
-  const counts: string[] = [];
-  if (item.tool === 'Read') {
-    const n = Number(file.numLines ?? 0);
-    const total = Number(file.totalLines ?? 0);
-    if (n) counts.push(total && total !== n ? `${n} of ${total} lines` : plural(n, 'line'));
-  } else {
-    if (out.numLines != null && item.tool === 'Grep') counts.push(plural(Number(out.numLines), 'matching line'));
-    if (out.numFiles != null) counts.push(plural(Number(out.numFiles), 'file'));
-  }
+  const counts = searchCounts(item);
   const content = str(out.content);
   return (
     <div className="flex flex-col gap-1.5">
@@ -346,12 +318,6 @@ function GenericBody({ item }: { item: ToolItem }) {
   );
 }
 
-function mcpName(item: ToolItem): { server: string; tool: string } | null {
-  if (!item.tool.startsWith('mcp__')) return null;
-  const parts = item.tool.split('__');
-  return { server: item.mcpServer ?? parts[1] ?? '?', tool: parts.slice(2).join('__') || item.tool };
-}
-
 function body(item: ToolItem, ctx: TimelineCtx) {
   switch (item.tool) {
     case 'Bash':
@@ -384,32 +350,48 @@ function body(item: ToolItem, ctx: TimelineCtx) {
   }
 }
 
-export function ToolCard({ item, ctx }: { item: ToolItem; ctx: TimelineCtx }) {
+/** The full card. With `onCollapse` (compact timeline) its header folds it back into one line. */
+export function ToolCard({ item, ctx, onCollapse }: { item: ToolItem; ctx: TimelineCtx; onCollapse?: () => void }) {
   const color = toolColor(item.tool);
   const mcp = mcpName(item);
   const bad = item.status === 'error' || item.status === 'denied' || item.status === 'blocked';
+  const head = (
+    <>
+      {onCollapse && (
+        <span className="inline-block w-3 rotate-90 text-muted" aria-hidden>
+          ▸
+        </span>
+      )}
+      {mcp ? (
+        <span className="inline-flex min-w-0 items-center gap-1 truncate rounded px-1.5 py-0.5 font-mono text-[12px]" style={{ color, background: `color-mix(in srgb, ${color} 14%, transparent)` }}>
+          <span className="opacity-75">mcp</span> {mcp.server} › <b className="font-semibold">{mcp.tool}</b>
+        </span>
+      ) : (
+        <span className="rounded px-1.5 py-0.5 font-mono text-[12px] font-semibold" style={{ color, background: `color-mix(in srgb, ${color} 14%, transparent)` }}>
+          {item.tool}
+        </span>
+      )}
+      <StatusPill item={item} />
+      <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[12px] text-muted">
+        {item.durationMs != null && <span title="Duration">⏱ {duration(item.durationMs)}</span>}
+        <RelTime ts={item.ts} />
+      </span>
+    </>
+  );
+  const headCls = 'flex w-full min-w-0 items-center gap-2 px-3 pt-2.5';
   return (
     <div
       data-testid={`tool-${item.tool}`}
       className={`min-w-0 rounded-xl border bg-panel ${bad ? 'border-error/60' : 'border-line'}`}
       style={{ boxShadow: `inset 3px 0 0 ${color}` }}
     >
-      <div className="flex min-w-0 items-center gap-2 px-3 pt-2.5">
-        {mcp ? (
-          <span className="inline-flex min-w-0 items-center gap-1 truncate rounded px-1.5 py-0.5 font-mono text-[12px]" style={{ color, background: `color-mix(in srgb, ${color} 14%, transparent)` }}>
-            <span className="opacity-75">mcp</span> {mcp.server} › <b className="font-semibold">{mcp.tool}</b>
-          </span>
-        ) : (
-          <span className="rounded px-1.5 py-0.5 font-mono text-[12px] font-semibold" style={{ color, background: `color-mix(in srgb, ${color} 14%, transparent)` }}>
-            {item.tool}
-          </span>
-        )}
-        <StatusPill item={item} />
-        <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[12px] text-muted">
-          {item.durationMs != null && <span title="Duration">⏱ {duration(item.durationMs)}</span>}
-          <RelTime ts={item.ts} />
-        </span>
-      </div>
+      {onCollapse ? (
+        <button type="button" aria-expanded onClick={onCollapse} data-testid="tool-collapse" className={`${headCls} text-left`}>
+          {head}
+        </button>
+      ) : (
+        <div className={headCls}>{head}</div>
+      )}
       <div className="min-w-0 px-3 pb-2.5 pt-2">{body(item, ctx)}</div>
     </div>
   );

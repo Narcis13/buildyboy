@@ -45,9 +45,18 @@ test('session S1 timeline renders every tool type', async ({ page }, info) => {
   await expect(page.getByTestId('session-status')).toHaveText(/idle/i);
   await expect(page.getByTestId('timeline-item').first()).toBeVisible();
   await page.waitForTimeout(400);
+
+  // compact is the default; the checks below run on the detailed view, which shows every card open
+  const mode = (name: string) => page.getByTestId('timeline-mode').getByRole('button', { name, exact: true });
+  await expect(mode('Compact')).toHaveAttribute('aria-pressed', 'true');
+  await mode('Detailed').click();
+  await expect(mode('Detailed')).toHaveAttribute('aria-pressed', 'true');
+  await page.reload();
+  await expect(mode('Detailed')).toHaveAttribute('aria-pressed', 'true');
   await shot(page, `session-${info.project.name}`);
 
   const seen = await collectTestIds(page);
+  const detailedHeight = await page.getByTestId('timeline').evaluate((el) => el.scrollHeight);
   for (const t of TOOLS) expect(seen, `tool-${t} rendered`).toContain(`tool-${t}`);
   for (const id of ['diff', 'exit-code', 'question-card', 'plan', 'todo-list', 'open-lane']) expect(seen, id).toContain(id);
 
@@ -77,6 +86,23 @@ test('session S1 timeline renders every tool type', async ({ page }, info) => {
     await page.getByRole('tab', { name: 'Timeline' }).click();
   }
 
+  // compact: tool calls are one-line rows that open into the same cards; failures and questions stay cards
+  await mode('Compact').click();
+  const compactSeen = await collectTestIds(page);
+  for (const id of ['exit-code', 'question-card', 'plan', 'tool-group']) expect(compactSeen, id).toContain(id);
+  expect(compactSeen).not.toContain('diff');
+  expect(await page.getByTestId('timeline').evaluate((el) => el.scrollHeight)).toBeLessThan(detailedHeight * 0.75);
+  await page.getByTestId('timeline').evaluate((el) => (el.scrollTop = 0));
+  await page.getByTestId('tool-group').filter({ hasText: 'Edit' }).getByRole('button').first().click();
+  const editLine = page.locator('[data-testid="tool-Edit"][data-compact]');
+  await expect(editLine).toContainText('auth.ts +1 −1');
+  await editLine.click();
+  await expect(page.getByTestId('diff')).toBeVisible();
+  await shot(page, `session-${info.project.name}-compact`);
+  await page.getByTestId('tool-collapse').click();
+  await expect(page.getByTestId('diff')).toHaveCount(0);
+  await expect(editLine).toBeVisible();
+
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);
   expect(errors).toEqual([]);
@@ -100,6 +126,9 @@ test('session S3 shows the raw line and the StopFailure', async ({ page }, info)
   await expect(page.getByTestId('session-status')).toHaveText(/ended/i);
   await expect(page.getByTestId('timeline-raw')).toBeVisible();
   await expect(page.getByTestId('timeline-raw')).toContainText('bb-unknown-future-line');
+  // the raw line is one line until opened; its JSON is one click away
+  await page.getByTestId('timeline-raw').getByRole('button').click();
+  await expect(page.getByTestId('timeline-raw')).toContainText('unknown line types must show as raw');
   await expect(page.getByTestId('event-StopFailure')).toHaveAttribute('data-level', 'error');
   await expect(page.getByTestId('compose')).toContainText('Session ended');
   await expect(page.getByTestId('compose').getByRole('textbox')).toHaveCount(0);

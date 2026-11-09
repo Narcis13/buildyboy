@@ -144,6 +144,19 @@ describe('transcript parsing', () => {
     expect(parseTranscriptLine('{not json').message?.kind).toBe('raw');
     expect(parseTranscriptLine(JSON.stringify({ type: 'file-history-snapshot' })).message).toBeUndefined();
   });
+
+  it('drops Claude Code request-log lines instead of showing them as raw', () => {
+    const lines = [
+      { type: 'api-request', sessionId: 's', id: 'r1', timestamp: '2026-11-09T10:00:00Z', version: '2.1.319', params: { model: 'claude-opus-5-5' }, requestDigest: 'abc' },
+      { type: 'api-request-blob', sessionId: 's', hash: 'h1', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } },
+      { type: 'api-request-shape', sessionId: 's', shapeHash: 'h2', version: '2.1.319', shape: { system: [] } },
+      { type: 'tools-used', tools: ['Bash'], sessionId: 's' },
+      { type: 'session-owner', accountUuid: 'a', organizationUuid: 'o', sessionId: 's' },
+    ];
+    for (const l of lines) expect(parseTranscriptLine(JSON.stringify(l)).message, l.type).toBeUndefined();
+    // the version is still picked up like on any other line
+    expect(parseTranscriptLine(JSON.stringify(lines[0])).patch?.version).toBe('2.1.319');
+  });
 });
 
 describe('diff', () => {
