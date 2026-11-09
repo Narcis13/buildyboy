@@ -42,10 +42,12 @@ export interface ParsedLine {
   patch?: SessionPatch;
 }
 
-/** Line types we understand and deliberately don't show. */
-const IGNORED = new Set([
+/** Line types we understand and deliberately don't show. The api-request* lines are Claude Code's request
+ * log (params, cache hashes, prompt blobs: no usage), tools-used and session-owner carry nothing we need. */
+export const IGNORED = new Set([
   'attachment', 'queue-operation', 'file-history-snapshot', 'file-history-delta', 'mode', 'atis-latch',
   'last-prompt', 'agent-name', 'relocated', 'progress',
+  'api-request', 'api-request-blob', 'api-request-shape', 'tools-used', 'session-owner',
 ]);
 
 function toTs(v: unknown): number {

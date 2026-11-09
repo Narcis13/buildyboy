@@ -3,6 +3,9 @@ import type { AttentionSummary, JobOptions, JobStatus, JobView, MachineSummary, 
 import { json } from './db.ts';
 import { sessionWalk } from './control/state.ts';
 import { isStale } from './ingest/status.ts';
+import { IGNORED } from './ingest/transcript.ts';
+
+const IGNORED_TYPES = [...IGNORED];
 
 const ONLINE_MS = 5 * 60 * 1000;
 
@@ -134,7 +137,9 @@ export function timeline(ctx: Ctx, sid: string, cursor?: number, limit = 1000): 
   }
 
   for (const m of ctx.db.all<{ uuid: string; role: string | null; kind: string; ts: number; model: string | null; text: string | null; content_json: string; agent_id: string | null }>(
-    "SELECT uuid, role, kind, ts, model, text, content_json, agent_id FROM messages WHERE session_id = ? AND ts < ? AND kind IN ('text','thinking','prompt','raw','system') ORDER BY ts DESC LIMIT ?", sid, before, limit)) {
+    `SELECT uuid, role, kind, ts, model, text, content_json, agent_id FROM messages WHERE session_id = ? AND ts < ? AND kind IN ('text','thinking','prompt','raw','system')
+       AND NOT (kind = 'raw' AND IFNULL(CASE WHEN json_valid(content_json) THEN json_extract(content_json, '$.type') END, '') IN (${IGNORED_TYPES.map(() => '?').join(',')}))
+     ORDER BY ts DESC LIMIT ?`, sid, before, ...IGNORED_TYPES, limit)) {
     if (m.kind === 'text' && m.text) items.push({ kind: 'assistant', id: m.uuid, ts: m.ts, text: m.text, model: m.model, agentId: m.agent_id });
     else if (m.kind === 'thinking' && m.text) items.push({ kind: 'thinking', id: m.uuid, ts: m.ts, text: m.text, agentId: m.agent_id });
     else if (m.kind === 'prompt' && m.text && (!hasPromptEvents || m.agent_id)) items.push({ kind: 'prompt', id: m.uuid, ts: m.ts, text: m.text, agentId: m.agent_id });
