@@ -32,6 +32,9 @@ describe('toolSummary', () => {
     // the server's patch wins over the input
     const patched = tool('Edit', { file_path: `${cwd}\\x.ts`, old_string: 'a', new_string: 'b' }, { filePath: `${cwd}\\x.ts`, patch: '--- a/x.ts\n+++ b/x.ts\n@@\n-a\n+b\n+c\n+d' });
     expect(toolSummary(patched, cwd)).toBe('x.ts +3 −1');
+    expect(toolSummary(tool('Edit', { old_string: 'a', new_string: 'b' }), cwd)).toBe('+1 −1');
+    const nb = tool('NotebookEdit', { notebook_path: `${cwd}\\nb.ipynb`, cell_id: 'c3', new_source: 'x', edit_mode: 'insert' });
+    expect(toolSummary(nb, cwd)).toBe('nb.ipynb · insert cell c3');
   });
 
   it('Read / Grep / Glob: path or pattern plus counts', () => {

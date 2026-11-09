@@ -126,6 +126,9 @@ test('session S3 shows the raw line and the StopFailure', async ({ page }, info)
   await expect(page.getByTestId('session-status')).toHaveText(/ended/i);
   await expect(page.getByTestId('timeline-raw')).toBeVisible();
   await expect(page.getByTestId('timeline-raw')).toContainText('bb-unknown-future-line');
+  // the raw line is one line until opened; its JSON is one click away
+  await page.getByTestId('timeline-raw').getByRole('button').click();
+  await expect(page.getByTestId('timeline-raw')).toContainText('unknown line types must show as raw');
   await expect(page.getByTestId('event-StopFailure')).toHaveAttribute('data-level', 'error');
   await expect(page.getByTestId('compose')).toContainText('Session ended');
   await expect(page.getByTestId('compose').getByRole('textbox')).toHaveCount(0);

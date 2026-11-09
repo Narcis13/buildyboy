@@ -40,14 +40,16 @@ export function ToolLine({ item, ctx, open, onToggle }: { item: ToolItem; ctx: T
   );
 }
 
-export function ToolGroup({ tools, ctx, open, onToggle, isOpen, toggle }: {
+/** A run of tool calls folded into one line. It counts as open while any card inside it is open, so a card
+ * stays open when a live run grows into a group. */
+export function ToolGroup({ id, tools, ctx, open: openIds, toggle }: {
+  id: string;
   tools: ToolItem[];
   ctx: TimelineCtx;
-  open: boolean;
-  onToggle: () => void;
-  isOpen: (id: string) => boolean;
-  toggle: (id: string) => void;
+  open: ReadonlySet<string>;
+  toggle: (id: string, members?: string[]) => void;
 }) {
+  const open = openIds.has(id) || tools.some((t) => openIds.has(t.id));
   const tally = new Map<string, number>();
   for (const t of tools) tally.set(label(t), (tally.get(label(t)) ?? 0) + 1);
   const mix = [...tally].sort((a, b) => b[1] - a[1]).map(([n, c]) => (c > 1 ? `${n} ×${c}` : n)).join(', ');
@@ -55,7 +57,7 @@ export function ToolGroup({ tools, ctx, open, onToggle, isOpen, toggle }: {
   const running = tools.some((t) => t.status === 'running');
   return (
     <div data-testid="tool-group" className="min-w-0">
-      <button type="button" aria-expanded={open} onClick={onToggle} className={lineCls} style={{ boxShadow: `inset 3px 0 0 var(--bb-line)` }}>
+      <button type="button" aria-expanded={open} onClick={() => toggle(id, tools.map((t) => t.id))} className={lineCls} style={{ boxShadow: `inset 3px 0 0 var(--bb-line)` }}>
         <Caret open={open} />
         <span className="shrink-0 font-mono text-[13px] font-semibold">{tools.length} tools</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-muted" title={mix}>
@@ -67,7 +69,7 @@ export function ToolGroup({ tools, ctx, open, onToggle, isOpen, toggle }: {
       {open && (
         <div className="ml-3 mt-1 flex flex-col gap-1 border-l border-line pl-2">
           {tools.map((t) => (
-            <ToolLine key={t.id} item={t} ctx={ctx} open={isOpen(t.id)} onToggle={() => toggle(t.id)} />
+            <ToolLine key={t.id} item={t} ctx={ctx} open={openIds.has(t.id)} onToggle={() => toggle(t.id)} />
           ))}
         </div>
       )}

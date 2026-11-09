@@ -36,6 +36,8 @@ export function Timeline({ items, ctx, compact = false, hasOlder, loadingOlder, 
     getItemKey: (i) => rows[i].id,
   });
   const lastRow = rows.length - 1;
+  // the same rows have very different heights in each mode: drop the measurements on a switch
+  useLayoutEffect(() => v.measure(), [compact]);
 
   // last scrollTop we set ourselves; anything above it means the reader scrolled up
   const lastPos = useRef(0);
@@ -70,17 +72,18 @@ export function Timeline({ items, ctx, compact = false, hasOlder, loadingOlder, 
     if (idx > 0) v.scrollToIndex(idx, { align: 'start' });
   }, [firstId]);
 
-  // items measured taller after render: stay glued to the bottom; when unpinned, the size change decides
-  // whether there is something below to jump to
+  // items measured taller after render: stay glued to the bottom. Otherwise the new size decides: a row opened
+  // above the fold leaves something below to jump to, a row folded at the bottom lands back on live.
   useEffect(() => {
     const el = inner.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
       const sc = ref.current;
       if (!sc) return;
-      if (!stick.current) setAtBottom(sc.scrollHeight - sc.scrollTop - sc.clientHeight < 64);
-      else if (sc.scrollTop < lastPos.current - 4) stick.current = false;
-      else toBottom();
+      if (stick.current && sc.scrollTop >= lastPos.current - 4) return toBottom();
+      const b = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 64;
+      stick.current = b;
+      setAtBottom(b);
     });
     ro.observe(el);
     if (ref.current) ro.observe(ref.current);
@@ -94,17 +97,22 @@ export function Timeline({ items, ctx, compact = false, hasOlder, loadingOlder, 
     stick.current = b;
     setAtBottom(b);
     setNearTop(el.scrollTop < 400);
-    if (b) setUnseen(0);
+    if (b) {
+      setUnseen(0);
+      lastPos.current = el.scrollTop;
+    }
   };
 
   // opening or folding a row unpins the timeline, so the row stays where it was clicked instead of being pushed
-  // up by the bottom-follow; scrolling back down or "Jump to live" pins it again
-  const isOpen = (id: string) => open.has(id);
-  const toggle = (id: string) => {
-    stick.current = false;
+  // up by the bottom-follow (the last row can only grow downwards, so it keeps the pin); scrolling back down or
+  // "Jump to live" pins it again. Folding a group also folds the cards open inside it.
+  const toggle = (id: string, members: string[] = []) => {
+    const last = rows[lastRow];
+    if (last && last.id !== id && !('group' in last && last.group.some((t) => t.id === id))) stick.current = false;
     setOpen((o) => {
       const n = new Set(o);
-      if (!n.delete(id)) n.add(id);
+      if (n.has(id) || members.some((m) => n.has(m))) [id, ...members].forEach((m) => n.delete(m));
+      else n.add(id);
       return n;
     });
   };
@@ -128,8 +136,8 @@ export function Timeline({ items, ctx, compact = false, hasOlder, loadingOlder, 
         <div ref={inner} style={{ height: v.getTotalSize(), position: 'relative', width: '100%' }}>
           {v.getVirtualItems().map((vi) => {
             const row = rows[vi.index];
-            const asLine = !('group' in row) && compact && row.item.kind === 'tool' && !isStandalone(row.item);
-            const tight = 'group' in row || (asLine && !open.has(row.id));
+            const line = !('group' in row) && compact && row.item.kind === 'tool' && !isStandalone(row.item) ? row.item : null;
+            const tight = 'group' in row || (line && !open.has(line.id));
             return (
               <div
                 key={vi.key}
@@ -141,9 +149,9 @@ export function Timeline({ items, ctx, compact = false, hasOlder, loadingOlder, 
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
                 {'group' in row ? (
-                  <ToolGroup tools={row.group} ctx={ctx} open={open.has(row.id)} onToggle={() => toggle(row.id)} isOpen={isOpen} toggle={toggle} />
-                ) : asLine && row.item.kind === 'tool' ? (
-                  <ToolLine item={row.item} ctx={ctx} open={open.has(row.id)} onToggle={() => toggle(row.id)} />
+                  <ToolGroup id={row.id} tools={row.group} ctx={ctx} open={open} toggle={toggle} />
+                ) : line ? (
+                  <ToolLine item={line} ctx={ctx} open={open.has(line.id)} onToggle={() => toggle(line.id)} />
                 ) : (
                   <ItemView item={row.item} ctx={ctx} />
                 )}

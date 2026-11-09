@@ -105,11 +105,12 @@ export function toolSummary(item: ToolItem, cwd: string | null): string {
     }
     case 'Edit':
     case 'Write':
-    case 'MultiEdit':
-    case 'NotebookEdit': {
+    case 'MultiEdit': {
       const { added, removed } = editStats(item);
-      return `${relPath(item.filePath ?? str(input.file_path || input.notebook_path), cwd)} +${added} −${removed}`;
+      return [relPath(item.filePath ?? str(input.file_path), cwd), `+${added} −${removed}`].filter(Boolean).join(' ');
     }
+    case 'NotebookEdit':
+      return join(relPath(item.filePath ?? str(input.notebook_path), cwd), `${str(input.edit_mode) || 'replace'} cell ${str(input.cell_id)}`.trim());
     case 'Read':
       return join(relPath(item.filePath ?? str(input.file_path), cwd), ...searchCounts(item));
     case 'Grep':
