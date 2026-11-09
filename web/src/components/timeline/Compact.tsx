@@ -53,7 +53,6 @@ export function ToolGroup({ tools, ctx, open, onToggle, isOpen, toggle }: {
   const mix = [...tally].sort((a, b) => b[1] - a[1]).map(([n, c]) => (c > 1 ? `${n} ×${c}` : n)).join(', ');
   const failed = tools.filter((t) => (t.status !== 'ok' && t.status !== 'running') || (t.exitCode ?? 0) !== 0).length;
   const running = tools.some((t) => t.status === 'running');
-  const total = tools.reduce((n, t) => n + (t.durationMs ?? 0), 0);
   return (
     <div data-testid="tool-group" className="min-w-0">
       <button type="button" aria-expanded={open} onClick={onToggle} className={lineCls} style={{ boxShadow: `inset 3px 0 0 var(--bb-line)` }}>
@@ -64,7 +63,6 @@ export function ToolGroup({ tools, ctx, open, onToggle, isOpen, toggle }: {
         </span>
         {failed > 0 && <span className="shrink-0 rounded bg-error/15 px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-error">{failed} failed</span>}
         {running && <span className="shrink-0 animate-pulse rounded bg-working/15 px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-working">running</span>}
-        {total > 0 && <span className="shrink-0 font-mono text-[12px] text-muted">{duration(total)}</span>}
       </button>
       {open && (
         <div className="ml-3 mt-1 flex flex-col gap-1 border-l border-line pl-2">

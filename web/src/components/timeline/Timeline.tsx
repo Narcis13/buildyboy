@@ -26,14 +26,6 @@ export function Timeline({ items, ctx, compact = false, hasOlder, loadingOlder, 
   const [nearTop, setNearTop] = useState(false);
   const [unseen, setUnseen] = useState(0);
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
-  const isOpen = useCallback((id: string) => open.has(id), [open]);
-  const toggle = useCallback((id: string) => {
-    setOpen((o) => {
-      const n = new Set(o);
-      if (!n.delete(id)) n.add(id);
-      return n;
-    });
-  }, []);
 
   const rows = useMemo<Row[]>(() => (compact ? compactRows(items) : items.map((i) => ({ id: i.id, item: i }))), [items, compact]);
   const v = useVirtualizer({
@@ -78,14 +70,16 @@ export function Timeline({ items, ctx, compact = false, hasOlder, loadingOlder, 
     if (idx > 0) v.scrollToIndex(idx, { align: 'start' });
   }, [firstId]);
 
-  // items measured taller after render: stay glued to the bottom
+  // items measured taller after render: stay glued to the bottom; when unpinned, the size change decides
+  // whether there is something below to jump to
   useEffect(() => {
     const el = inner.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
       const sc = ref.current;
-      if (!stick.current || !sc) return;
-      if (sc.scrollTop < lastPos.current - 4) stick.current = false;
+      if (!sc) return;
+      if (!stick.current) setAtBottom(sc.scrollHeight - sc.scrollTop - sc.clientHeight < 64);
+      else if (sc.scrollTop < lastPos.current - 4) stick.current = false;
       else toBottom();
     });
     ro.observe(el);
@@ -101,6 +95,18 @@ export function Timeline({ items, ctx, compact = false, hasOlder, loadingOlder, 
     setAtBottom(b);
     setNearTop(el.scrollTop < 400);
     if (b) setUnseen(0);
+  };
+
+  // opening or folding a row unpins the timeline, so the row stays where it was clicked instead of being pushed
+  // up by the bottom-follow; scrolling back down or "Jump to live" pins it again
+  const isOpen = (id: string) => open.has(id);
+  const toggle = (id: string) => {
+    stick.current = false;
+    setOpen((o) => {
+      const n = new Set(o);
+      if (!n.delete(id)) n.add(id);
+      return n;
+    });
   };
 
   const jump = () => {
