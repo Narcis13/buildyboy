@@ -1,20 +1,6 @@
 // Small building blocks shared by the timeline renderers.
 import { useState, type ReactNode } from 'react';
-
-export function parseJson(s: string | null | undefined): unknown {
-  if (s == null) return null;
-  try {
-    return JSON.parse(s);
-  } catch {
-    return undefined;
-  }
-}
-
-export function asObj(v: unknown): Record<string, unknown> {
-  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-}
-
-export const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
+import { asObj, parseJson, str } from './summary.ts';
 
 /** MCP tools often return `[{type:'text', text}]`; flatten that to text, else pretty JSON. */
 export function prettyOutput(output: string | null): string {
@@ -95,15 +81,4 @@ export function Diff({ patch, testId = 'diff' }: { patch: string; testId?: strin
       })}
     </div>
   );
-}
-
-/** Build a diff from Edit-style input when the server had no patch. */
-export function patchFromEdits(edits: { old_string?: unknown; new_string?: unknown }[]): string {
-  const out: string[] = [];
-  for (const e of edits) {
-    out.push('@@');
-    for (const l of str(e.old_string).split('\n')) out.push(`-${l}`);
-    for (const l of str(e.new_string).split('\n')) out.push(`+${l}`);
-  }
-  return out.join('\n');
 }

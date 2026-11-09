@@ -3,6 +3,7 @@ import { useState } from 'react';
 import type { TimelineItem } from '../../../../shared/types.ts';
 import { Markdown, RelTime } from '../ui.tsx';
 import { Collapsible, Json } from './parts.tsx';
+import { asObj, str } from './summary.ts';
 import { ToolCard, type TimelineCtx } from './ToolCard.tsx';
 
 const LEVEL_COLOR = { info: 'var(--bb-idle)', warn: 'var(--bb-waiting)', error: 'var(--bb-error)' } as const;
@@ -31,6 +32,27 @@ function EventRow({ item }: { item: Extract<TimelineItem, { kind: 'event' }> }) 
         <RelTime ts={item.ts} className="shrink-0 font-mono text-[12px] text-muted" />
       </button>
       {open && hasData && <Json value={item.data} className="mt-1" />}
+    </div>
+  );
+}
+
+/** A transcript line type we don't know yet: one line naming its type, the JSON on click. */
+function RawRow({ item }: { item: Extract<TimelineItem, { kind: 'raw' }> }) {
+  const [open, setOpen] = useState(false);
+  const type = str(asObj(item.data).type);
+  return (
+    <div data-testid="timeline-raw" className="min-w-0 rounded-xl border border-dashed border-line bg-panel/60 px-3">
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex min-h-9 w-full min-w-0 items-center gap-2 text-left">
+        <span className={`inline-block w-3 shrink-0 text-muted transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden>
+          ▸
+        </span>
+        <span className="shrink-0 rounded bg-panel-2 px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-muted">raw</span>
+        <span className="min-w-0 flex-1 truncate text-[13px] text-muted">
+          Unrecognised transcript line{type && <span className="font-mono"> · {type}</span>}
+        </span>
+        <RelTime ts={item.ts} className="shrink-0 font-mono text-[12px] text-muted" />
+      </button>
+      {open && <Json value={item.data ?? item} className="mb-2" />}
     </div>
   );
 }
@@ -70,18 +92,7 @@ export function ItemView({ item, ctx }: { item: TimelineItem; ctx: TimelineCtx }
     case 'event':
       return <EventRow item={item} />;
     case 'raw':
-    default: {
-      const raw = item as Extract<TimelineItem, { kind: 'raw' }>;
-      return (
-        <div data-testid="timeline-raw" className="min-w-0 rounded-xl border border-dashed border-line bg-panel/60 px-3 py-2">
-          <div className="mb-1 flex items-center gap-2">
-            <span className="rounded bg-panel-2 px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-muted">raw</span>
-            <span className="text-[13px] text-muted">Unrecognised transcript line</span>
-            <RelTime ts={raw.ts} className="ml-auto font-mono text-[12px] text-muted" />
-          </div>
-          <Json value={raw.data ?? item} />
-        </div>
-      );
-    }
+    default:
+      return <RawRow item={item as Extract<TimelineItem, { kind: 'raw' }>} />;
   }
 }

@@ -4,7 +4,7 @@ import type { SessionDetail, TimelineItem, TimelinePage } from '../../../shared/
 import { api, ApiError } from '../lib/api.ts';
 import { Link } from '../lib/router.tsx';
 import { Empty, Tabs } from '../components/ui.tsx';
-import { isPhoneQuery, useMedia, useNow } from '../components/floor/hooks.ts';
+import { isPhoneQuery, readStore, useMedia, useNow, writeStore } from '../components/floor/hooks.ts';
 import { Timeline } from '../components/timeline/Timeline.tsx';
 import type { SubagentRef, TimelineCtx, ToolItem } from '../components/timeline/ToolCard.tsx';
 import { SessionHeader } from '../components/session/SessionHeader.tsx';
@@ -14,6 +14,9 @@ import { ReplayBar } from '../components/session/Replay.tsx';
 import type { SideData } from '../components/session/types.ts';
 
 type Lane = 'main' | 'all' | string;
+
+/** Compact (tool calls as one-line rows) or detailed timeline, remembered per browser. */
+const MODE_STORE = 'bb-timeline-compact-v1';
 
 /** Height from this element's top to the bottom of the viewport (above the phone nav). */
 function useFillHeight(ready: boolean) {
@@ -41,8 +44,10 @@ function useFillHeight(ready: boolean) {
   return [ref, h] as const;
 }
 
-function LaneBar({ lane, setLane, subagents, counts, replay, toggleReplay, live }: {
+function LaneBar({ lane, setLane, subagents, counts, compact, setCompact, replay, toggleReplay, live }: {
   lane: Lane;
+  compact: boolean;
+  setCompact: (c: boolean) => void;
   setLane: (l: Lane) => void;
   subagents: SideData['subagents'];
   counts: Map<string, number>;
@@ -69,6 +74,19 @@ function LaneBar({ lane, setLane, subagents, counts, replay, toggleReplay, live 
         {subagents.length > 0 && chip('all', 'All')}
         {subagents.map((a) => chip(a.agentId, `✣ ${a.agentType ?? 'subagent'} · ${counts.get(a.agentId) ?? 0}`, `lane-${a.agentId}`))}
       </div>
+      <div className="flex shrink-0 rounded-lg border border-line p-0.5" role="group" aria-label="Timeline density" data-testid="timeline-mode">
+        {([true, false] as const).map((c) => (
+          <button
+            key={String(c)}
+            type="button"
+            aria-pressed={compact === c}
+            onClick={() => setCompact(c)}
+            className={`min-h-10 rounded-md px-2.5 text-[14px] ${compact === c ? 'bg-accent/15 text-ink' : 'text-muted hover:text-ink'}`}
+          >
+            {c ? 'Compact' : 'Detailed'}
+          </button>
+        ))}
+      </div>
       {live && (
         <span className="flex shrink-0 items-center gap-1.5 font-mono text-[12px] uppercase tracking-wider text-working">
           <span className="h-2 w-2 animate-pulse rounded-full bg-working" /> live
@@ -94,6 +112,11 @@ export default function Session({ id }: { id: string }) {
   const [phoneTab, setPhoneTab] = useState<'timeline' | SideTab>('timeline');
   const [sideTab, setSideTab] = useState<SideTab>('todos');
   const [replayT, setReplayT] = useState<number | null>(null);
+  const [compact, setCompactState] = useState(() => readStore(MODE_STORE, true));
+  const setCompact = (c: boolean) => {
+    setCompactState(c);
+    writeStore(MODE_STORE, c);
+  };
 
   const detail = useQuery({ queryKey: ['session', id], queryFn: () => api.get<SessionDetail>(`/api/sessions/${id}`) });
   const [ref, height] = useFillHeight(!!detail.data);
@@ -168,6 +191,8 @@ export default function Session({ id }: { id: string }) {
         setLane={setLane}
         subagents={subagents}
         counts={counts}
+        compact={compact}
+        setCompact={setCompact}
         replay={replayT != null}
         toggleReplay={() => setReplayT(replayT == null ? s.startedAt : null)}
         live={s.status === 'working' && replayT == null}
@@ -180,6 +205,7 @@ export default function Session({ id }: { id: string }) {
           key={`${lane}`}
           items={items}
           ctx={ctx}
+          compact={compact}
           hasOlder={tl.hasNextPage && replayT == null}
           loadingOlder={tl.isFetchingNextPage}
           onLoadOlder={() => tl.fetchNextPage()}
