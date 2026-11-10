@@ -175,6 +175,132 @@ test.describe('package page', () => {
   });
 });
 
+test.describe('gate rounds, resources and findings', () => {
+  test('shows round, resources and findings, and turns open minors into a package', async ({ loggedIn: page }, info) => {
+    const errors = trackConsoleErrors(page);
+    const headers = { 'x-bb-csrf': await csrf(page) };
+    const repo = `e2e-repo-${info.project.name}`;
+    const id = `FX-${info.project.name}`;
+    const minor1 = `Rename the helper (${info.project.name})`;
+    const minor2 = `Trim the log line (${info.project.name})`;
+    const major = `Escape the filter input (${info.project.name})`;
+
+    // a repo config, merged into whatever is there and put back at the end
+    const before = (await (await page.request.get('/api/factory/config')).json()) as { maxRounds: number; repos: Record<string, unknown>[] };
+    const put = await page.request.put('/api/factory/config', {
+      headers,
+      data: {
+        maxRounds: 3,
+        repos: [...before.repos, { repo, machineId: null, checkout: '', recipe: '', worktree: '', portFrom: 4300, portTo: 4399, dbPrefix: 'e2e_', migrationFrom: 500, migrationBlock: 10, cleanup: [] }],
+      },
+    });
+    expect(put.ok(), await put.text()).toBe(true);
+    try {
+      const mk = await page.request.post('/api/tasks', { headers, data: { id, title: `Findings on ${info.project.name}`, repo, status: 'gata' } });
+      expect(mk.status(), await mk.text()).toBe(201);
+
+      const tok = await page.request.post('/api/agent-tokens', { data: { name: `e2e-findings-${info.project.name}` }, headers });
+      const { token } = (await tok.json()) as { token: string };
+      const agent = async (tool: string, args: Record<string, unknown>) => {
+        const res = await page.request.post(`/api/agent/${tool}`, { data: args, headers: { authorization: `Bearer ${token}` } });
+        expect(res.ok(), `${tool}: ${await res.text()}`).toBe(true);
+        return res.json();
+      };
+      await agent('tasks_claim', { id, force: true });
+      await agent('gates_record', {
+        taskId: id,
+        gate: 'G3',
+        verdict: 'fail',
+        summary: 'Review found three things',
+        findings: [
+          { severity: 'minor', title: minor1, file: 'src/helpers/names.ts', line: 12, detail: 'The name hides what it does.', fix: 'Call it parseName.' },
+          { severity: 'minor', title: minor2, file: 'src/log.ts', line: 4 },
+          { severity: 'major', title: major, file: 'web/src/Filter.tsx', line: 30 },
+        ],
+      });
+
+      await page.goto(`/backlog/${id}`);
+      await expect(page.getByTestId('task-round')).toHaveText('Round 1 of 3');
+      const res = page.getByTestId('task-resources');
+      await expect(res).toContainText('4300');
+      await expect(res).toContainText(`e2e_${id.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`);
+      await expect(res).toContainText('500–509');
+      const rows = page.getByTestId('task-findings').getByTestId('finding-row');
+      await expect(rows).toHaveCount(3);
+      const majorRow = rows.filter({ hasText: major });
+      await expect(majorRow).toContainText('major');
+      await expect(majorRow).toContainText('web/src/Filter.tsx:30');
+      await expect(majorRow).toContainText('G3');
+      await expect(majorRow.getByTestId('finding-status')).toHaveValue('open');
+      await expect(rows.filter({ hasText: minor1 }).getByTestId('finding-more')).toContainText('Call it parseName.');
+
+      // changing a status goes to the server
+      await majorRow.getByTestId('finding-status').selectOption('fixed');
+      await expect(majorRow).toHaveAttribute('data-status', 'fixed');
+      await noHorizontalScroll(page);
+
+      // the backlog lists the open minors, grouped by package
+      await page.goto('/backlog');
+      await page.getByTestId('backlog-open-minors').click();
+      const group = page.getByTestId('minors-group').filter({ hasText: id });
+      await expect(group.getByTestId('minor-check')).toHaveCount(2);
+      await expect(group).toContainText(minor1);
+      await expect(group).not.toContainText(major);
+      await noHorizontalScroll(page);
+
+      // one package from one of them
+      await group.locator('label', { hasText: minor1 }).getByTestId('minor-check').check();
+      const title = `Cleanups from ${id}`;
+      await page.getByTestId('minors-title').fill(title);
+      await page.getByTestId('minors-create').click();
+      await expect(page.getByTestId('task-title')).toHaveText(title);
+      await expect(page.getByTestId('task-body')).toContainText(minor1);
+
+      // the finding it came from is deferred to the new package
+      await page.goto(`/backlog/${id}`);
+      const done = page.getByTestId('finding-row').filter({ hasText: minor1 });
+      await expect(done).toHaveAttribute('data-status', 'deferred');
+      await expect(done.getByTestId('finding-deferred-to')).toBeVisible();
+      await expect(page.getByTestId('finding-row').filter({ hasText: minor2 })).toHaveAttribute('data-status', 'open');
+      expect(errors).toEqual([]);
+    } finally {
+      await page.request.put('/api/factory/config', { headers, data: before });
+    }
+  });
+
+  test('saves the factory config from Settings', async ({ loggedIn: page }, info) => {
+    const errors = trackConsoleErrors(page);
+    const repo = `e2e-cfg-${info.project.name}`;
+    const headers = { 'x-bb-csrf': await csrf(page) };
+    const before = (await (await page.request.get('/api/factory/config')).json()) as { maxRounds: number; repos: unknown[] };
+    try {
+      await page.goto('/settings');
+      const card = page.getByTestId('settings-factory-config');
+      await expect(card).toBeVisible();
+      await card.getByTestId('fc-add').click();
+      const r = card.getByTestId('fc-repo-block').last();
+      await r.getByTestId('fc-repo').fill(repo);
+      await r.getByTestId('fc-dbPrefix').fill('bad prefix!');
+      await r.getByTestId('fc-cleanup').fill('drop db {db}\n\nrm -rf {worktree}');
+      await r.locator('input[id$="-portFrom"]').fill('4400');
+      await r.locator('input[id$="-portTo"]').fill('4410');
+      await noHorizontalScroll(page);
+      await card.getByTestId('fc-save').click();
+      await expect(card.getByRole('alert')).toContainText('dbPrefix');
+      await r.getByTestId('fc-dbPrefix').fill('e2e_');
+      await card.getByTestId('fc-save').click();
+      await expect(card.getByRole('status')).toHaveText('Saved');
+      const saved = (await (await page.request.get('/api/factory/config')).json()) as { repos: { repo: string; portFrom: number; cleanup: string[] }[] };
+      expect(saved.repos.find((x) => x.repo === repo)).toMatchObject({ portFrom: 4400, cleanup: ['drop db {db}', 'rm -rf {worktree}'] });
+      await page.reload();
+      await expect(page.getByTestId('settings-factory-config').locator(`input[value="${repo}"]`)).toHaveCount(1);
+      expect(errors.filter((e) => !/400/.test(e))).toEqual([]);
+    } finally {
+      await page.request.put('/api/factory/config', { headers, data: before });
+    }
+  });
+});
+
 test.describe('decisions', () => {
   test('lists the seeded questions', async ({ loggedIn: page }) => {
     const errors = trackConsoleErrors(page);

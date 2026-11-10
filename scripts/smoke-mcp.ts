@@ -1,6 +1,6 @@
 // npm run smoke:mcp — end to end: a server on a temporary DB, `bb mcp` spawned over stdio with an agent token,
 // and one successful call of every MCP tool. Usage data arrives the real way (hook SessionStart + statusline POST).
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,8 @@ import { createMachine } from '../server/auth.ts';
 import { createAgentToken, revokeAgentToken } from '../server/factory/agent.ts';
 import { answerDecision } from '../server/factory/decisions.ts';
 import { requestControl } from '../server/factory/tasks.ts';
+import { saveFactoryConfig } from '../server/factory/config.ts';
+import { startRunner, type Runner } from '../runner/main.ts';
 import { TOOL_NAMES, type ToolName } from '../shared/factory.ts';
 
 const ROOT = resolve(fileURLToPath(import.meta.url), '..', '..');
@@ -26,6 +28,8 @@ export async function smokeMcp(log = (s: string) => console.log(s)): Promise<voi
   const home = join(dir, 'home');
   const srv = await startServer({ port: 0, dataDir: join(dir, 'data') }, { quiet: true, background: false });
   let client: Client | null = null;
+  let runner: Runner | null = null;
+  const savedEnv = { home: process.env.BUILDYBOY_HOME, hc: process.env.BUILDYBOY_HC };
   try {
     const machine = createMachine(srv.ctx, 'smoke');
     const post = (path: string, body: unknown) =>
@@ -34,6 +38,28 @@ export async function smokeMcp(log = (s: string) => console.log(s)): Promise<voi
     assert((await post('/api/ingest', { v: 1, ts: Date.now(), env: {}, hostname: 'h', platform: process.platform, user: 'u', pid: 1, ppid: 1, hookVersion: 'smoke', event: { session_id: sid, cwd: dir, hook_event_name: 'SessionStart' } })).ok, 'ingest');
     const resets = Math.floor(Date.now() / 1000) + 3600;
     assert((await post('/api/statusline', { session_id: sid, rate_limits: { five_hour: { used_percentage: 12, resets_at: resets }, seven_day: { used_percentage: 30, resets_at: resets + 86400 } } })).ok, 'statusline');
+
+    // the repo's factory config and a runner on this machine, for resources and gates_run
+    const checkout = join(dir, 'roots', 'arond');
+    mkdirSync(join(checkout, 'gates'), { recursive: true });
+    writeFileSync(
+      join(checkout, 'gates', 'g1.mjs'),
+      `console.log('G1 log line for ' + process.argv[2]);
+console.log(JSON.stringify({ verdict: 'pass', summary: 'G1 pass: 3 tests', findings: [{ severity: 'minor', title: 'Slow test' }] }));
+`,
+    );
+    writeFileSync(join(checkout, 'gates', 'recipe.json'), JSON.stringify({ gates: { G1: { steps: [{ argv: [process.execPath, '{recipeDir}/g1.mjs', '{id}'] }] } } }));
+    saveFactoryConfig(srv.ctx, {
+      maxRounds: 3,
+      repos: [{ repo: 'arond', machineId: machine.id, checkout, recipe: 'gates/recipe.json', worktree: join(dir, 'wt', '{id}'), portFrom: 5600, portTo: 5609, dbPrefix: 'arond_', migrationFrom: 40, migrationBlock: 10, cleanup: ['bash curata.sh {id}'] }],
+    });
+    const runnerHome = join(dir, 'runner-home');
+    mkdirSync(runnerHome, { recursive: true });
+    writeFileSync(join(runnerHome, 'config.json'), JSON.stringify({ url: srv.url, token: machine.token, machineId: machine.id }));
+    writeFileSync(join(runnerHome, 'runner.json'), JSON.stringify({ allowedRoots: [join(dir, 'roots')], concurrency: 1 }));
+    process.env.BUILDYBOY_HOME = runnerHome;
+    process.env.BUILDYBOY_HC = 'off';
+    runner = startRunner({ log: () => {} });
 
     const agent = createAgentToken(srv.ctx, 'smoke-coordinator');
     const shot = join(dir, 'g4-desktop.png');
@@ -75,6 +101,7 @@ export async function smokeMcp(log = (s: string) => console.log(s)): Promise<voi
     assert(ready.length === 1 && ready[0].id === 'P1', 'tasks_list ready = [P1] (P2 waits on P1)');
     const claim = await call('tasks_claim', { agent: 'coordinator' });
     assert(claim.task?.id === 'P1' && claim.task.status === 'in_lucru', 'tasks_claim P1');
+    assert(claim.resources?.port === 5600 && claim.resources.db === 'arond_p1' && claim.resources.migrations?.from === 40, 'tasks_claim allocates the resources');
 
     const rendered = await call('prompts_render', { slots: { Goal: 'Build P1', 'Done when': '`pnpm verify` passes' } });
     assert(typeof rendered.rendered === 'string' && rendered.rendered.includes('Build P1'), 'prompts_render');
@@ -83,10 +110,30 @@ export async function smokeMcp(log = (s: string) => console.log(s)): Promise<voi
     const saved = await call('prompts_save', { title: 'P1 worker', slots: { Goal: 'Build P1' }, taskId: 'P1' });
     assert(saved.id > 0 && saved.version === 1, 'prompts_save');
 
-    const upd = await call('tasks_update', { id: 'P1', status: 'la_porti', branch: 'pachet/P1', costUsd: 1.25, note: 'worker done' });
-    assert(upd.status === 'la_porti' && upd.branch === 'pachet/P1' && upd.promptId === saved.id, 'tasks_update');
-    const gate = await call('gates_record', { taskId: 'P1', gate: 'G4', verdict: 'pass', summary: 'Desktop and phone look right', screenshots: [{ name: 'desktop', path: shot }] });
+    const upd = await call('tasks_update', { id: 'P1', status: 'la_porti', branch: 'pachet/P1', costUsd: 1.25, note: 'worker done', migrationsUsed: [40, 41] });
+    assert(upd.status === 'la_porti' && upd.branch === 'pachet/P1' && upd.promptId === saved.id && upd.round === 1, 'tasks_update');
+
+    for (let i = 0; i < 200 && !srv.ctx.runners.has(machine.id); i++) await new Promise((r) => setTimeout(r, 50));
+    const run = await call('gates_run', { taskId: 'P1', gate: 'G1' });
+    assert(typeof run.runId === 'string' && run.sent === true, 'gates_run sent to the runner');
+    let status: any = null;
+    for (let i = 0; i < 300 && !(status && (status.status === 'done' || status.status === 'error')); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      status = await call('gates_status', { runId: run.runId });
+    }
+    assert(status?.status === 'done' && status.verdict === 'pass' && status.summary === 'G1 pass: 3 tests' && status.gateResultId > 0, `gates_status done (${JSON.stringify(status)})`);
+    assert(!JSON.stringify(status).includes('G1 log line'), 'gates_status returns no log text');
+    const gate = await call('gates_record', {
+      taskId: 'P1', gate: 'G4', verdict: 'pass', summary: 'Desktop and phone look right', screenshots: [{ name: 'desktop', path: shot }],
+      findings: [{ severity: 'minor', title: 'Button 2px off on phone', file: 'web/src/x.tsx', line: 4 }],
+    });
     assert(gate.shots.length === 1, 'gates_record stored the screenshot');
+    const minors = await call<any[]>('findings_list', { status: 'open', severity: 'minor' });
+    assert(minors.length === 2, `findings_list: two open minors (${minors.length})`);
+    const wont = await call<any[]>('findings_update', { ids: [minors.find((f) => f.title === 'Slow test').id], status: 'wontfix', note: 'fine for now' });
+    assert(wont[0].status === 'wontfix', 'findings_update');
+    const later = await call('tasks_create', { id: 'P3', title: 'Leftover minors', fromFindings: [minors.find((f) => f.gate === 'G4').id] });
+    assert(later.acceptance[0] === 'Fixed: Button 2px off on phone (web/src/x.tsx:4)', 'tasks_create fromFindings');
     const shotRes = await fetch(`${srv.url}${gate.shots[0].url}`);
     assert(shotRes.status === 401, 'screenshots need a web login');
 
@@ -101,9 +148,10 @@ export async function smokeMcp(log = (s: string) => console.log(s)): Promise<voi
     assert(ctl.requests.length === 1 && ctl.requests[0].kind === 'stop', 'control_get');
     assert((await call('control_get')).requests.length === 0, 'control_get after ack');
 
-    await call('tasks_update', { id: 'P1', status: 'integrata' });
+    const integrated = await call('tasks_update', { id: 'P1', status: 'integrata' });
+    assert(integrated.cleanup?.[0] === 'bash curata.sh P1', 'integration returns the cleanup list');
     assert((await call<any[]>('tasks_list', { ready: true })).some((t) => t.id === 'P2'), 'P2 ready once P1 is integrated');
-    assert((await call('tasks_get', { id: 'P1' })).gateResults.length === 1, 'tasks_get');
+    assert((await call('tasks_get', { id: 'P1' })).gateResults.length === 2, 'tasks_get');
     const digest = await call('digest_post', { note: 'smoke' });
     assert(/P1/.test(digest.body), 'digest_post mentions P1');
 
@@ -115,6 +163,11 @@ export async function smokeMcp(log = (s: string) => console.log(s)): Promise<voi
     assert(denied.isError && /unauthorized/.test(denied.content[0].text), 'revoked token is refused');
     log('✔ a revoked agent token is refused');
   } finally {
+    await runner?.stop().catch(() => {});
+    process.env.BUILDYBOY_HOME = savedEnv.home;
+    process.env.BUILDYBOY_HC = savedEnv.hc;
+    if (savedEnv.home === undefined) delete process.env.BUILDYBOY_HOME;
+    if (savedEnv.hc === undefined) delete process.env.BUILDYBOY_HC;
     await client?.close().catch(() => {});
     await srv.close();
     try {

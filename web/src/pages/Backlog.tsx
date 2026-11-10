@@ -7,6 +7,7 @@ import { Button, Empty, PageTitle } from '../components/ui.tsx';
 import { inputClass } from '../components/settings/bits.tsx';
 import { GovernorBanner } from '../components/factory/GovernorBanner.tsx';
 import { ImportPanel } from '../components/factory/ImportPanel.tsx';
+import { fetchOpenMinors, OPEN_MINORS_KEY, OpenMinors } from '../components/factory/OpenMinors.tsx';
 import { NewTaskForm } from '../components/factory/NewTaskForm.tsx';
 import { STATUS_COLOR, TaskCard, useMedia } from '../components/factory/common.tsx';
 
@@ -78,6 +79,8 @@ export default function Backlog() {
   const [search, setSearch] = useState('');
   const [q, setQ] = useState('');
   const [panel, setPanel] = useState<'new' | 'import' | null>(null);
+  const [minors, setMinors] = useState(false);
+  const minorCount = useQuery({ queryKey: OPEN_MINORS_KEY, queryFn: fetchOpenMinors }).data?.length;
   const wide = useMedia('(min-width: 768px)');
   useEffect(() => {
     const t = setTimeout(() => setQ(search.trim()), 250);
@@ -112,22 +115,26 @@ export default function Backlog() {
         />
       )}
       {panel === 'import' && <ImportPanel onClose={() => setPanel(null)} />}
-      <div className="mb-3">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <input
           type="search"
           aria-label="Search tasks"
           placeholder="Search id, title or description"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className={`${inputClass} md:max-w-md`}
+          className={`${inputClass} min-w-0 flex-1 basis-56 md:max-w-md`}
           data-testid="backlog-search"
         />
+        <Button variant={minors ? 'primary' : 'ghost'} aria-pressed={minors} onClick={() => setMinors(!minors)} data-testid="backlog-open-minors">
+          Open minors{minorCount != null ? ` ${minorCount}` : ''}
+        </Button>
       </div>
       {error && <div role="alert" className="mb-3 text-error">Could not load the backlog: {(error as Error).message}</div>}
       {isLoading && <div className="text-muted">Loading…</div>}
-      {data && !data.length && !q && <Empty>No tasks yet. Create one, or import Markdown files or GitHub issues.</Empty>}
-      {data && !data.length && q && <Empty>No task matches “{q}”.</Empty>}
-      {data && data.length > 0 && (wide ? <Board tasks={data} /> : <PhoneList tasks={data} />)}
+      {minors && <OpenMinors tasks={data ?? []} />}
+      {!minors && data && !data.length && !q && <Empty>No tasks yet. Create one, or import Markdown files or GitHub issues.</Empty>}
+      {!minors && data && !data.length && q && <Empty>No task matches “{q}”.</Empty>}
+      {!minors && data && data.length > 0 && (wide ? <Board tasks={data} /> : <PhoneList tasks={data} />)}
     </div>
   );
 }

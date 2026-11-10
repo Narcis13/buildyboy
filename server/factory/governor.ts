@@ -2,9 +2,10 @@
 // "may the factory start a worker now, and if not, until when should it wait".
 import type { Ctx } from '../context.ts';
 import { json } from '../db.ts';
-import type { GovernorThresholds, GovernorVerdict, Usage, UsageWindow } from '../../shared/factory.ts';
+import { DEFAULT_THRESHOLDS, evaluate, windowOf, type GovernorThresholds, type GovernorVerdict, type Usage } from '../../shared/factory.ts';
 
-export const DEFAULT_THRESHOLDS: GovernorThresholds = { fiveHourPct: 85, sevenDayPct: 80, maxAgeMin: 30 };
+// The rules are pure and shared with `bb mcp`, which applies them to the local statusline sample when the server is away.
+export { DEFAULT_THRESHOLDS, epochMs, evaluate } from '../../shared/factory.ts';
 
 export function thresholds(ctx: Ctx): GovernorThresholds {
   const num = (key: string, fallback: number) => {
@@ -16,23 +17,6 @@ export function thresholds(ctx: Ctx): GovernorThresholds {
     sevenDayPct: num('governor_seven_day_pct', DEFAULT_THRESHOLDS.sevenDayPct),
     maxAgeMin: num('governor_max_age_min', DEFAULT_THRESHOLDS.maxAgeMin),
   };
-}
-
-/** resets_at is Unix epoch seconds in the statusline JSON; accept ms and ISO strings too. */
-export function epochMs(v: unknown): number | null {
-  if (typeof v === 'number' && Number.isFinite(v)) return v < 1e12 ? v * 1000 : v;
-  if (typeof v === 'string' && v.trim()) {
-    if (/^\d+(\.\d+)?$/.test(v.trim())) return epochMs(Number(v));
-    const t = Date.parse(v);
-    return Number.isNaN(t) ? null : t;
-  }
-  return null;
-}
-
-function windowOf(raw: unknown): UsageWindow | null {
-  const w = raw as { used_percentage?: unknown; resets_at?: unknown } | null | undefined;
-  if (!w || typeof w.used_percentage !== 'number' || !Number.isFinite(w.used_percentage)) return null;
-  return { pct: w.used_percentage, resetsAt: epochMs(w.resets_at) };
 }
 
 const SAMPLES = "FROM otel_points WHERE name = 'statusline.rate_limits'";
@@ -53,50 +37,6 @@ export function readUsage(ctx: Ctx, now = Date.now()): Usage {
     return windowOf((json<Record<string, unknown>>(r?.attrs_json, {}) ?? {})[key]);
   };
   return { fiveHour: latest('five_hour'), sevenDay: latest('seven_day'), updatedAt: row.ts, ageMs: Math.max(0, now - row.ts), sessionId: row.session_id };
-}
-
-const fmt = (ms: number | null) => (ms ? new Date(ms).toISOString() : 'an unknown time');
-
-/**
- * Pure decision. Rules (fabrica.md): the 7-day window at or above its threshold stops the factory until it resets;
- * the 5-hour window at or above its threshold blocks new workers until it resets; a window missing from the data,
- * or whose reset time has passed, is ignored; data older than maxAgeMin (or no data at all) blocks new workers.
- */
-export function evaluate(usage: Usage, t: GovernorThresholds, now = Date.now()): GovernorVerdict {
-  const reasons: string[] = [];
-  let canStart = true;
-  let stopAll = false;
-  let waitUntil: number | null = null;
-  const later = (ms: number | null) => {
-    if (ms && (waitUntil === null || ms > waitUntil)) waitUntil = ms;
-  };
-  const live = (w: UsageWindow | null) => (w && (w.resetsAt === null || w.resetsAt > now) ? w : null);
-
-  const week = live(usage.sevenDay);
-  if (week && week.pct >= t.sevenDayPct) {
-    stopAll = true;
-    canStart = false;
-    later(week.resetsAt);
-    reasons.push(`7-day window at ${Math.round(week.pct)}% (limit ${t.sevenDayPct}%): stop the factory until it resets at ${fmt(week.resetsAt)}`);
-  }
-  const five = live(usage.fiveHour);
-  if (five && five.pct >= t.fiveHourPct) {
-    canStart = false;
-    later(five.resetsAt);
-    reasons.push(`5-hour window at ${Math.round(five.pct)}% (limit ${t.fiveHourPct}%): no new workers until it resets at ${fmt(five.resetsAt)}; let active ones finish`);
-  }
-  if (usage.updatedAt === null) {
-    canStart = false;
-    reasons.push('no usage data yet: turn on the statusline bridge (bb doctor shows what is missing)');
-  } else if (usage.ageMs !== null && usage.ageMs > t.maxAgeMin * 60_000) {
-    canStart = false;
-    reasons.push(`usage data is ${Math.round(usage.ageMs / 60_000)} min old (limit ${t.maxAgeMin} min): no new workers until fresh data arrives`);
-  }
-  if (!reasons.length) {
-    const parts = [five ? `5-hour ${Math.round(five.pct)}%` : '5-hour window absent', week ? `7-day ${Math.round(week.pct)}%` : '7-day window absent'];
-    reasons.push(`ok: ${parts.join(', ')}`);
-  }
-  return { canStart, stopAll, waitUntil, reason: reasons.join('; '), usage, thresholds: t };
 }
 
 export function governor(ctx: Ctx, now = Date.now()): GovernorVerdict {

@@ -3,7 +3,7 @@
 // Configure in ~/.claude/settings.json:  "statusLine": { "type": "command", "command": "node <path>/bb-statusline.mjs" }
 // It POSTs the statusline JSON to the server (at most once every 10 s per session), then runs your previous statusline
 // command from BUILDYBOY_STATUSLINE_NEXT (same stdin) and passes its output through.
-import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -21,9 +21,25 @@ process.stdin.on('end', async () => {
   } catch {
     // pass through
   }
+  saveLatest(data);
   await Promise.all([send(data), passThrough(raw, data)]);
   process.exit(0);
 });
+
+// Local copy of the newest rate_limits sample: `bb mcp` computes the governor from it when the server is unreachable.
+function saveLatest(data) {
+  try {
+    if (!data || typeof data !== 'object' || !data.rate_limits) return;
+    const dir = join(HOME, 'statusline');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'latest.json');
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ ts: Date.now(), session_id: data.session_id ?? null, rate_limits: data.rate_limits }));
+    renameSync(tmp, file);
+  } catch {
+    // best effort
+  }
+}
 
 async function send(data) {
   try {

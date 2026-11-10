@@ -2,8 +2,8 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import type { Ctx } from '../context.ts';
-import { requireWeb, webUser } from '../auth.ts';
-import { TASK_STATUSES, TOOLS, TOOL_NAMES, type TaskStatus, type ToolName } from '../../shared/factory.ts';
+import { requireMachine, requireWeb, webUser } from '../auth.ts';
+import { FINDING_SEVERITIES, FINDING_STATUSES, TASK_STATUSES, TOOLS, TOOL_NAMES, type GateReport, type TaskStatus, type ToolName } from '../../shared/factory.ts';
 import { parseTaskFile, orderByDeps, TaskFileError, taskFileToCreate } from '../../shared/tasks-md.ts';
 import { agentFromToken, createAgentToken, HANDLERS, listAgentTokens, requireAgent, revokeAgentToken } from '../factory/agent.ts';
 import { governor, readUsage } from '../factory/governor.ts';
@@ -11,12 +11,30 @@ import { createTask, deleteTask, FactoryError, gateShot, getTask, listTasks, req
 import { answerDecision, listDecisions } from '../factory/decisions.ts';
 import { listDigests, sendDigest } from '../factory/digest.ts';
 import { importGithubIssues } from '../factory/import.ts';
+import { factoryConfig, factoryConfigSchema, saveFactoryConfig } from '../factory/config.ts';
+import { listFindings, updateFindings } from '../factory/findings.ts';
+import { applyGateReport, gateRunLog } from '../factory/gateruns.ts';
+
+/** How long an idempotency key is remembered: longer than any outage the outbox would wait out. */
+const KEY_TTL_MS = 30 * 24 * 3600_000;
 
 function fail(c: Context, e: unknown) {
   if (e instanceof FactoryError) return c.json({ error: e.message }, e.status as 400);
   if (e instanceof TaskFileError) return c.json({ error: e.message }, 400);
   throw e;
 }
+
+const gateReportSchema = z.object({
+  status: z.enum(['running', 'done', 'error']),
+  verdict: z.enum(['pass', 'fail', 'skip']).optional(),
+  summary: z.string().max(100_000).optional(),
+  details: z.unknown().optional(),
+  findings: z.array(z.unknown()).max(1000).optional(),
+  shots: z.array(z.object({ name: z.string().max(200), base64: z.string(), mime: z.string().max(60).optional() })).max(50).optional(),
+  exitCode: z.number().int().nullable().optional(),
+  error: z.string().max(100_000).optional(),
+  log: z.string().optional(),
+});
 
 const webTaskSchema = TOOLS.tasks_create.input.omit({ upsert: true, extRef: true });
 const webPatchSchema = TOOLS.tasks_update.input.omit({ id: true }).extend({
@@ -40,11 +58,75 @@ export function factoryRoutes(ctx: Ctx) {
     const parsed = TOOLS[name].input.safeParse((await c.req.json().catch(() => ({}))) ?? {});
     if (!parsed.success) return c.json({ error: `invalid arguments: ${parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'} ${i.message}`).join('; ')}` }, 400);
     const actor = `agent:${c.get('agent').name}`;
+    // `bb mcp` sends an idempotency key with every write it may replay from its outbox: a repeated key gets the first
+    // answer back and changes nothing.
+    const key = c.req.header('idempotency-key')?.trim().slice(0, 200) || null;
+    if (key) {
+      const seen = db.get<{ tool: string; result_json: string | null }>('SELECT tool, result_json FROM agent_calls WHERE key = ?', key);
+      if (seen) return c.json({ result: seen.result_json ? JSON.parse(seen.result_json) : null, replayed: true });
+    }
     try {
-      return c.json({ result: (HANDLERS[name] as (ctx: Ctx, a: unknown, actor: string) => unknown)(ctx, parsed.data, actor) ?? null });
+      const run = () => {
+        const result = (HANDLERS[name] as (ctx: Ctx, a: unknown, actor: string) => unknown)(ctx, parsed.data, actor) ?? null;
+        if (key) {
+          db.run('INSERT INTO agent_calls (key, tool, result_json, created_at) VALUES (?, ?, ?, ?)', key, name, JSON.stringify(result), Date.now());
+          if (Math.random() < 0.01) db.run('DELETE FROM agent_calls WHERE created_at < ?', Date.now() - KEY_TTL_MS);
+        }
+        return result;
+      };
+      return c.json({ result: key ? db.tx(run) : run() });
     } catch (e) {
       return fail(c, e);
     }
+  });
+
+  // ---------- gate runs: the runner reports, the PWA reads the log ----------
+  app.post('/api/runner/gates/:id', requireMachine(ctx), async (c) => {
+    const b = gateReportSchema.safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: `invalid report: ${b.error.issues.map((i) => `${i.path.join('.') || '(root)'} ${i.message}`).join('; ')}` }, 400);
+    try {
+      return c.json(applyGateReport(ctx, c.get('machineId' as never) as string, c.req.param('id'), b.data as GateReport));
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  app.get('/api/gate-runs/:id/log', web, (c) => {
+    const log = gateRunLog(ctx, c.req.param('id'));
+    return log === null ? c.json({ error: 'no log' }, 404) : c.text(log);
+  });
+
+  // ---------- findings ----------
+  app.get('/api/findings', web, (c) => {
+    const status = c.req.query('status');
+    const severity = c.req.query('severity');
+    return c.json(listFindings(ctx, {
+      taskId: c.req.query('taskId') || undefined,
+      status: FINDING_STATUSES.find((s) => s === status),
+      severity: FINDING_SEVERITIES.find((s) => s === severity),
+    }));
+  });
+
+  app.post('/api/findings/update', web, async (c) => {
+    const b = TOOLS.findings_update.input.safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: 'ids and a status are required' }, 400);
+    try {
+      return c.json(updateFindings(ctx, b.data.ids, b.data.status, b.data.note?.trim() || null, 'web'));
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  // ---------- factory config: gate rounds and per-repo resources and recipe ----------
+  app.get('/api/factory/config', web, (c) => c.json(factoryConfig(ctx)));
+  app.put('/api/factory/config', web, async (c) => {
+    const b = factoryConfigSchema.safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: `invalid config: ${b.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}` }, 400);
+    const names = b.data.repos.map((r) => r.repo.toLowerCase());
+    if (new Set(names).size !== names.length) return c.json({ error: 'each repo can be configured once' }, 400);
+    saveFactoryConfig(ctx, b.data);
+    db.audit('web', 'factory_config', null, { repos: names });
+    return c.json(factoryConfig(ctx));
   });
 
   // ---------- governor and usage: the PWA or an agent ----------

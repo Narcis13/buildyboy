@@ -12,6 +12,8 @@ import { governor, readUsage } from './governor.ts';
 import { ackControls, claimTask, controls, createTask, FactoryError, getTask, listTasks, recordGate, taskSummary, updateTask } from './tasks.ts';
 import { askDecision, getDecision } from './decisions.ts';
 import { sendDigest } from './digest.ts';
+import { listFindings, updateFindings } from './findings.ts';
+import { gateRunStatus, startGateRun } from './gateruns.ts';
 
 export function createAgentToken(ctx: Ctx, name: string): { id: string; token: string } {
   const id = randomUUID();
@@ -98,6 +100,13 @@ export const HANDLERS: { [K in ToolName]: Handler<K> } = {
     return { id: saved.id, version: saved.version, title: saved.title, rendered: saved.rendered };
   },
   gates_record: (ctx, a, actor) => recordGate(ctx, a, actor),
+  gates_run: (ctx, a, actor) => {
+    const { id, status, round, machineId, sent } = startGateRun(ctx, a, actor);
+    return { runId: id, status, round, machineId, sent, ...(sent ? {} : { note: 'the runner is not connected; the run starts when gates_status finds it back' }) };
+  },
+  gates_status: (ctx, a) => gateRunStatus(ctx, a.runId),
+  findings_list: (ctx, a) => listFindings(ctx, a),
+  findings_update: (ctx, a, actor) => updateFindings(ctx, a.ids, a.status, a.note?.trim() || null, actor),
   decision_ask: (ctx, a, actor) => askDecision(ctx, a, actor),
   decision_get: (ctx, a) => {
     const d = getDecision(ctx, a.id);

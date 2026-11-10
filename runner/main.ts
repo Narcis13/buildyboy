@@ -15,6 +15,8 @@ import { loadConfig, type RunnerConfig } from './config.ts';
 import { startJob, type RunningJob } from './job.ts';
 import { listTerminals, resolveHc, runInTerminal } from './herdr.ts';
 import { buildClaudeArgs, buildHcRunArgs, checkOptions, type StoredJobOptions } from './options.ts';
+import type { GateCommand } from '../shared/factory.ts';
+import { runGate } from './gate.ts';
 import { checkCwd, pathKey, repoRoot } from './paths.ts';
 import { runVerify } from './proc.ts';
 
@@ -41,6 +43,9 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
   /** hc launches in flight, so a re-sent job isn't started twice */
   const hcLaunching = new Set<string>();
   const verifiable = new Map<string, Set<string>>();
+  /** gates in flight (id -> abort), and recently seen gate ids so a re-sent command isn't started twice */
+  const gates = new Map<string, { ac: AbortController; done: Promise<unknown> }>();
+  const gatesSeen = new Set<string>();
   const ac = new AbortController();
   const timers: NodeJS.Timeout[] = [];
   let claudeVersion: string | null = null;
@@ -139,8 +144,23 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
     await report(cmd.jobId, [{ type: 'verify', results }]);
   }
 
-  function onCommand(c: RunnerCommand & { cwd?: string }) {
-    if (c.type === 'job') onJob(c.job);
+  /** gate: run the repo's recipe steps for one gate and report over HTTP. Gates don't count against job concurrency. */
+  function onGate(run: GateCommand['run']) {
+    const id = run?.id;
+    if (typeof id !== 'string' || !id) return void log('gate command without an id; ignored');
+    if (gates.has(id) || gatesSeen.has(id)) return; // re-sent after a reconnect
+    gatesSeen.add(id);
+    if (gatesSeen.size > 200) gatesSeen.delete(gatesSeen.values().next().value!);
+    const gac = new AbortController();
+    const done = runGate(run, { allowedRoots: cfg.allowedRoots, api, log, signal: gac.signal })
+      .catch((e: Error) => log(`gate ${id}: ${e.message}`))
+      .finally(() => gates.delete(id));
+    gates.set(id, { ac: gac, done });
+  }
+
+  function onCommand(c: (RunnerCommand & { cwd?: string }) | GateCommand) {
+    if (c.type === 'gate') onGate(c.run);
+    else if (c.type === 'job') onJob(c.job);
     else if (c.type === 'stop') jobs.get(c.jobId)?.stop();
     else if (c.type === 'message') {
       if (!jobs.get(c.jobId)?.message(c.text)) log(`job ${c.jobId}: follow-up not delivered (not running here)`);
@@ -234,7 +254,8 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
       ac.abort();
       timers.forEach(clearInterval);
       for (const j of jobs.values()) j.stop('runner shutting down');
-      await Promise.race([Promise.all([...jobs.values()].map((j) => j.done)), new Promise((r) => setTimeout(r, (cfg.stopGraceSeconds + 5) * 1000))]);
+      for (const g of gates.values()) g.ac.abort();
+      await Promise.race([Promise.all([...[...jobs.values()].map((j) => j.done), ...[...gates.values()].map((g) => g.done)]),new Promise((r) => setTimeout(r, (cfg.stopGraceSeconds + 5) * 1000))]);
     },
   };
 }
