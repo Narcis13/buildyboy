@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { STATUS_LABEL, TASK_STATUSES, type TaskDetail, type TaskStatus, type TaskSummary } from '../../../shared/factory.ts';
+import { ROLE_LABEL, ROLES, STATUS_LABEL, TASK_STATUSES, type TaskDetail, type TaskStatus, type TaskSummary } from '../../../shared/factory.ts';
 import { api, ApiError } from '../lib/api.ts';
 import { usd } from '../lib/format.ts';
 import { Link } from '../lib/router.tsx';
@@ -8,21 +8,53 @@ import { Card, Empty, RelTime } from '../components/ui.tsx';
 import { inputClass } from '../components/settings/bits.tsx';
 import { ControlSection } from '../components/factory/ControlSection.tsx';
 import { DecisionCard } from '../components/factory/DecisionCard.tsx';
+import { FindingsSection, GateRunsList } from '../components/factory/FindingsSection.tsx';
 import { GatesSection } from '../components/factory/GatesSection.tsx';
 import { TaskHistory } from '../components/factory/TaskHistory.tsx';
 import { LaunchTask } from '../components/factory/LaunchTask.tsx';
 import { GateChips, Section, StatusBadge, TaskFlags } from '../components/factory/common.tsx';
 
-function Meta({ label, children, testId }: { label: string; children: ReactNode; testId?: string }) {
+function Meta({ label, children, testId, wrap }: { label: string; children: ReactNode; testId?: string; wrap?: boolean }) {
   return (
-    <div className="min-w-0">
+    <div className={wrap ? 'col-span-2 min-w-0' : 'min-w-0'}>
       <dt className="text-xs uppercase tracking-wider text-muted">{label}</dt>
-      <dd className="min-h-[1.5rem] truncate text-[15px]" data-testid={testId}>{children}</dd>
+      <dd className={`min-h-[1.5rem] text-[15px] ${wrap ? '[overflow-wrap:anywhere]' : 'truncate'}`} data-testid={testId}>{children}</dd>
     </div>
   );
 }
 
 const none = <span className="text-muted">—</span>;
+
+/** "Worker $1.20 · Gates $0.40", plus the hand-set value when it differs from the measured sum. */
+function CostRoles({ t }: { t: TaskDetail }) {
+  if (!t.costByRole) return null;
+  const parts = ROLES.filter((r) => t.costByRole![r] != null).map((r) => `${ROLE_LABEL[r]} ${usd(t.costByRole![r])}`);
+  const manual = t.costManualUsd != null && t.costManualUsd !== t.costUsd ? `set by hand ${usd(t.costManualUsd)}` : null;
+  return (
+    <Meta label={`Cost by role · ${t.linkedSessions} session${t.linkedSessions === 1 ? '' : 's'}`} testId="task-cost-roles" wrap>
+      {[...parts, ...(manual ? [manual] : [])].join(' · ') || none}
+    </Meta>
+  );
+}
+
+function Resources({ t }: { t: TaskDetail }) {
+  const r = t.resources;
+  if (!r && !t.migrationsUsed.length) return null;
+  const item = (label: string, value: ReactNode) => (
+    <div className="min-w-0">
+      <dt className="text-xs uppercase tracking-wider text-muted">{label}</dt>
+      <dd className="font-mono text-sm [overflow-wrap:anywhere]">{value}</dd>
+    </div>
+  );
+  return (
+    <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg bg-panel-2 p-3 sm:grid-cols-4" data-testid="task-resources">
+      {item('Port', r?.port ?? none)}
+      {item('Database', r?.db ?? none)}
+      {item('Migrations', r?.migrations ? `${r.migrations.from}–${r.migrations.to}` : none)}
+      {item('Migrations used', t.migrationsUsed.length ? t.migrationsUsed.join(', ') : none)}
+    </dl>
+  );
+}
 
 function StatusSelect({ t }: { t: TaskDetail }) {
   const qc = useQueryClient();
@@ -118,6 +150,8 @@ export default function Task({ id }: { id: string }) {
           <Meta label="Repo">{t.repo ?? none}</Meta>
           <Meta label="Branch">{t.branch ? <span className="font-mono text-sm" title={t.branch}>{t.branch}</span> : none}</Meta>
           <Meta label="Cost" testId="task-cost">{t.costUsd != null ? usd(t.costUsd) : none}</Meta>
+          <Meta label="Round" testId="task-round">{t.round > 0 ? `Round ${t.round} of ${t.maxRounds}` : none}</Meta>
+          <CostRoles t={t} />
           <Meta label="Claimed by">{t.claimedBy ?? none}</Meta>
           <Meta label="Prompt">
             {t.promptId != null ? (
@@ -150,6 +184,7 @@ export default function Task({ id }: { id: string }) {
           <Meta label="Updated"><RelTime ts={t.updatedAt} /></Meta>
           {t.integratedAt && <Meta label="Integrated"><RelTime ts={t.integratedAt} /></Meta>}
         </dl>
+        <Resources t={t} />
         {t.note && <p className="mt-3 whitespace-pre-wrap rounded-lg bg-panel-2 p-3 text-[15px] [overflow-wrap:anywhere]" data-testid="task-note">{t.note}</p>}
       </Card>
 
@@ -189,6 +224,14 @@ export default function Task({ id }: { id: string }) {
           <Section title="Gates" testId="task-gates">
             <GatesSection results={t.gateResults} />
           </Section>
+          <Section title="Findings" count={t.findings.length} testId="task-findings">
+            <FindingsSection findings={t.findings} taskId={t.id} />
+          </Section>
+          {t.gateRuns.length > 0 && (
+            <Section title="Gate runs" count={t.gateRuns.length} testId="task-gate-runs">
+              <GateRunsList runs={t.gateRuns} />
+            </Section>
+          )}
         </div>
         <div className="min-w-0 space-y-5">
           <Section title="Control">

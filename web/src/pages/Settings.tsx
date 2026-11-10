@@ -3,6 +3,7 @@ import { PageTitle, Toggle } from '../components/ui.tsx';
 import { Button } from '../components/settings/Touch.tsx';
 import { DevicesSection, PasswordSection } from '../components/settings/AccountSections.tsx';
 import { Field, inputClass, NumberField, SaveButton, SectionCard } from '../components/settings/bits.tsx';
+import { FactoryConfigCard } from '../components/factory/FactoryConfigCard.tsx';
 import { FactorySection } from '../components/settings/FactorySection.tsx';
 import { NotificationsSection } from '../components/settings/NotificationsSection.tsx';
 import { RedactionEditor } from '../components/settings/RedactionEditor.tsx';
@@ -101,6 +102,7 @@ export default function Settings() {
             <LimitsSection data={data} />
             <GithubSection data={data} />
             <FactorySection />
+            <FactoryConfigCard />
           </div>
           <div className="min-w-0 space-y-4">
             <SnippetsSection publicUrl={data.public_url} />
