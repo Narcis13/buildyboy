@@ -13,6 +13,10 @@ export interface DigestData {
   blocked: string[];
   inProgress: string[];
   decisionsPending: number;
+  /** the pending decisions themselves, oldest first */
+  decisions: { id: string; taskId: string | null; question: string; ageMs: number }[];
+  /** package warnings of the last 24 h (e.g. renumber migrations) */
+  warnings: { taskId: string; message: string }[];
   controlsOpen: number;
   usage: { fiveHourPct: number | null; sevenDayPct: number | null; canStart: boolean; stopAll: boolean; reason: string };
   note: string | null;
@@ -38,6 +42,12 @@ export function digestData(ctx: Ctx, now = Date.now(), note: string | null = nul
     blocked: db.all<{ id: string }>("SELECT id FROM tasks WHERE status = 'blocata' ORDER BY id").map((t) => t.id),
     inProgress: db.all<{ id: string }>("SELECT id FROM tasks WHERE status IN ('in_lucru','la_porti') ORDER BY id").map((t) => t.id),
     decisionsPending: n("SELECT COUNT(*) n FROM decisions WHERE status = 'pending'"),
+    decisions: db
+      .all<{ id: string; task_id: string | null; question: string; created_at: number }>("SELECT id, task_id, question, created_at FROM decisions WHERE status = 'pending' ORDER BY created_at LIMIT 20")
+      .map((d) => ({ id: d.id, taskId: d.task_id, question: d.question, ageMs: Math.max(0, now - d.created_at) })),
+    warnings: db
+      .all<{ task_id: string; detail_json: string | null }>("SELECT task_id, detail_json FROM task_events WHERE kind = 'warning' AND ts > ? ORDER BY ts", since)
+      .map((w) => ({ taskId: w.task_id, message: String((JSON.parse(w.detail_json ?? '{}') as { message?: unknown }).message ?? '') })),
     controlsOpen: n("SELECT COUNT(*) n FROM control_requests WHERE status = 'open'"),
     usage: { fiveHourPct: g.usage.fiveHour?.pct ?? null, sevenDayPct: g.usage.sevenDay?.pct ?? null, canStart: g.canStart, stopAll: g.stopAll, reason: g.reason },
     note,
@@ -45,6 +55,14 @@ export function digestData(ctx: Ctx, now = Date.now(), note: string | null = nul
 }
 
 const pct = (v: number | null) => (v === null ? '–' : `${Math.round(v)}%`);
+
+/** "40 min", "5 h", "3 d" */
+export function age(ms: number): string {
+  const min = Math.round(ms / 60_000);
+  if (min < 60) return `${min} min`;
+  const h = Math.round(min / 60);
+  return h < 48 ? `${h} h` : `${Math.round(h / 24)} d`;
+}
 
 export function digestText(d: DigestData): { title: string; body: string } {
   const lines: string[] = [];
@@ -58,7 +76,11 @@ export function digestText(d: DigestData): { title: string; body: string } {
   if (d.inProgress.length) lines.push(`In progress: ${d.inProgress.join(', ')}`);
   if (d.blocked.length) lines.push(`Blocked: ${d.blocked.join(', ')}`);
   lines.push(`Usage: 5 h ${pct(d.usage.fiveHourPct)}, 7 d ${pct(d.usage.sevenDayPct)}${d.usage.stopAll ? ' — factory stopped' : d.usage.canStart ? '' : ' — no new workers'}`);
-  if (d.decisionsPending) lines.push(`Decisions waiting: ${d.decisionsPending}`);
+  for (const w of d.warnings ?? []) lines.push(`Warning ${w.taskId}: ${w.message}`);
+  if (d.decisionsPending) {
+    lines.push(`Decisions waiting: ${d.decisionsPending}`);
+    for (const q of d.decisions ?? []) lines.push(`  · ${q.taskId ? `${q.taskId}, ` : ''}${age(q.ageMs)}: ${q.question.length > 90 ? `${q.question.slice(0, 89)}…` : q.question}`);
+  }
   if (d.controlsOpen) lines.push(`Your stop/revert requests not yet handled: ${d.controlsOpen}`);
   const title = `Factory digest: ${d.integrated.length} integrated${d.decisionsPending ? `, ${d.decisionsPending} decision${d.decisionsPending > 1 ? 's' : ''} waiting` : ''}`;
   return { title, body: lines.join('\n') };
