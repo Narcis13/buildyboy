@@ -7,6 +7,7 @@ export interface ClientConfig {
   token: string;
   machineId: string;
   name?: string;
+  ntfyTopic?: string;
 }
 
 /** ~/.buildyboy, or BUILDYBOY_HOME (tests). */

@@ -9,27 +9,40 @@ import { readFileSync, statSync } from 'node:fs';
 import { extname, resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
-import { SHOT_MAX_BYTES, TOOLS, TOOL_NAMES, type ToolName } from '../shared/factory.ts';
+import { SHOT_MAX_BYTES, TOOLS, TOOL_NAMES } from '../shared/factory.ts';
 import { readClientConfig } from './config.ts';
+import { AgentHttpError, UnreachableError, createResilientClient, type AgentClient, type CallOptions, type ResilientClient } from './outbox.ts';
+
+export type { AgentClient };
 
 const MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' };
 
-export interface AgentClient {
-  call(tool: ToolName, args: unknown): Promise<unknown>;
+/** Why a fetch failed, e.g. "fetch failed (ECONNREFUSED)". */
+function describe(e: unknown): string {
+  const err = e as { message?: string; cause?: { code?: string; message?: string } };
+  const cause = err?.cause?.code ?? err?.cause?.message;
+  return `${err?.message ?? String(e)}${cause ? ` (${cause})` : ''}`;
 }
 
+/**
+ * One POST per tool. Throws UnreachableError when the server cannot be reached (fetch throws, or 502/503/504) and
+ * AgentHttpError for every other non-2xx answer: those are real answers (a revoked token is 'unauthorized', not offline).
+ */
 export function agentClient(url: string, token: string): AgentClient {
   const base = url.replace(/\/$/, '');
   return {
-    async call(tool, args) {
-      const res = await fetch(`${base}/api/agent/${tool}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify(args ?? {}),
-        signal: AbortSignal.timeout(30_000),
-      });
+    async call(tool, args, opts?: CallOptions) {
+      const headers: Record<string, string> = { 'content-type': 'application/json', authorization: `Bearer ${token}` };
+      if (opts?.key) headers['idempotency-key'] = opts.key;
+      let res: Response;
+      try {
+        res = await fetch(`${base}/api/agent/${tool}`, { method: 'POST', headers, body: JSON.stringify(args ?? {}), signal: AbortSignal.timeout(30_000) });
+      } catch (e) {
+        throw new UnreachableError(describe(e));
+      }
       const body = (await res.json().catch(() => null)) as { result?: unknown; error?: string } | null;
-      if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+      if (res.status === 502 || res.status === 503 || res.status === 504) throw new UnreachableError(body?.error ?? `HTTP ${res.status}`);
+      if (!res.ok) throw new AgentHttpError(body?.error ?? `HTTP ${res.status}`, res.status);
       return body?.result ?? null;
     },
   };
@@ -51,14 +64,15 @@ export function inlineShots(args: Record<string, unknown>): Record<string, unkno
   };
 }
 
-export function createMcpServer(client: AgentClient): McpServer {
+/** `layer` adds the outbox, read cache and local governor around the client (tests pass their own, with a fake clock). */
+export function createMcpServer(client: AgentClient, layer: ResilientClient = createResilientClient(client)): McpServer {
   const server = new McpServer({ name: 'buildyboy', version: '0.1.0' });
   for (const name of TOOL_NAMES) {
     const tool = TOOLS[name];
     server.registerTool(name, { description: tool.description, inputSchema: tool.input }, async (args: unknown) => {
       try {
         const sent = name === 'gates_record' ? inlineShots(args as Record<string, unknown>) : args;
-        const result = await client.call(name, sent);
+        const result = await layer.call(name, sent);
         return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
       } catch (e) {
         return { content: [{ type: 'text' as const, text: `${name} failed: ${(e as Error).message}` }], isError: true };
@@ -75,7 +89,10 @@ export async function runMcp(): Promise<void> {
     console.error('bb mcp: set BUILDYBOY_AGENT_TOKEN (an agent token from Settings → Agent tokens) and BUILDYBOY_URL');
     process.exit(1);
   }
-  const server = createMcpServer(agentClient(url, token));
+  const client = agentClient(url, token);
+  const layer = createResilientClient(client, { url });
+  const server = createMcpServer(client, layer);
   await server.connect(new StdioServerTransport());
+  void layer.start(); // replay whatever an earlier run left in the outbox
   console.error(`[bb mcp] serving ${TOOL_NAMES.length} tools for ${url}`);
 }
