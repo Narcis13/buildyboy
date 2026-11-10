@@ -18,7 +18,6 @@ type Vars = GateRun['vars'];
 const DEFAULT_TIMEOUT_SEC = 1800;
 const LOG_CAP = 512 * 1024;
 const STDOUT_CAP = 2 * 1024 * 1024;
-const TAIL_CAP = 64 * 1024;
 const MAX_SHOTS = 12;
 const MAX_FINDINGS = 200;
 const RECIPE_MAX_BYTES = 1024 * 1024;
@@ -93,13 +92,11 @@ interface StepOutcome {
   signal: string | null;
   message?: string;
   stdout: string;
-  tail: string;
 }
 
 function runStep(argv: string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal: AbortSignal | undefined, onData: (s: string) => void): Promise<StepOutcome> {
   return new Promise((done) => {
     const stdout = new Tail(STDOUT_CAP);
-    const tail = new Tail(TAIL_CAP);
     let settled = false;
     let kind: StepOutcome['kind'] = 'exit';
     let forced: NodeJS.Timeout | null = null;
@@ -109,7 +106,7 @@ function runStep(argv: string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs:
       clearTimeout(timer);
       if (forced) clearTimeout(forced);
       signal?.removeEventListener('abort', onAbort);
-      done({ kind, code: null, signal: null, stdout: stdout.text(), tail: tail.text(), ...o });
+      done({ kind, code: null, signal: null, stdout: stdout.text(), ...o });
     };
     let child: ReturnType<typeof spawn>;
     try {
@@ -134,13 +131,9 @@ function runStep(argv: string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs:
     child.stderr!.setEncoding('utf8');
     child.stdout!.on('data', (s: string) => {
       stdout.add(s);
-      tail.add(s);
       onData(s);
     });
-    child.stderr!.on('data', (s: string) => {
-      tail.add(s);
-      onData(s);
-    });
+    child.stderr!.on('data', onData);
     child.on('error', (e) => {
       if (kind === 'exit') kind = 'spawn-error';
       finish({ message: e.message });
@@ -184,7 +177,8 @@ function cleanFindings(raw: unknown): FindingInput[] {
   return out;
 }
 
-function collectShots(raw: unknown[], checkout: string, log: (s: string) => void): NonNullable<GateReport['shots']> {
+/** Screenshot files named by the step, read only inside the runner's allowed roots. */
+function collectShots(raw: unknown[], checkout: string, roots: string[], log: (s: string) => void): NonNullable<GateReport['shots']> {
   const shots: NonNullable<GateReport['shots']> = [];
   for (const s of raw) {
     if (shots.length >= MAX_SHOTS) break;
@@ -193,6 +187,10 @@ function collectShots(raw: unknown[], checkout: string, log: (s: string) => void
     const mime = SHOT_MIME[extname(p).toLowerCase()];
     if (!mime) continue;
     const abs = resolve(checkout, p);
+    if (!roots.some((r) => isInside(abs, r))) {
+      log(`shot ${abs}: outside the allowed roots; skipped`);
+      continue;
+    }
     try {
       const st = statSync(abs);
       if (!st.isFile()) continue;
@@ -226,7 +224,7 @@ const sleep = (ms: number, signal?: AbortSignal) =>
 
 async function sendFinal(run: GateRun, report: GateReport, deps: GateDeps) {
   const path = '/api/runner/gates/' + encodeURIComponent(run.id);
-  const { initialMs, maxMs, totalMs } = deps.retry ?? { initialMs: 1000, maxMs: 30_000, totalMs: 10 * 60_000 };
+  const { initialMs, maxMs, totalMs } = deps.retry ?? { initialMs: 1000, maxMs: 30_000, totalMs: 24 * 3600_000 };
   const end = Date.now() + totalMs;
   let wait = initialMs;
   for (;;) {
@@ -310,7 +308,6 @@ export async function runGate(run: GateRun, deps: GateDeps): Promise<GateReport>
     const shotRefs: unknown[] = [];
     let allSkip = true;
     let failed = false;
-    let lastTail = '';
 
     for (const [i, step] of steps.entries()) {
       const name = step.name?.trim() || `step ${i + 1}`;
@@ -325,14 +322,13 @@ export async function runGate(run: GateRun, deps: GateDeps): Promise<GateReport>
       const o = await runStep(argv, checkout, env, timeoutSec * 1000, deps.signal, (s) => buf.add(s));
       if (buf.text() && !/\n$/.test(buf.text())) buf.add('\n');
       exitCode = o.code;
-      lastTail = o.tail;
       const j = o.kind === 'exit' && o.code !== null ? parseStepJson(o.stdout) : null;
       const summary = str(j?.summary, 4000);
       if (o.kind === 'aborted') return fail('runner stopped while the gate was running');
       if (o.kind === 'timeout') return fail(`step ${name} timed out after ${timeoutSec}s`, summary);
       if (o.kind === 'spawn-error') return fail(`step ${name} could not start: ${o.message ?? 'spawn failed'}`);
       if (o.code === null) return fail(`step ${name} was killed by signal ${o.signal ?? '?'}`);
-      if (o.code !== 0 && o.code !== 1) return fail(`step ${name} exited with code ${o.code}`, summary ?? (lastLine(o.tail).slice(0, 2000) || undefined));
+      if (o.code !== 0 && o.code !== 1) return fail(`step ${name} exited with code ${o.code}`, summary);
       if (summary) summaries.push(summary);
       if (j) {
         findings.push(...cleanFindings(j.findings));
@@ -351,14 +347,14 @@ export async function runGate(run: GateRun, deps: GateDeps): Promise<GateReport>
     const report: GateReport = {
       status: 'done',
       verdict,
-      summary: summaries.length ? summaries.join(' · ') : lastLine(lastTail).slice(0, 2000),
+      summary: summaries.length ? summaries.join(' · ') : `${run.gate} ${verdict}: no summary from the recipe (exit ${exitCode}); see the log`,
       findings: findings.slice(0, MAX_FINDINGS),
       exitCode,
       log: logText(),
     };
     if (details.length === 1) report.details = details[0].details;
     else if (details.length > 1) report.details = { steps: details };
-    const shots = collectShots(shotRefs, checkout, log);
+    const shots = collectShots(shotRefs, checkout, deps.allowedRoots, log);
     if (shots.length) report.shots = shots;
     return report;
   })().catch((e: Error) => fail(`gate crashed: ${e.message}`));

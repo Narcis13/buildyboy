@@ -6,7 +6,7 @@
 //   - an outage longer than 10 minutes sends one ntfy message (and one when it ends), if ntfyTopic is configured.
 // All files live under bbHome() (BUILDYBOY_HOME honoured); paths are resolved at use time.
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_THRESHOLDS, QUEUEABLE_TOOLS, evaluate, windowOf, type GovernorThresholds, type ToolName, type Usage } from '../shared/factory.ts';
 import { bbHome, readClientConfig } from './config.ts';
@@ -40,6 +40,8 @@ export interface OutboxItem {
   tool: ToolName;
   args: unknown;
   queuedAt: number;
+  /** fingerprint of the agent token that queued it: only a `bb mcp` with the same token replays it */
+  owner?: string;
 }
 
 export interface ReplayResult {
@@ -59,6 +61,8 @@ export interface ResilientOptions {
   replayIntervalMs?: number;
   /** how long the server must be unreachable before the phone is told (default 10 min) */
   downAlertMs?: number;
+  /** fingerprint of this process's agent token (see OutboxItem.owner) */
+  owner?: string;
 }
 
 export interface ResilientClient {
@@ -90,12 +94,27 @@ const QUEUEABLE: ReadonlySet<string> = new Set(QUEUEABLE_TOOLS);
 
 const path = (f: string) => join(bbHome(), f);
 
+const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/** Windows refuses a rename while another process has the target open for a moment (EPERM/EBUSY): retry briefly. */
+function renameRetry(from: string, to: string) {
+  for (let i = 0; ; i++) {
+    try {
+      return renameSync(from, to);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (i >= 50 || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) throw e;
+      pause(20);
+    }
+  }
+}
+
 function atomicWrite(file: string, text: string) {
   mkdirSync(bbHome(), { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   try {
     writeFileSync(tmp, text);
-    renameSync(tmp, file);
+    renameRetry(tmp, file);
   } catch (e) {
     try {
       unlinkSync(tmp);
@@ -149,23 +168,58 @@ export function readOutbox(): OutboxItem[] {
   return items;
 }
 
-function appendOutbox(item: OutboxItem) {
+/**
+ * Every `bb mcp` on the machine shares the outbox, so appends and rewrites take a lock file (exclusive create): a
+ * rewrite must never drop a line another process appended meanwhile. A lock older than 10 s is a crashed holder's.
+ */
+function withLock<T>(fn: () => T): T {
   mkdirSync(bbHome(), { recursive: true });
-  appendFileSync(path(OUTBOX_FILE), `${JSON.stringify(item)}\n`);
+  const lock = path(`${OUTBOX_FILE}.lock`);
+  let fd: number | null = null;
+  for (let i = 0; fd === null; i++) {
+    try {
+      fd = openSync(lock, 'wx');
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST' && i > 100) throw e;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > 10_000) unlinkSync(lock);
+      } catch {
+        // released meanwhile
+      }
+      if (i > 500) throw new Error(`outbox lock ${lock} is held`);
+      pause(10);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    closeSync(fd);
+    try {
+      unlinkSync(lock);
+    } catch {
+      // gone
+    }
+  }
 }
 
-/** Remove every line with this key, atomically; reads the file fresh so lines appended meanwhile survive. */
+function appendOutbox(item: OutboxItem) {
+  withLock(() => appendFileSync(path(OUTBOX_FILE), `${JSON.stringify(item)}\n`));
+}
+
+/** Remove every line with this key, atomically, under the lock, so lines appended by other processes survive. */
 function removeFromOutbox(key: string) {
-  const rest = readOutbox().filter((i) => i.key !== key);
-  if (!rest.length) {
-    try {
-      unlinkSync(path(OUTBOX_FILE));
-    } catch {
-      // already gone
+  withLock(() => {
+    const rest = readOutbox().filter((i) => i.key !== key);
+    if (!rest.length) {
+      try {
+        unlinkSync(path(OUTBOX_FILE));
+      } catch {
+        // already gone
+      }
+      return;
     }
-    return;
-  }
-  atomicWrite(path(OUTBOX_FILE), rest.map((i) => JSON.stringify(i)).join('\n') + '\n');
+    atomicWrite(path(OUTBOX_FILE), rest.map((i) => JSON.stringify(i)).join('\n') + '\n');
+  });
 }
 
 // ---------- read cache ----------
@@ -303,7 +357,8 @@ export function createResilientClient(client: AgentClient, opts: ResilientOption
     void p.finally(() => pending.delete(p));
   };
 
-  const queuedCount = () => readOutbox().length;
+  const mine = (i: OutboxItem) => !i.owner || !opts.owner || i.owner === opts.owner;
+  const queuedCount = () => readOutbox().filter(mine).length;
 
   async function maybeAlert() {
     const s = loadState();
@@ -373,13 +428,10 @@ export function createResilientClient(client: AgentClient, opts: ResilientOption
   async function doReplay(): Promise<ReplayResult> {
     const result: ReplayResult = { sent: 0, rejected: 0, remaining: 0, unreachable: null };
     for (;;) {
-      const item = readOutbox()[0];
+      const item = readOutbox().find(mine);
       if (!item) break;
       try {
         await client.call(item.tool, item.args, { key: item.key });
-        markUp();
-        removeFromOutbox(item.key);
-        result.sent++;
       } catch (e) {
         if (e instanceof UnreachableError) {
           result.unreachable = e.message;
@@ -395,6 +447,14 @@ export function createResilientClient(client: AgentClient, opts: ResilientOption
         } catch {
           break; // cannot persist the decision: stop rather than loop
         }
+        continue;
+      }
+      markUp();
+      result.sent++;
+      try {
+        removeFromOutbox(item.key);
+      } catch {
+        break; // delivered but still listed: the next replay resends it, and the key makes that harmless
       }
     }
     result.remaining = queuedCount();
@@ -415,7 +475,7 @@ export function createResilientClient(client: AgentClient, opts: ResilientOption
     const key = randomUUID();
     const queue = (reason: string) => {
       const queuedAt = now();
-      appendOutbox({ key, tool, args, queuedAt });
+      appendOutbox({ key, tool, args, queuedAt, ...(opts.owner ? { owner: opts.owner } : {}) });
       markDown();
       return { queued: true, tool, key, queuedAt, reason };
     };

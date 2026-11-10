@@ -24,6 +24,18 @@ function fail(c: Context, e: unknown) {
   throw e;
 }
 
+const gateReportSchema = z.object({
+  status: z.enum(['running', 'done', 'error']),
+  verdict: z.enum(['pass', 'fail', 'skip']).optional(),
+  summary: z.string().max(100_000).optional(),
+  details: z.unknown().optional(),
+  findings: z.array(z.unknown()).max(1000).optional(),
+  shots: z.array(z.object({ name: z.string().max(200), base64: z.string(), mime: z.string().max(60).optional() })).max(50).optional(),
+  exitCode: z.number().int().nullable().optional(),
+  error: z.string().max(100_000).optional(),
+  log: z.string().optional(),
+});
+
 const webTaskSchema = TOOLS.tasks_create.input.omit({ upsert: true, extRef: true });
 const webPatchSchema = TOOLS.tasks_update.input.omit({ id: true }).extend({
   title: z.string().trim().min(1).max(200).optional(),
@@ -70,10 +82,10 @@ export function factoryRoutes(ctx: Ctx) {
 
   // ---------- gate runs: the runner reports, the PWA reads the log ----------
   app.post('/api/runner/gates/:id', requireMachine(ctx), async (c) => {
-    const b = (await c.req.json().catch(() => null)) as GateReport | null;
-    if (!b || !['running', 'done', 'error'].includes(b.status)) return c.json({ error: 'status must be running, done or error' }, 400);
+    const b = gateReportSchema.safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: `invalid report: ${b.error.issues.map((i) => `${i.path.join('.') || '(root)'} ${i.message}`).join('; ')}` }, 400);
     try {
-      return c.json(applyGateReport(ctx, c.get('machineId' as never) as string, c.req.param('id'), b));
+      return c.json(applyGateReport(ctx, c.get('machineId' as never) as string, c.req.param('id'), b.data as GateReport));
     } catch (e) {
       return fail(c, e);
     }

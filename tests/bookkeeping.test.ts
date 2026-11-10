@@ -94,6 +94,25 @@ describe('gate rounds', () => {
     expect(t).toMatchObject({ status: 'la_porti', round: 4, maxRounds: 4 });
   });
 
+  it('Narcis moving a blocked package back on the PWA grants the round; a status change without one keeps the decision', async () => {
+    await web.put('/api/factory/config', { maxRounds: 1, repos: [] });
+    await agent('tasks_create', { id: 'R3', title: 'Unblocked on the phone' });
+    await agent('gates_record', { taskId: 'R3', gate: 'G1', verdict: 'fail', summary: 'red' });
+    expect((await agent('tasks_get', { id: 'R3' })).status).toBe('blocata');
+    await agent('tasks_update', { id: 'R3', status: 'gata' }); // no note: no extra round, the question stays open
+    let t = await agent('tasks_get', { id: 'R3' });
+    expect(t.maxRounds).toBe(1);
+    expect(t.decisions.filter((d: any) => d.status === 'pending')).toHaveLength(1);
+    await agent('tasks_update', { id: 'R3', status: 'blocata' });
+    await web.put('/api/tasks/R3', { status: 'in_lucru' }); // the PWA's status select sends no note
+    t = await agent('tasks_get', { id: 'R3' });
+    expect(t).toMatchObject({ status: 'in_lucru', maxRounds: 2 });
+    expect(t.decisions.map((d: any) => d.status)).toEqual(['cancelled']);
+    await agent('tasks_update', { id: 'R3', status: 'la_porti' });
+    expect((await agent('tasks_get', { id: 'R3' })).round).toBe(2);
+    await web.put('/api/factory/config', { maxRounds: 3, repos: [] });
+  });
+
   it('gate_max_rounds comes from the factory config', async () => {
     const cfg = await web.get('/api/factory/config');
     expect(cfg).toEqual({ maxRounds: 3, repos: [] });
@@ -200,6 +219,9 @@ describe('findings', () => {
     expect(f2.acceptance).toEqual(['Fixed: Typo in label (src/ui.tsx:3)']);
     expect((await agent('findings_list', { taskId: 'F1', severity: 'minor' }))[0]).toMatchObject({ status: 'deferred', deferredTo: 'F2' });
     await expect(agent('tasks_create', { id: 'F3', title: 'x', fromFindings: [999999] })).rejects.toThrow(/400.*unknown finding/);
+    const many = Array.from({ length: 100 }, (_, i) => `criterion ${i}`);
+    await expect(agent('tasks_create', { id: 'F4', title: 'x', acceptance: many, fromFindings: [by('Overflow on phone').id] })).rejects.toThrow(/400.*101 acceptance criteria/);
+    expect((await agent('findings_list', { taskId: 'F1', severity: 'major', status: 'open' })).map((f: any) => f.title)).toEqual(['Overflow on phone']);
 
     const upd = await agent('findings_update', { ids: [by('Overflow on phone').id], status: 'for_architect', note: 'needs a layout decision' });
     expect(upd[0]).toMatchObject({ status: 'for_architect', note: 'needs a layout decision' });
@@ -271,5 +293,23 @@ process.exit(1);
     }, 'the missing gate to fail');
     expect(err.error).toMatch(/G5/);
     expect((await agent('tasks_get', { id: 'D1' })).gateResults.filter((x: any) => x.gate === 'G5')).toEqual([]);
+
+    // a malformed report is refused, not a server error
+    const bad = await machinePost(`/api/runner/gates/${missing.runId}`, { status: 'error', error: 5 });
+    expect(bad.status).toBe(400);
+
+    // a run from an earlier round reports late: its verdict goes to its own round and blocks nothing
+    const late = await agent('gates_run', { taskId: 'D1', gate: 'G3' });
+    await waitFor(async () => (await agent('gates_status', { runId: late.runId })).status === 'done', 'the late run');
+    srv.ctx.db.run("UPDATE gate_runs SET status = 'running', round = 1 WHERE id = ?", late.runId);
+    srv.ctx.db.run("UPDATE tasks SET round = 3, status = 'la_porti' WHERE id = 'D1'");
+    await machinePost(`/api/runner/gates/${late.runId}`, { status: 'done', verdict: 'fail', summary: 'late red', exitCode: 1 });
+    const d1 = await agent('tasks_get', { id: 'D1' });
+    expect(d1.gateResults.find((x: any) => x.summary === 'late red').round).toBe(1);
+    expect(d1).toMatchObject({ status: 'la_porti', round: 3 });
+
+    // a run that never reports back ends as an error after RUN_STALE_MS
+    srv.ctx.db.run("UPDATE gate_runs SET status = 'running', started_at = ? WHERE id = ?", Date.now() - 7 * 3600_000, late.runId);
+    expect(await agent('gates_status', { runId: late.runId })).toMatchObject({ status: 'error', error: expect.stringMatching(/no report from the runner/) });
   });
 });

@@ -59,10 +59,20 @@ export function startGateRun(ctx: Ctx, a: ToolArgs<'gates_run'>, actor: string):
   return { ...view(get(ctx, id)!), sent };
 }
 
+/** A run still `running` this long after it started never reported back (runner crash, or a longer outage). */
+export const RUN_STALE_MS = 6 * 3600_000;
+
 /** gates_status: re-sends a run still queued (the runner was away; it ignores a run it already has). Never the log. */
-export function gateRunStatus(ctx: Ctx, runId: string): GateRunView & { sent?: boolean } {
-  const r = get(ctx, runId);
+export function gateRunStatus(ctx: Ctx, runId: string, now = Date.now()): GateRunView & { sent?: boolean } {
+  let r = get(ctx, runId);
   if (!r) throw new FactoryError(404, `unknown gate run ${runId}`);
+  if (r.status === 'running' && now - (r.started_at ?? r.created_at) > RUN_STALE_MS) {
+    ctx.db.run(
+      "UPDATE gate_runs SET status = 'error', error = ?, finished_at = ? WHERE id = ? AND status = 'running'",
+      `no report from the runner for ${Math.round(RUN_STALE_MS / 3600_000)} h; run the gate again`, now, runId,
+    );
+    r = get(ctx, runId)!;
+  }
   if (r.status === 'queued') return { ...view(r), sent: sendToRunner(ctx, r.machine_id, JSON.parse(r.command_json)) };
   return view(r);
 }
@@ -95,10 +105,10 @@ export function applyGateReport(ctx: Ctx, machineId: string, runId: string, rep:
     const base = { taskId: r.task_id, gate: r.gate, verdict: rep.verdict, summary, details, findings };
     let gate;
     try {
-      gate = recordGate(ctx, { ...base, screenshots: (rep.shots ?? []).slice(0, 12) }, 'runner:gate');
+      gate = recordGate(ctx, { ...base, screenshots: (rep.shots ?? []).slice(0, 12) }, 'runner:gate', { round: r.round });
     } catch (e) {
       if (!(e instanceof FactoryError)) throw e;
-      gate = recordGate(ctx, { ...base, summary: `${summary} (screenshots dropped: ${e.message})` }, 'runner:gate');
+      gate = recordGate(ctx, { ...base, summary: `${summary} (screenshots dropped: ${e.message})` }, 'runner:gate', { round: r.round });
     }
     ctx.db.run(
       `UPDATE gate_runs SET status = 'done', verdict = ?, summary = ?, findings_json = ?, gate_result_id = ?, exit_code = ?, log = ?,

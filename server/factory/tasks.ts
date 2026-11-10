@@ -196,6 +196,8 @@ export function createTask(ctx: Ctx, t: NewTask, actor: string): TaskSummary {
     // the chosen findings make the package: its body section and one acceptance criterion each
     const brief = findingsBrief(ctx, t.fromFindings);
     t = { ...t, body: [t.body?.trim(), brief.body].filter(Boolean).join('\n\n'), acceptance: [...(t.acceptance ?? []), ...brief.acceptance] };
+    if (t.acceptance!.length > 100) throw new FactoryError(400, `${t.acceptance!.length} acceptance criteria with these findings (limit 100): pick fewer findings`);
+    if (t.body!.length > 100_000) throw new FactoryError(400, 'the findings make the body longer than 100 000 characters: pick fewer findings');
   }
   db.tx(() => {
     const now = Date.now();
@@ -263,7 +265,7 @@ export function updateTask(ctx: Ctx, p: TaskPatch, actor: string, extra: TaskExt
     sets.push('round = ?');
     args.push(cur.round + 1);
   }
-  const extraRound = statusChange === 'in_lucru' && cur.status === 'blocata' && !!p.note?.trim();
+  const extraRound = statusChange === 'in_lucru' && cur.status === 'blocata' && (!!p.note?.trim() || actor === 'web');
   if (extraRound) sets.push('extra_rounds = extra_rounds + 1');
   let after: { cleanup?: string[]; warnings?: string[] } = {};
   db.tx(() => {
@@ -290,8 +292,8 @@ export function updateTask(ctx: Ctx, p: TaskPatch, actor: string, extra: TaskExt
     const { status: _s, note, ...rest } = changed as Record<string, unknown> & { status?: unknown; note?: unknown };
     if (Object.keys(rest).length) event(ctx, p.id, actor, 'update', null, null, rest);
     if (note !== undefined && !statusChange) event(ctx, p.id, actor, 'note', null, null, { note });
-    if (statusChange && cur.status === 'blocata') {
-      // leaving blocata settles the round-limit question, if Narcis has not answered it yet
+    if (extraRound) {
+      // the extra round settles the round-limit question, if Narcis has not answered it yet
       for (const d of listDecisions(ctx, { taskId: p.id, status: 'pending' }).filter((x) => x.askedBy === ROUNDS_ACTOR)) {
         db.run("UPDATE decisions SET status = 'cancelled', answered_at = ? WHERE id = ? AND status = 'pending'", now, d.id);
         ctx.bus.publish('inbox', 'decision', { id: d.id });
@@ -404,7 +406,7 @@ export function claimTask(ctx: Ctx, a: ToolArgs<'tasks_claim'>, actor: string): 
 
 const MIME = /^image\/(png|jpeg|webp|gif)$/;
 
-export function recordGate(ctx: Ctx, a: ToolArgs<'gates_record'>, actor: string): GateResult {
+export function recordGate(ctx: Ctx, a: ToolArgs<'gates_record'>, actor: string, opts: { round?: number } = {}): GateResult {
   const cur = row(ctx, a.taskId);
   const shots = (a.screenshots ?? []).map((s) => {
     if (!s.base64) throw new FactoryError(400, `screenshot ${s.name}: no image data (bb mcp uploads a local path for you)`);
@@ -415,7 +417,8 @@ export function recordGate(ctx: Ctx, a: ToolArgs<'gates_record'>, actor: string)
     return { name: s.name, mime, data };
   });
   // the first gate result without a move into la_porti counts as round 1
-  const round = Math.max(1, cur.round);
+  const current = Math.max(1, cur.round);
+  const round = opts.round != null ? Math.min(opts.round, current) : current;
   const id = ctx.db.tx(() => {
     const now = Date.now();
     const r = ctx.db.run(
@@ -428,8 +431,8 @@ export function recordGate(ctx: Ctx, a: ToolArgs<'gates_record'>, actor: string)
     event(ctx, a.taskId, actor, 'gate', null, null, {
       gate: a.gate, verdict: a.verdict, round, shots: shots.length, ...(f.added ? { findings: f.added } : {}), ...(f.fixed ? { fixed: f.fixed } : {}),
     });
-    ctx.db.run('UPDATE tasks SET round = ?, updated_at = ? WHERE id = ?', round, now, a.taskId);
-    if (a.verdict === 'fail') blockAtRoundLimit(ctx, row(ctx, a.taskId), round);
+    ctx.db.run('UPDATE tasks SET round = MAX(round, ?), updated_at = ? WHERE id = ?', round, now, a.taskId);
+    if (a.verdict === 'fail' && round === current) blockAtRoundLimit(ctx, row(ctx, a.taskId), round);
     return gid;
   });
   publish(ctx, a.taskId);

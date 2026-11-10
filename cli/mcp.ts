@@ -5,6 +5,7 @@
 //   BUILDYBOY_AGENT_TOKEN   agent token (bba_…), created in Settings → Agent tokens
 //
 // Register it (once):  claude mcp add buildyboy -e BUILDYBOY_URL=… -e BUILDYBOY_AGENT_TOKEN=bba_… -- node <repo>/cli/bb.ts mcp
+import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { extname, resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/server';
@@ -90,7 +91,7 @@ export async function runMcp(): Promise<void> {
     process.exit(1);
   }
   const client = agentClient(url, token);
-  const layer = createResilientClient(client, { url });
+  const layer = createResilientClient(client, { url, owner: createHash('sha256').update(token).digest('hex').slice(0, 16) });
   const server = createMcpServer(client, layer);
   await server.connect(new StdioServerTransport());
   void layer.start(); // replay whatever an earlier run left in the outbox
