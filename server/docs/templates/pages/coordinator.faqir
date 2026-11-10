@@ -100,11 +100,11 @@ block content
         tr(data-part="tr")
           td(data-part="td")
             code tasks_create, tasks_update
-          td(data-part="td") Add a package, or change its status, branch, cost, prompt version, terminal or note.
+          td(data-part="td") Add a package (also from chosen findings), or change its status, branch, cost, prompt version, terminal, used migrations or note.
         tr(data-part="tr")
           td(data-part="td")
             code tasks_claim
-          td(data-part="td") Take the next ready package (or a given one) and mark it În lucru. Refused while the governor says no.
+          td(data-part="td") Take the next ready package (or a given one), mark it În lucru and get its port, database and migration range. Refused while the governor says no.
         tr(data-part="tr")
           td(data-part="td")
             code prompts_render, prompts_lint, prompts_save
@@ -112,7 +112,15 @@ block content
         tr(data-part="tr")
           td(data-part="td")
             code gates_record
-          td(data-part="td") Record a gate result (G1 to G5) with a summary and screenshots taken from local files.
+          td(data-part="td") Record a gate result (G1 to G5) with a summary, findings and screenshots taken from local files.
+        tr(data-part="tr")
+          td(data-part="td")
+            code gates_run, gates_status
+          td(data-part="td") Run a gate on the runner from the repo's recipe and get back only the verdict, summary and findings. The log stays in Buildyboy.
+        tr(data-part="tr")
+          td(data-part="td")
+            code findings_list, findings_update
+          td(data-part="td") Gate findings by package, status and severity; mark them fixed, deferred, for the architect or won't fix.
         tr(data-part="tr")
           td(data-part="td")
             code decision_ask, decision_get
@@ -148,6 +156,49 @@ block content
     | The three numbers are in Settings → Factory. The backlog page shows the governor's answer at the top, and
     code GET /api/governor
     | returns it as JSON.
+
+  h2#bookkeeping The factory's bookkeeping
+  ul
+    li
+      strong Rounds:
+      | every move into La porți starts a gate round. When a gate fails in the last allowed round (3 by default,
+      | Settings → Factory), the package becomes Blocată and you get one decision: another round, another round for
+      | one gate only, or stop the package. Moving it back to În lucru with a note allows one more round.
+    li
+      strong Cost:
+      | sessions started with
+      code BB_TASK
+      | and
+      code BB_ROLE
+      | (lucrator, qa, poarta, coordonator) are linked to the package, as are its herdr terminal and its job. The
+      | package page shows their exact sum, split by role.
+    li
+      strong Gates on the runner:
+      | each repo names its recipe, a JSON file in its main checkout, never in the worker's worktree.
+      code gates_run
+      | sends one gate to the runner, which runs its steps without a shell and reports the verdict, summary and
+      | findings. The log stays on the package page.
+    li
+      strong Resources:
+      code tasks_claim
+      | gives each package a port, a database name and a range of migration numbers from the repo's config. When a
+      | package is integrated with migrations inside another active package's range, that package and the digest get
+      | a warning to renumber.
+    li
+      strong Findings
+      | are kept with a status. A later pass of the same gate marks its blockers and majors fixed; minors stay open
+      | until you pick some on the backlog and make a package from them.
+    li
+      strong When the server is away,
+      code bb mcp
+      | queues gates_record, tasks_update, digest_post and prompts_save in
+      code ~/.buildyboy/outbox.jsonl
+      | and replays them once it is back, each exactly once. Reads return the last known answer marked stale, and
+      | governor_get is computed from the local statusline sample. With
+      code ntfyTopic
+      | in
+      code ~/.buildyboy/config.json
+      | you get one phone message after 10 minutes without the server, and one when it is back.
 
   h2#herdr herdr terminals
   p
