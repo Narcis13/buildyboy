@@ -22,7 +22,8 @@ for the Faqir UI maintainers are in [FAQIR-UI-UPSTREAM-NOTES.md](FAQIR-UI-UPSTRE
 
 It complements Claude Code's built-in Remote Control (which drives one interactive session from the Claude app): Buildyboy is
 the multi-machine overview, history, approvals hub, factory and analytics. See [SPEC.md](SPEC.md) for the full design and
-[docs/claude-code-notes.md](docs/claude-code-notes.md) for the Claude Code behaviors it relies on.
+[docs/claude-code-notes.md](docs/claude-code-notes.md) for the Claude Code behaviors it relies on. How Buildyboy and herdr
+terminals work together (the factory's coordinator, workers and launches) is in [docs/herdr-protocol.md](docs/herdr-protocol.md).
 
 ```
  dev machine(s)                                         WSL host (public)
