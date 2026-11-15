@@ -420,6 +420,16 @@ export type FindingInput = z.infer<typeof findingSchema>;
 /** Write tools `bb mcp` queues in its outbox while the server is unreachable (their answer can wait). */
 export const QUEUEABLE_TOOLS = ['gates_record', 'tasks_update', 'digest_post', 'prompts_save'] as const;
 
+/** Tools that change nothing (MCP `readOnlyHint`). control_get changes state only with ack: true. */
+export const READ_ONLY_TOOLS = [
+  'usage_get', 'governor_get', 'sessions_list', 'sessions_get', 'tasks_list', 'tasks_get', 'prompts_render', 'prompts_lint', 'gates_status',
+  'findings_list', 'decision_get', 'docs_get',
+] as const;
+
+/** docs_get topics. */
+export const DOCS_TOPICS = ['start', 'tools', 'api', 'all'] as const;
+export type DocsTopic = (typeof DOCS_TOPICS)[number];
+
 export const TOOLS = {
   usage_get: {
     description: 'Claude subscription usage: the 5-hour and 7-day windows (percent used, resets_at) and how old the data is.',
@@ -557,6 +567,14 @@ export const TOOLS = {
   control_get: {
     description: "Narcis's open requests to stop a package or revert its integration. ack: true marks the returned ones as handled.",
     input: z.object({ taskId: id.optional(), ack: z.boolean().optional() }),
+  },
+  docs_get: {
+    description:
+      "Buildyboy's own manual for agents, as Markdown: how the factory works and the recommended loop (topic start), every MCP tool with its arguments, result and errors (tools, or one tool with `tool`), every HTTP endpoint (api), or everything (all). Read topic start once before your first factory run.",
+    input: z.object({
+      topic: z.enum(DOCS_TOPICS).optional().describe('start (default): concepts, connecting and the workflow; tools: the tool reference; api: the HTTP API; all: everything'),
+      tool: z.string().max(64).optional().describe('One tool name: only its reference entry'),
+    }),
   },
 } as const;
 

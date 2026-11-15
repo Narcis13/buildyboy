@@ -5,9 +5,9 @@ block content
   dl
     dt#agent-key Agent key (agent token)
     dd
-      | A key, starting with bba_, that lets a coordinator use the factory's MCP tools and nothing else. Created and
-      | revoked in Settings → Factory.
-      a(href="/docs/coordinator#token") More
+      | A key, starting with bba_, that lets an agent (a coordinator, Claude Desktop, any MCP client) use the factory's
+      | MCP tools and nothing else. Created and revoked in Settings → Factory.
+      a(href="/docs/agents#token") More
     dt#allowed-roots Allowed roots
     dd
       | The folders a machine's runner may start jobs in, listed in its runner.json. Only that machine can change them.
@@ -85,7 +85,15 @@ block content
     dt#machine Machine
     dd A computer, or a WSL installation, paired with Buildyboy. Windows and WSL on the same PC are two machines.
     dt#mcp MCP
-    dd Model Context Protocol: a way to give Claude extra tools from outside programs. MCP tool calls are pink on the belt.
+    dd
+      | Model Context Protocol: a way to give Claude extra tools from outside programs. MCP tool calls are pink on the
+      | belt. Buildyboy is itself an MCP server, at
+      code /mcp
+      | or through
+      code bb mcp
+      | :
+      a(href="/docs/agents") Connecting agents
+      | .
     dt#package Package
     dd
       | The factory's unit of work: a module or a large slice, taken from start to finish by one worker.

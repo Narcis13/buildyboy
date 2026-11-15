@@ -15,10 +15,14 @@ runs from a prompt composer built on [`harness-prompt.md`](harness-prompt.md).
   paired machine through the runner.
 - **Insights**: cost and tokens over time, most-used tools, most-failed commands, wait time, job success rates, full-text
   search and `bb import` to backfill months of history.
+- **MCP for agents**: the factory's 22 tools (backlog, governor, gates, findings, decisions, digest) for any MCP client,
+  over Streamable HTTP at `https://<host>/mcp` or over stdio with `bb mcp`, authenticated with a revocable agent token.
 
 **The user manual** is built in: open **Docs** in the app, or `/docs` on your server. It is rendered on the server
 with [Faqir UI](https://www.npmjs.com/package/@faqir-ui/template) from the templates in `server/docs/templates`; notes
-for the Faqir UI maintainers are in [FAQIR-UI-UPSTREAM-NOTES.md](FAQIR-UI-UPSTREAM-NOTES.md).
+for the Faqir UI maintainers are in [FAQIR-UI-UPSTREAM-NOTES.md](FAQIR-UI-UPSTREAM-NOTES.md). Its "For agents" section
+(`/docs/agents`, `/docs/mcp-tools`, `/docs/api`) is generated from `server/docs/reference.ts` and also served as one
+Markdown file for agents at `/docs/agents.md` (and `/llms.txt`).
 
 It complements Claude Code's built-in Remote Control (which drives one interactive session from the Claude app): Buildyboy is
 the multi-machine overview, history, approvals hub, factory and analytics. See [SPEC.md](SPEC.md) for the full design and
@@ -189,6 +193,17 @@ change that file:
 (`plugin/statusline/bb-statusline.mjs`, which adds context % and rate limits and passes your previous statusline through via
 `BUILDYBOY_STATUSLINE_NEXT`). Neither is installed automatically.
 
+**Connecting an agent** (Claude Desktop, Cursor, VS Code, Codex, a remote Claude Code). Create an agent token in
+Settings → Factory, then point the client at the HTTP endpoint with the token as a bearer header:
+
+```
+claude mcp add --transport http buildyboy https://<host>/mcp --header "Authorization: Bearer bba_…" --scope user
+```
+
+On a machine with a checkout, `claude mcp add buildyboy --scope user -e BUILDYBOY_URL=https://<host> -e
+BUILDYBOY_AGENT_TOKEN=bba_… -- node <checkout>/cli/bb.ts mcp` adds an offline queue. Per-client configs are in the
+manual's Connecting agents page; every tool is also `POST /api/agent/<tool>`.
+
 **Removing a machine.** Run the installer with `--uninstall` (`$env:BB_UNINSTALL='1'`), then revoke the machine on the
 Machines page.
 
@@ -222,6 +237,8 @@ the server is back.
   every state-changing request, login rate limiting and an audit log.
 - Machines use their own bearer tokens (stored hashed), get them through single-use pairing codes, and can only ingest and
   answer their own sessions' hooks. Rotate or revoke them on the Machines page.
+- Agents use agent tokens (`bba_…`, stored hashed, revocable in Settings → Factory) that reach only the factory's tools
+  (`/mcp`, `/api/agent/*`) and the usage/governor reads.
 - Secrets are masked before anything is stored (API keys, GitHub tokens, AWS keys, JWTs, `Bearer …`, `password=…`, and the
   content of `.env*` files read by Claude). Add your own rules in Settings.
 - The server never runs Claude or shell commands. The runner only runs `claude` with a validated argument list inside its

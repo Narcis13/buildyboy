@@ -5,12 +5,16 @@
 //   BUILDYBOY_AGENT_TOKEN   agent token (bba_…), created in Settings → Agent tokens
 //
 // Register it (once):  claude mcp add buildyboy -e BUILDYBOY_URL=… -e BUILDYBOY_AGENT_TOKEN=bba_… -- node <repo>/cli/bb.ts mcp
+// Without a checkout, use the server's own Streamable HTTP endpoint instead (server/routes/mcp.ts):
+//   claude mcp add --transport http buildyboy https://<host>/mcp --header "Authorization: Bearer bba_…"
+// It has no offline outbox or read cache, and it cannot read local screenshot paths.
 import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { extname, resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
-import { SHOT_MAX_BYTES, TOOLS, TOOL_NAMES } from '../shared/factory.ts';
+import { SHOT_MAX_BYTES, TOOL_NAMES } from '../shared/factory.ts';
+import { MCP_INSTRUCTIONS, MCP_SERVER_INFO, registerTools } from '../shared/mcp-tools.ts';
 import { readClientConfig } from './config.ts';
 import { AgentHttpError, UnreachableError, createResilientClient, type AgentClient, type CallOptions, type ResilientClient } from './outbox.ts';
 
@@ -67,19 +71,8 @@ export function inlineShots(args: Record<string, unknown>): Record<string, unkno
 
 /** `layer` adds the outbox, read cache and local governor around the client (tests pass their own, with a fake clock). */
 export function createMcpServer(client: AgentClient, layer: ResilientClient = createResilientClient(client)): McpServer {
-  const server = new McpServer({ name: 'buildyboy', version: '0.1.0' });
-  for (const name of TOOL_NAMES) {
-    const tool = TOOLS[name];
-    server.registerTool(name, { description: tool.description, inputSchema: tool.input }, async (args: unknown) => {
-      try {
-        const sent = name === 'gates_record' ? inlineShots(args as Record<string, unknown>) : args;
-        const result = await layer.call(name, sent);
-        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-      } catch (e) {
-        return { content: [{ type: 'text' as const, text: `${name} failed: ${(e as Error).message}` }], isError: true };
-      }
-    });
-  }
+  const server = new McpServer({ ...MCP_SERVER_INFO }, { instructions: MCP_INSTRUCTIONS });
+  registerTools(server, (name, args) => layer.call(name, name === 'gates_record' ? inlineShots(args as Record<string, unknown>) : args));
   return server;
 }
 

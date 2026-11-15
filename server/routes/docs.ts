@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Ctx } from '../context.ts';
 import { DOCS_DIR, createDocs } from '../docs/engine.ts';
+import { agentGuide, llmsTxt } from '../docs/reference.ts';
+import { DOCS_TOPICS, type DocsTopic } from '../../shared/factory.ts';
 
 const TYPES: Record<string, string> = {
   css: 'text/css; charset=utf-8',
@@ -40,6 +42,15 @@ export function docsRoutes(ctx: Ctx) {
       status: html ? 200 : 404,
       headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache', 'x-robots-tag': 'noindex' },
     });
+
+  // The same reference as Markdown, for agents: one file they can read whole (?topic=start|tools|api|all).
+  const markdown = (text: string) =>
+    new Response(text, { headers: { 'content-type': 'text/markdown; charset=utf-8', 'cache-control': 'no-cache', 'x-robots-tag': 'noindex' } });
+  app.get('/docs/agents.md', (c) => {
+    const t = c.req.query('topic');
+    return markdown(agentGuide(site(), DOCS_TOPICS.includes(t as DocsTopic) ? (t as DocsTopic) : 'all'));
+  });
+  app.get('/llms.txt', () => markdown(llmsTxt(site())));
 
   app.get('/docs', () => send(docs.page('index', site())));
   app.get('/docs/', (c) => c.redirect('/docs', 301));

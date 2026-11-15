@@ -372,6 +372,9 @@ test.describe('settings and layout', () => {
     expect(cmd).toContain(`BUILDYBOY_AGENT_TOKEN=${token}`);
     expect(cmd).toContain(`BUILDYBOY_URL=${process.env.BB_E2E_URL}`);
     expect(cmd).toContain('/cli/bb.ts mcp');
+    const httpCmd = await page.getByTestId('agent-token-http-command').textContent();
+    expect(httpCmd).toContain(`claude mcp add --transport http buildyboy ${process.env.BB_E2E_URL}/mcp`);
+    expect(httpCmd).toContain(`Authorization: Bearer ${token}`);
     await noHorizontalScroll(page);
     await page.getByTestId('agent-token-dismiss').click();
     await expect(page.getByTestId('agent-token-value')).toHaveCount(0);

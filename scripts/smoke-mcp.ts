@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { startServer } from '../server/main.ts';
 import { createMachine } from '../server/auth.ts';
 import { createAgentToken, revokeAgentToken } from '../server/factory/agent.ts';
@@ -154,9 +155,22 @@ console.log(JSON.stringify({ verdict: 'pass', summary: 'G1 pass: 3 tests', findi
     assert((await call('tasks_get', { id: 'P1' })).gateResults.length === 2, 'tasks_get');
     const digest = await call('digest_post', { note: 'smoke' });
     assert(/P1/.test(digest.body), 'digest_post mentions P1');
+    const guide = await client.callTool({ name: 'docs_get', arguments: { tool: 'tasks_claim' } }) as { content: { text: string }[]; isError?: boolean };
+    assert(!guide.isError && guide.content[0].text.startsWith('### tasks_claim'), 'docs_get answers Markdown');
+    called.add('docs_get');
 
     for (const n of TOOL_NAMES) assert(called.has(n), `tool ${n} was called`);
     log(`✔ all ${called.size} tools answered: ${[...called].join(', ')}`);
+
+    // the same tools over the server's Streamable HTTP endpoint
+    const http = new Client({ name: 'bb-smoke-http', version: '1.0.0' });
+    await http.connect(new StreamableHTTPClientTransport(new URL(`${srv.url}/mcp`), { requestInit: { headers: { authorization: `Bearer ${agent.token}` } } }));
+    const httpTools = (await http.listTools()).tools.map((t) => t.name);
+    for (const n of TOOL_NAMES) assert(httpTools.includes(n), `tool ${n} is listed over HTTP`);
+    const httpTask = (await http.callTool({ name: 'tasks_get', arguments: { id: 'P1' } })) as { content: { text: string }[]; isError?: boolean };
+    assert(!httpTask.isError && JSON.parse(httpTask.content[0].text).status === 'integrata', 'tasks_get over HTTP');
+    await http.close();
+    log(`✔ /mcp over Streamable HTTP lists the same ${httpTools.length} tools and answers`);
 
     revokeAgentToken(srv.ctx, agent.id);
     const denied = (await client.callTool({ name: 'usage_get', arguments: {} })) as { isError?: boolean; content: { text: string }[] };

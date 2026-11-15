@@ -3,9 +3,9 @@ import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import type { Ctx } from '../context.ts';
 import { requireMachine, requireWeb, webUser } from '../auth.ts';
-import { FINDING_SEVERITIES, FINDING_STATUSES, TASK_STATUSES, TOOLS, TOOL_NAMES, type GateReport, type TaskStatus, type ToolName } from '../../shared/factory.ts';
+import { FINDING_SEVERITIES, FINDING_STATUSES, TASK_STATUSES, TOOLS, type GateReport, type TaskStatus } from '../../shared/factory.ts';
 import { parseTaskFile, orderByDeps, TaskFileError, taskFileToCreate } from '../../shared/tasks-md.ts';
-import { agentFromToken, createAgentToken, HANDLERS, listAgentTokens, requireAgent, revokeAgentToken } from '../factory/agent.ts';
+import { agentFromToken, callTool, createAgentToken, listAgentTokens, requireAgent, revokeAgentToken } from '../factory/agent.ts';
 import { governor, readUsage } from '../factory/governor.ts';
 import { createTask, deleteTask, FactoryError, gateShot, getTask, listTasks, requestControl, updateTask } from '../factory/tasks.ts';
 import { answerDecision, listDecisions } from '../factory/decisions.ts';
@@ -14,9 +14,6 @@ import { importGithubIssues } from '../factory/import.ts';
 import { factoryConfig, factoryConfigSchema, saveFactoryConfig } from '../factory/config.ts';
 import { listFindings, updateFindings } from '../factory/findings.ts';
 import { applyGateReport, gateRunLog } from '../factory/gateruns.ts';
-
-/** How long an idempotency key is remembered: longer than any outage the outbox would wait out. */
-const KEY_TTL_MS = 30 * 24 * 3600_000;
 
 function fail(c: Context, e: unknown) {
   if (e instanceof FactoryError) return c.json({ error: e.message }, e.status as 400);
@@ -53,28 +50,12 @@ export function factoryRoutes(ctx: Ctx) {
 
   // ---------- agent API: one endpoint per MCP tool ----------
   app.post('/api/agent/:tool', agentAuth, async (c) => {
-    const name = c.req.param('tool') as ToolName;
-    if (!TOOL_NAMES.includes(name)) return c.json({ error: `unknown tool ${name}` }, 404);
-    const parsed = TOOLS[name].input.safeParse((await c.req.json().catch(() => ({}))) ?? {});
-    if (!parsed.success) return c.json({ error: `invalid arguments: ${parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'} ${i.message}`).join('; ')}` }, 400);
-    const actor = `agent:${c.get('agent').name}`;
     // `bb mcp` sends an idempotency key with every write it may replay from its outbox: a repeated key gets the first
     // answer back and changes nothing.
     const key = c.req.header('idempotency-key')?.trim().slice(0, 200) || null;
-    if (key) {
-      const seen = db.get<{ tool: string; result_json: string | null }>('SELECT tool, result_json FROM agent_calls WHERE key = ?', key);
-      if (seen) return c.json({ result: seen.result_json ? JSON.parse(seen.result_json) : null, replayed: true });
-    }
     try {
-      const run = () => {
-        const result = (HANDLERS[name] as (ctx: Ctx, a: unknown, actor: string) => unknown)(ctx, parsed.data, actor) ?? null;
-        if (key) {
-          db.run('INSERT INTO agent_calls (key, tool, result_json, created_at) VALUES (?, ?, ?, ?)', key, name, JSON.stringify(result), Date.now());
-          if (Math.random() < 0.01) db.run('DELETE FROM agent_calls WHERE created_at < ?', Date.now() - KEY_TTL_MS);
-        }
-        return result;
-      };
-      return c.json({ result: key ? db.tx(run) : run() });
+      const out = callTool(ctx, c.req.param('tool'), (await c.req.json().catch(() => ({}))) ?? {}, `agent:${c.get('agent').name}`, key);
+      return c.json(out);
     } catch (e) {
       return fail(c, e);
     }

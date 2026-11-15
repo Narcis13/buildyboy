@@ -29,6 +29,11 @@ export function mcpAddLine(publicUrl: string, token: string): string {
   return `claude mcp add buildyboy --scope user -e BUILDYBOY_URL=${publicUrl} -e BUILDYBOY_AGENT_TOKEN=${token} -- node <path-to-buildyboy>/cli/bb.ts mcp`;
 }
 
+/** The same server over Streamable HTTP: for any machine, no checkout needed. */
+export function mcpHttpLine(publicUrl: string, token: string): string {
+  return `claude mcp add --transport http buildyboy ${publicUrl}/mcp --header "Authorization: Bearer ${token}" --scope user`;
+}
+
 function TokensCard({ publicUrl }: { publicUrl: string }) {
   const qc = useQueryClient();
   const [name, setName] = useState('');
@@ -51,10 +56,11 @@ function TokensCard({ publicUrl }: { publicUrl: string }) {
     },
   });
   const line = fresh ? mcpAddLine(publicUrl, fresh.token) : '';
+  const httpLine = fresh ? mcpHttpLine(publicUrl, fresh.token) : '';
   return (
     <SectionCard
       title="Factory: agent tokens"
-      hint="A token lets the coordinator (bb mcp) read and write the backlog, record gates and ask you decisions. It cannot do anything else."
+      hint="A token lets an agent (the coordinator, Claude Desktop, any MCP client) read and write the backlog, record gates and ask you decisions. It cannot do anything else."
       testId="settings-factory-tokens"
     >
       <form
@@ -86,7 +92,18 @@ function TokensCard({ publicUrl }: { publicUrl: string }) {
               <CopyButton text={line} label="Copy command" />
             </div>
             <pre className="whitespace-pre-wrap break-all rounded-lg border border-line bg-bg-2 p-3 font-mono text-sm leading-snug" data-testid="agent-token-command">{line}</pre>
-            <p className="mt-1 text-sm text-muted">Replace <code className="font-mono">&lt;path-to-buildyboy&gt;</code> with the folder this repo is checked out in on that machine.</p>
+            <p className="mt-1 text-sm text-muted">Replace <code className="font-mono">&lt;path-to-buildyboy&gt;</code> with the folder this repo is checked out in on that machine. It keeps working while the server is away.</p>
+          </div>
+          <div>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-[15px] font-medium">Or from any machine, over HTTP</span>
+              <CopyButton text={httpLine} label="Copy HTTP command" />
+            </div>
+            <pre className="whitespace-pre-wrap break-all rounded-lg border border-line bg-bg-2 p-3 font-mono text-sm leading-snug" data-testid="agent-token-http-command">{httpLine}</pre>
+            <p className="mt-1 text-sm text-muted">
+              No checkout needed. Claude Desktop, Cursor, VS Code and Codex:{' '}
+              <a className="underline" href="/docs/agents" target="_blank" rel="noreferrer">Connecting agents</a>.
+            </p>
           </div>
           <Button onClick={() => setFresh(null)} data-testid="agent-token-dismiss">I have copied it</Button>
         </div>

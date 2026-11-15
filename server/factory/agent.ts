@@ -7,7 +7,8 @@ import { randomToken, sha256 } from '../auth.ts';
 import { listSessions, sessionDetail } from '../queries.ts';
 import { promptStore } from '../routes/prompts.ts';
 import { lintPrompt, parseTemplate, renderTemplate } from '../../shared/harness.ts';
-import type { AgentTokenView, ToolArgs, ToolName } from '../../shared/factory.ts';
+import { TOOLS, TOOL_NAMES, type AgentTokenView, type ToolArgs, type ToolName } from '../../shared/factory.ts';
+import { agentGuide } from '../docs/reference.ts';
 import { governor, readUsage } from './governor.ts';
 import { ackControls, claimTask, controls, createTask, FactoryError, getTask, listTasks, recordGate, taskSummary, updateTask } from './tasks.ts';
 import { askDecision, getDecision } from './decisions.ts';
@@ -121,4 +122,38 @@ export const HANDLERS: { [K in ToolName]: Handler<K> } = {
     const ids = new Set(open.map((r) => r.id));
     return { requests: controls(ctx, { taskId: a.taskId, all: true }).filter((r) => ids.has(r.id)), acked: true };
   },
+  docs_get: (ctx, a) => {
+    if (a.tool && !TOOL_NAMES.includes(a.tool as ToolName)) throw new FactoryError(400, `unknown tool ${a.tool}; the tools are ${TOOL_NAMES.join(', ')}`);
+    return agentGuide({ url: ctx.config.publicUrl }, a.topic ?? 'start', a.tool);
+  },
 };
+
+/** How long an idempotency key is remembered: longer than any outage the `bb mcp` outbox would wait out. */
+const KEY_TTL_MS = 30 * 24 * 3600_000;
+
+/**
+ * Runs one tool for an agent: validates the arguments with the tool's schema, then calls its handler. Both
+ * transports use it: POST /api/agent/<tool> (REST and `bb mcp`) and the Streamable HTTP endpoint at /mcp.
+ * With an idempotency key, a repeated key returns the first answer and changes nothing (`replayed: true`).
+ * Throws FactoryError (status + message) for every refusal: unknown tool 404, bad arguments 400, and the handlers' own.
+ */
+export function callTool(ctx: Ctx, name: string, rawArgs: unknown, actor: string, key: string | null = null): { result: unknown; replayed?: true } {
+  if (!TOOL_NAMES.includes(name as ToolName)) throw new FactoryError(404, `unknown tool ${name}`);
+  const tool = name as ToolName;
+  const parsed = TOOLS[tool].input.safeParse(rawArgs ?? {});
+  if (!parsed.success) throw new FactoryError(400, `invalid arguments: ${parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'} ${i.message}`).join('; ')}`);
+  const { db } = ctx;
+  if (key) {
+    const seen = db.get<{ result_json: string | null }>('SELECT result_json FROM agent_calls WHERE key = ?', key);
+    if (seen) return { result: seen.result_json ? JSON.parse(seen.result_json) : null, replayed: true };
+  }
+  const run = () => {
+    const result = (HANDLERS[tool] as (ctx: Ctx, a: unknown, actor: string) => unknown)(ctx, parsed.data, actor) ?? null;
+    if (key) {
+      db.run('INSERT INTO agent_calls (key, tool, result_json, created_at) VALUES (?, ?, ?, ?)', key, tool, JSON.stringify(result), Date.now());
+      if (Math.random() < 0.01) db.run('DELETE FROM agent_calls WHERE created_at < ?', Date.now() - KEY_TTL_MS);
+    }
+    return result;
+  };
+  return { result: key ? db.tx(run) : run() };
+}
