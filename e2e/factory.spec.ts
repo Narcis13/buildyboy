@@ -380,6 +380,18 @@ test.describe('settings and layout', () => {
     await expect(page.getByTestId('agent-token-value')).toHaveCount(0);
     const row = page.getByTestId('agent-token-row').filter({ hasText: name });
     await expect(row).toContainText('last used never');
+    // launching is off until allowed; "ask me" shows once it is on, and is on by default
+    await expect(row.getByTestId('agent-token-launch')).toHaveValue('off');
+    await expect(row.getByTestId('agent-token-approval')).toHaveCount(0);
+    await row.getByTestId('agent-token-launch').selectOption('all');
+    const ask = row.getByTestId('agent-token-approval').getByRole('switch');
+    await expect(ask).toHaveAttribute('aria-checked', 'true');
+    await ask.click();
+    await expect(ask).toHaveAttribute('aria-checked', 'false');
+    await noHorizontalScroll(page);
+    await page.reload();
+    await expect(row.getByTestId('agent-token-launch')).toHaveValue('all');
+    await expect(row.getByTestId('agent-token-approval').getByRole('switch')).toHaveAttribute('aria-checked', 'false');
     await row.getByTestId('agent-token-revoke').click();
     await row.getByTestId('agent-token-revoke-confirm').click();
     await expect(row).toHaveAttribute('data-revoked', 'true');

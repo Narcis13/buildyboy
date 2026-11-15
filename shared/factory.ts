@@ -357,12 +357,37 @@ export function evaluate(usage: Usage, t: GovernorThresholds, now = Date.now()):
   return { canStart, stopAll, waitUntil, reason: reasons.join('; '), usage, thresholds: t };
 }
 
+/** What an agent token may start with tasks_launch and coordinator_launch. */
+export const LAUNCH_SCOPES = ['off', 'workers', 'all'] as const;
+export type LaunchScope = (typeof LAUNCH_SCOPES)[number];
+export const LAUNCH_SCOPE_LABEL: Record<LaunchScope, string> = { off: 'Nothing', workers: 'Workers', all: 'Workers and coordinators' };
+
 export interface AgentTokenView {
   id: string;
   name: string;
   createdAt: number;
   lastUsedAt: number | null;
   revokedAt: number | null;
+  /** what it may launch; off for every new token */
+  launch: LaunchScope;
+  /** each launch waits for the owner's approval (a decision) */
+  launchApproval: boolean;
+}
+
+/** The answer of tasks_launch and coordinator_launch. */
+export type LaunchResult =
+  | { status: 'launched'; kind: 'worker' | 'coordinator'; jobId: string; launcher: 'hc' | 'claude'; machineId: string; cwd: string; taskId: string | null; decisionId: string | null }
+  | { status: 'pending_approval' | 'refused'; kind: 'worker' | 'coordinator'; decisionId: string; answer: string | null; reason: string };
+
+export interface MachineView {
+  id: string;
+  name: string;
+  platform: string | null;
+  runnerOnline: boolean;
+  /** folders the runner may work in; a launch outside them is refused (empty: the runner did not say) */
+  allowedRoots: string[];
+  concurrency: number | null;
+  runnerSeenAt: number | null;
 }
 
 export interface TerminalView {
@@ -423,8 +448,20 @@ export const QUEUEABLE_TOOLS = ['gates_record', 'tasks_update', 'digest_post', '
 /** Tools that change nothing (MCP `readOnlyHint`). control_get changes state only with ack: true. */
 export const READ_ONLY_TOOLS = [
   'usage_get', 'governor_get', 'sessions_list', 'sessions_get', 'tasks_list', 'tasks_get', 'prompts_render', 'prompts_lint', 'gates_status',
-  'findings_list', 'decision_get', 'docs_get',
+  'findings_list', 'decision_get', 'machines_list', 'docs_get',
 ] as const;
+
+/** Longest coordinator prompt: it goes on a herdr command line (runner/options.ts HC_PROMPT_MAX). */
+export const LAUNCH_PROMPT_MAX = 24_000;
+const launchArgs = {
+  machineId: z.string().trim().min(1).max(100).describe('The machine whose runner starts it (machines_list)'),
+  cwd: z.string().trim().min(1).max(1000).describe("Working directory on that machine, inside the runner's allowed roots"),
+  launcher: z.enum(['hc', 'claude']).optional().describe('hc (default): interactive claude in a herdr terminal; claude: a headless claude -p job'),
+  model: z.string().max(100).optional(),
+  permissionMode: z.string().max(40).optional().describe('default, acceptEdits, plan, auto, dontAsk or bypassPermissions'),
+  maxBudgetUsd: z.number().positive().max(1000).optional().describe('Budget for a claude -p job (default 5)'),
+  promptId: z.number().int().positive().optional().describe('A saved prompt to start it with'),
+};
 
 /** docs_get topics. */
 export const DOCS_TOPICS = ['start', 'tools', 'api', 'all'] as const;
@@ -563,6 +600,24 @@ export const TOOLS = {
   digest_post: {
     description: 'Compose and send the digest now (what was integrated, gates, usage, pending decisions), with an optional note.',
     input: z.object({ note: z.string().max(4000).optional() }),
+  },
+  machines_list: {
+    description: 'Paired machines with their runner: id, name, online, allowed roots. The machineId and cwd of tasks_launch and coordinator_launch come from here.',
+    input: z.object({}),
+  },
+  tasks_launch: {
+    description:
+      "Start a worker for a package on a machine's runner: an interactive claude in a herdr terminal (default) or a claude -p job. Claims the package (in_lucru). Only for tokens the owner allowed to launch; refused while the governor says canStart is false; may first wait for the owner's approval (status pending_approval: call again with the same arguments once decision_get shows the answer).",
+    input: z.object({ taskId: id, ...launchArgs }),
+  },
+  coordinator_launch: {
+    description:
+      "Start a coordinator on a machine's runner: an interactive claude in a herdr terminal (default) or a claude -p job, with the built-in coordinator prompt or your own. Only for tokens the owner allowed to launch coordinators; refused while the governor says canStart is false; may first wait for the owner's approval like tasks_launch.",
+    input: z.object({
+      ...launchArgs,
+      prompt: z.string().trim().min(1).max(LAUNCH_PROMPT_MAX).optional().describe('Its first prompt instead of the built-in coordinator prompt'),
+      title: z.string().trim().max(120).optional().describe('Session name (default: Coordinator)'),
+    }),
   },
   control_get: {
     description: "Narcis's open requests to stop a package or revert its integration. ack: true marks the returned ones as handled.",

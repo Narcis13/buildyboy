@@ -61,6 +61,25 @@ describe('MCP over Streamable HTTP', () => {
     expect(client.getInstructions()).toMatch(/docs_get/);
   });
 
+  it('checks the launch permission of the token that calls', async () => {
+    const client = await connect(token);
+    const m = createMachine(srv.ctx, 'launch-box');
+    await call(client, 'tasks_create', { id: 'H9', title: 'Launch me', status: 'gata' });
+    const off = await call(client, 'coordinator_launch', { machineId: m.id, cwd: '/w' });
+    expect(off.isError).toBe(true);
+    expect(off.content[0].text).toMatch(/may not launch coordinators/);
+    // allowed for this token: the next check is the governor (no usage data in this server)
+    srv.ctx.db.run("UPDATE agent_tokens SET launch = 'all' WHERE id = ?", tokenId);
+    try {
+      const gov = await call(client, 'tasks_launch', { taskId: 'H9', machineId: m.id, cwd: '/w' });
+      expect(gov.isError).toBe(true);
+      expect(gov.content[0].text).toMatch(/governor: /);
+      expect(json(await call(client, 'machines_list')).map((x: { name: string }) => x.name)).toContain('launch-box');
+    } finally {
+      srv.ctx.db.run("UPDATE agent_tokens SET launch = 'off' WHERE id = ?", tokenId);
+    }
+  });
+
   it('runs the tools in-process under the agent token', async () => {
     const client = await connect(token);
     const created = await call(client, 'tasks_create', { id: 'H1', title: 'Over HTTP', status: 'gata' });

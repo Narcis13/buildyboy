@@ -65,6 +65,15 @@ block content
       strong Revoke
       | ) on the Machines page.
 
+  h2#agent-access What an agent key can do
+  ul
+    li An agent key reaches the factory's tools only: the backlog, gates, decisions and the digest. It cannot control sessions or change settings.
+    li
+      | It starts workers or coordinators on your machines only when you allow that key in Settings → Factory → Agent
+      | tokens, and by default each launch waits for your approval. Launches are refused while the governor says no, stay
+      | inside the runner's allowed folders and are recorded in the audit log.
+    li Revoking a key on the same screen cuts it off at once.
+
   h2#what-runs What runs where
   ul
     li
