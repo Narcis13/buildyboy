@@ -6,9 +6,10 @@ import { z } from 'zod';
 import type { Ctx } from '../context.ts';
 import { requireMachine, requireWeb } from '../auth.ts';
 import { hcTerminalName, OptionError } from '../../runner/options.ts';
-import { createJob, JobError, runnerInfo, under } from '../jobs/core.ts';
-import { FactoryError, getTask, updateTask } from '../factory/tasks.ts';
-import type { TaskDetail, TerminalView } from '../../shared/factory.ts';
+import { JobError } from '../jobs/core.ts';
+import { FactoryError } from '../factory/tasks.ts';
+import { launchWorker } from '../factory/launch.ts';
+import type { TerminalView } from '../../shared/factory.ts';
 
 type Vars = { Variables: { machineId: string } };
 
@@ -48,14 +49,6 @@ const launchSchema = z.object({
 interface Row {
   machine_id: string; machine_name: string; address: string; name: string | null; agent: string | null; cwd: string | null; state: string | null;
   status: string | null; turn: number | null; where_label: string | null; task_id: string | null; seen_at: number;
-}
-
-/** The prompt text for a package without a prompt of its own: built from its title, body and acceptance criteria. */
-export function taskPrompt(t: TaskDetail): string {
-  const lines = [`# ${t.title}`, '', `Backlog package ${t.id}${t.repo ? ` in ${t.repo}` : ''}${t.branch ? `, branch ${t.branch}` : ''}.`];
-  if (t.body.trim()) lines.push('', t.body.trim());
-  if (t.acceptance.length) lines.push('', '## Acceptance criteria', ...t.acceptance.map((a) => `- ${a}`));
-  return lines.join('\n');
 }
 
 function signature(rows: Row[]): string {
@@ -161,25 +154,10 @@ export function herdrRoutes(ctx: Ctx) {
   app.post('/api/tasks/:id/launch', wauth, async (c) => {
     const p = launchSchema.safeParse(await c.req.json().catch(() => null));
     if (!p.success) return c.json({ error: `invalid launch: ${p.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}` }, 400);
-    const b = p.data;
     try {
-      const task = getTask(ctx, c.req.param('id'));
-      if (task.status === 'integrata') return c.json({ error: 'this package is already integrated' }, 409);
-      const roots = runnerInfo(ctx, b.machineId)?.allowedRoots ?? [];
-      if (roots.length && !roots.some((r) => under(b.cwd, r))) return c.json({ error: `cwd is outside the runner's allowed roots: ${b.cwd}` }, 400);
-      const promptId = b.promptId ?? (task.promptId && db.get('SELECT 1 FROM prompts WHERE id = ?', task.promptId) ? task.promptId : null);
-      const jobId = createJob(ctx, {
-        machineId: b.machineId,
-        cwd: b.cwd,
-        promptId,
-        promptText: promptId ? null : taskPrompt(task),
-        title: `${task.id}: ${task.title}`.slice(0, 200),
-        options: { maxBudgetUsd: b.maxBudgetUsd ?? 5, model: b.model || undefined, permissionMode: b.permissionMode || undefined, launcher: b.launcher, taskId: task.id },
-      });
-      // launching is claiming: tasks_claim must not hand the same package to another worker meanwhile
-      updateTask(ctx, { id: task.id, ...(task.status === 'in_lucru' ? {} : { status: 'in_lucru' as const }) }, 'launch', { jobId, claimedBy: task.claimedBy ?? 'web' });
-      db.audit('web', 'task_launch', task.id, { jobId, machineId: b.machineId, cwd: b.cwd, launcher: b.launcher });
-      return c.json({ id: jobId, jobId, launcher: b.launcher }, 201);
+      // the same path as the agents' tasks_launch: allowed roots, checked options, the claim on the package
+      const { jobId, launcher } = launchWorker(ctx, { ...p.data, taskId: c.req.param('id') }, 'web');
+      return c.json({ id: jobId, jobId, launcher }, 201);
     } catch (e) {
       if (e instanceof FactoryError || e instanceof JobError) return c.json({ error: e.message }, e.status as 400);
       if (e instanceof OptionError) return c.json({ error: e.message }, 400);

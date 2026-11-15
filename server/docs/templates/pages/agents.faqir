@@ -30,6 +30,9 @@ block content
     | : a token that starts with
     code bba_
     | . It reaches only the factory's tools, never your sessions' controls or settings, and you can revoke it at any time.
+    | It starts workers or coordinators on your machines only if you allow that key to (
+    a(href="/docs/coordinator#launch") Letting agents start agents
+    | ).
   ol
     li
       | In

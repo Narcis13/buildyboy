@@ -89,7 +89,7 @@ const REPLAY_INTERVAL_MS = 30_000;
 const DOWN_ALERT_MS = 10 * 60_000;
 const NTFY_TIMEOUT_MS = 8_000;
 
-const CACHEABLE: ReadonlySet<string> = new Set(['usage_get', 'governor_get', 'sessions_list', 'sessions_get', 'tasks_list', 'tasks_get', 'decision_get', 'control_get', 'findings_list', 'gates_status', 'prompts_render', 'prompts_lint']);
+const CACHEABLE: ReadonlySet<string> = new Set(['usage_get', 'governor_get', 'sessions_list', 'sessions_get', 'tasks_list', 'tasks_get', 'decision_get', 'control_get', 'findings_list', 'gates_status', 'prompts_render', 'prompts_lint', 'machines_list']);
 const QUEUEABLE: ReadonlySet<string> = new Set(QUEUEABLE_TOOLS);
 
 const path = (f: string) => join(bbHome(), f);

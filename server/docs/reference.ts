@@ -145,6 +145,35 @@ export const SHAPES: Shape[] = [
     ],
   },
   {
+    id: 'launch',
+    title: 'Launch result',
+    intro: 'Returned by tasks_launch and coordinator_launch. pending_approval and refused are answers, not errors.',
+    fields: [
+      ['status', 'enum', 'launched; pending_approval (the owner was asked: call again with the same arguments once decision_get shows the answer); refused (the owner said no or cancelled the question).'],
+      ['kind', 'enum', 'worker or coordinator.'],
+      ['jobId', 'string', 'launched: the runner job that starts it (UUID).'],
+      ['launcher', 'enum', 'launched: hc (a herdr terminal) or claude (a claude -p job).'],
+      ['machineId · cwd', 'string', 'launched: where it runs.'],
+      ['taskId', 'string | null', 'launched: the package (worker), null for a coordinator.'],
+      ['decisionId', 'string | null', 'The approval decision, when the token needs one.'],
+      ['answer', 'string | null', "refused: the owner's answer."],
+      ['reason', 'string', 'pending_approval and refused: what to do next.'],
+    ],
+  },
+  {
+    id: 'machine',
+    title: 'Machine',
+    intro: 'Returned by machines_list.',
+    fields: [
+      ['id', 'string', 'The machineId of tasks_launch and coordinator_launch.'],
+      ['name · platform', 'string | null', 'As paired.'],
+      ['runnerOnline', 'boolean', 'Its runner is connected now; a launch on an offline runner waits in the queue.'],
+      ['allowedRoots', 'string[]', 'Folders the runner may work in; a cwd outside them is refused. Empty: the runner has not said.'],
+      ['concurrency', 'number | null', 'How many jobs the runner runs at once.'],
+      ['runnerSeenAt', 'number | null', 'Epoch ms of its last heartbeat.'],
+    ],
+  },
+  {
     id: 'control',
     title: 'Control request',
     intro: 'Returned by control_get (in requests).',
@@ -223,6 +252,7 @@ export const TOOL_GROUPS = [
   { id: 'backlog', title: 'Backlog' },
   { id: 'prompts', title: 'Prompts' },
   { id: 'gates', title: 'Gates and findings' },
+  { id: 'launch', title: 'Launching workers and coordinators' },
   { id: 'human', title: 'The human: decisions, controls, digest' },
   { id: 'docs', title: 'Documentation' },
 ] as const;
@@ -511,6 +541,63 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
     example: { note: 'P1–P3 integrated; pausing for the night' },
     notes: ['Queued by `bb mcp` while the server is unreachable.'],
   },
+  machines_list: {
+    group: 'launch',
+    use: 'Before tasks_launch or coordinator_launch: pick the machine (runnerOnline) and a cwd inside its allowed roots.',
+    args: {},
+    returns: 'Machine[] (paired, not revoked), by name.',
+    shapes: ['machine'],
+    example: {},
+  },
+  tasks_launch: {
+    group: 'launch',
+    use: 'Start the worker for a package you claimed, on a runner, instead of starting it yourself. Only when your token may launch workers (the owner turns it on in Settings → Factory → Agent tokens).',
+    args: {
+      taskId: 'The package.',
+      machineId: 'The machine whose runner starts it: an id from machines_list.',
+      cwd: "Working directory on that machine. It must be inside the runner's allowed roots (machines_list).",
+      launcher: 'hc (default): an interactive claude in a new herdr terminal; claude: a headless claude -p job.',
+      model: "Model for claude, e.g. sonnet or opus. Default: the machine's default.",
+      permissionMode: 'default, acceptEdits, plan, auto, dontAsk or bypassPermissions.',
+      maxBudgetUsd: 'Spending limit of a claude -p job, 0–1000 (default 5).',
+      promptId: "A saved prompt (prompts_save). Default: the package's own prompt, else one made from its title, body and acceptance criteria.",
+    },
+    returns: 'Launch result. launched: the package is in_lucru and claimed (by you, if nobody had claimed it); the job records its herdr terminal or session on the package.',
+    shapes: ['launch'],
+    errors: [
+      '403 this agent token may not launch workers', '404 unknown task', '409 this package is already integrated', '409 governor: <reason>',
+      "400 cwd is outside the runner's allowed roots", '400 unknown machine / unknown prompt / invalid model',
+    ],
+    example: { taskId: 'P3', machineId: '6f1c…', cwd: '/home/me/src/arond', launcher: 'hc', permissionMode: 'acceptEdits' },
+    notes: [
+      'Refused while governor_get says canStart is false: there is no force.',
+      'When the owner asked to approve launches, the first call puts a question in their inbox and answers pending_approval with its decisionId. Call again with the same arguments: pending_approval while they have not answered, launched once they answer Launch (within 24 hours), refused otherwise. Do not ask again for a launch they refused unless something changed.',
+      'Every launch is in the audit log as agent:<token name>.',
+    ],
+  },
+  coordinator_launch: {
+    group: 'launch',
+    use: 'Start another coordinator (for example one per repo, or a fresh one on another machine). Only when your token may launch coordinators.',
+    args: {
+      machineId: 'The machine whose runner starts it: an id from machines_list.',
+      cwd: "Working directory on that machine. It must be inside the runner's allowed roots (machines_list).",
+      launcher: 'hc (default): an interactive claude in a new herdr terminal; claude: a headless claude -p job.',
+      model: "Model for claude, e.g. sonnet or opus. Default: the machine's default.",
+      permissionMode: 'default, acceptEdits, plan, auto, dontAsk or bypassPermissions.',
+      maxBudgetUsd: 'Spending limit of a claude -p job, 0–1000 (default 5).',
+      promptId: 'A saved prompt to start it with, instead of the built-in coordinator prompt.',
+      prompt: 'Its first prompt as text (at most 24 000 characters), instead of the built-in one: what to coordinate, which repo.',
+      title: 'Session name (default Coordinator).',
+    },
+    returns: 'Launch result. The herdr terminal is named bb-coord-<job> and labelled bb.role=coordonator.',
+    shapes: ['launch'],
+    errors: ['403 this agent token may not launch coordinators', '409 governor: <reason>', "400 cwd is outside the runner's allowed roots", '400 unknown machine / unknown prompt / invalid model'],
+    example: { machineId: '6f1c…', cwd: '/home/me/src/arond', prompt: 'Coordinate the arond backlog: packages whose repo is arond only.' },
+    notes: [
+      'The built-in prompt tells it to read docs_get and run the coordinator loop. The machine needs the buildyboy MCP server registered for Claude Code (user scope) so the new coordinator has the tools.',
+      'Governor and approval work as in tasks_launch.',
+    ],
+  },
   control_get: {
     group: 'human',
     use: 'Check, at the top of every loop, whether the human asked to stop a package or revert its integration. Handle them, then call again with ack: true.',
@@ -605,7 +692,7 @@ export const AUTH: Record<Auth, { label: string; desc: string }> = {
     desc: 'The PWA\'s session cookie bb_session (from POST /api/auth/login). Every request other than GET also needs the header x-bb-csrf with the value of the bb_csrf cookie.',
   },
   machine: { label: 'Machine token', desc: '"Authorization: Bearer bbm_…": the token a paired machine keeps in ~/.buildyboy/config.json. Used by the plugin\'s hooks, the statusline bridge, OTEL export and the runner.' },
-  agent: { label: 'Agent token', desc: '"Authorization: Bearer bba_…": created in Settings → Factory → Agent tokens, revocable. Reaches only the agent API, /mcp, /api/governor and /api/usage.' },
+  agent: { label: 'Agent token', desc: '"Authorization: Bearer bba_…": created in Settings → Factory → Agent tokens, revocable. Reaches only the agent API, /mcp, /api/governor and /api/usage. It starts workers or coordinators only when the owner allows it for that token.' },
   'web-or-agent': { label: 'Web login or agent token', desc: 'Either one.' },
 };
 
@@ -908,8 +995,15 @@ export const API_GROUPS: ApiGroup[] = [
       { method: 'GET', path: '/api/decisions', auth: 'web', summary: 'Decisions.', query: [f('status', 'pending, answered or cancelled.')], returns: 'Decision[].' },
       { method: 'POST', path: '/api/decisions/:id/answer', auth: 'web', summary: 'Answer a decision.', body: [f('answer', 'Free text or one of its options.')], returns: 'Decision.', errors: ['409 not found or already answered'] },
       { method: 'POST', path: '/api/decisions/:id/cancel', auth: 'web', summary: 'Cancel a pending decision.', returns: 'Decision.', errors: ['409 not found or already answered'] },
-      { method: 'GET', path: '/api/agent-tokens', auth: 'web', summary: 'Agent tokens (never the token itself).', returns: '[{ id, name, createdAt, lastUsedAt, revokedAt }].' },
+      { method: 'GET', path: '/api/agent-tokens', auth: 'web', summary: 'Agent tokens (never the token itself).', returns: '[{ id, name, createdAt, lastUsedAt, revokedAt, launch, launchApproval }].' },
       { method: 'POST', path: '/api/agent-tokens', auth: 'web', summary: 'Create an agent token. The token is in this answer only.', body: [f('name', 'What uses it, e.g. coordinator or claude-desktop.')], returns: '201 { id, name, token (bba_…) }.' },
+      {
+        method: 'PUT', path: '/api/agent-tokens/:id', auth: 'web',
+        summary: 'What the token may launch with tasks_launch and coordinator_launch, and whether each launch waits for your approval.',
+        body: [f('launch', 'off (default), workers or all (workers and coordinators).'), f('launchApproval', 'true (default): every launch is a decision you answer first.')],
+        returns: 'The token, as in GET.',
+        errors: ['400 invalid values', '404 not found or revoked'],
+      },
       { method: 'POST', path: '/api/agent-tokens/:id/revoke', auth: 'web', summary: 'Revoke an agent token; it stops working at once.', returns: OK, errors: ['404 not found or already revoked'] },
       { method: 'GET', path: '/api/digests', auth: 'web', summary: 'The last 30 digests.', returns: 'Digest[].' },
       { method: 'POST', path: '/api/digests', auth: 'web', summary: 'Send the digest now.', body: [f('note', 'Optional.')], returns: '201 Digest.' },
@@ -1057,6 +1151,9 @@ curl -X POST ${u}/api/agent/tasks_list -H "Authorization: Bearer bba_…" -H "Co
   default) blocks the package (\`blocata\`) and asks the human whether to allow another round.
 - **Governor**: from the subscription's 5-hour and 7-day windows, says whether a new worker may start
   (\`canStart\`) or the factory must stop (\`stopAll\`).
+- **Launching**: an agent token the owner allowed to launch can start workers (\`tasks_launch\`) and, if allowed,
+  coordinators (\`coordinator_launch\`) on a paired machine's runner. Refused while the governor says no; may wait
+  for the owner's approval first.
 - **Decisions**: questions for the human, answered on the phone. **Controls**: the human's requests to stop a
   package or revert its integration. **Digest**: a daily summary pushed to the phone.
 - **Roles and cost**: sessions started with the env vars \`BB_TASK=<id>\` and \`BB_ROLE\` (lucrator = worker, qa,
@@ -1072,7 +1169,8 @@ curl -X POST ${u}/api/agent/tasks_list -H "Authorization: Bearer bba_…" -H "Co
 4. Write the worker prompt: \`prompts_render\` with the harness slots (Goal, Done when, Scope, Limit, Subagents,
    Branch, PR, Unattended) and the package's acceptance criteria; fix what \`warnings\` says; \`prompts_save {taskId}\`.
 5. Start the worker in a worktree with \`BB_TASK\` and \`BB_ROLE=lucrator\` set, and record it:
-   \`tasks_update {id, branch, terminal or sessionId}\`.
+   \`tasks_update {id, branch, terminal or sessionId}\`. Or, when your token may launch, let a runner start it:
+   \`machines_list\`, then \`tasks_launch {taskId, machineId, cwd}\` (it records the terminal or session itself).
 6. When it is done: \`tasks_update {status: "la_porti"}\`. Run each gate: \`gates_run\` then \`gates_status\` until
    \`done\`/\`error\` for recipe gates, or run a check yourself and \`gates_record\` it. On a fail, hand the open
    blockers and majors (\`findings_list {taskId, status: "open"}\`) back to the worker, move it to \`in_lucru\`, repeat.

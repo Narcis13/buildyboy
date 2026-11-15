@@ -7,7 +7,7 @@ import { randomToken, sha256 } from '../auth.ts';
 import { listSessions, sessionDetail } from '../queries.ts';
 import { promptStore } from '../routes/prompts.ts';
 import { lintPrompt, parseTemplate, renderTemplate } from '../../shared/harness.ts';
-import { TOOLS, TOOL_NAMES, type AgentTokenView, type ToolArgs, type ToolName } from '../../shared/factory.ts';
+import { LAUNCH_SCOPES, TOOLS, TOOL_NAMES, type AgentTokenView, type LaunchScope, type ToolArgs, type ToolName } from '../../shared/factory.ts';
 import { agentGuide } from '../docs/reference.ts';
 import { governor, readUsage } from './governor.ts';
 import { ackControls, claimTask, controls, createTask, FactoryError, getTask, listTasks, recordGate, taskSummary, updateTask } from './tasks.ts';
@@ -15,6 +15,7 @@ import { askDecision, getDecision } from './decisions.ts';
 import { sendDigest } from './digest.ts';
 import { listFindings, updateFindings } from './findings.ts';
 import { gateRunStatus, startGateRun } from './gateruns.ts';
+import { agentLaunch, listMachines } from './launch.ts';
 
 export function createAgentToken(ctx: Ctx, name: string): { id: string; token: string } {
   const id = randomUUID();
@@ -25,8 +26,29 @@ export function createAgentToken(ctx: Ctx, name: string): { id: string; token: s
 
 export function listAgentTokens(ctx: Ctx): AgentTokenView[] {
   return ctx.db
-    .all<{ id: string; name: string; created_at: number; last_used_at: number | null; revoked_at: number | null }>('SELECT * FROM agent_tokens ORDER BY created_at DESC')
-    .map((r) => ({ id: r.id, name: r.name, createdAt: r.created_at, lastUsedAt: r.last_used_at, revokedAt: r.revoked_at }));
+    .all<{ id: string; name: string; created_at: number; last_used_at: number | null; revoked_at: number | null; launch: string; launch_approval: number }>(
+      'SELECT * FROM agent_tokens ORDER BY created_at DESC',
+    )
+    .map((r) => ({
+      id: r.id, name: r.name, createdAt: r.created_at, lastUsedAt: r.last_used_at, revokedAt: r.revoked_at,
+      launch: (LAUNCH_SCOPES as readonly string[]).includes(r.launch) ? (r.launch as LaunchScope) : 'off', launchApproval: r.launch_approval !== 0,
+    }));
+}
+
+/** Settings → Factory → Agent tokens: what a token may launch, and whether each launch waits for the owner's approval. */
+export function setTokenLaunch(ctx: Ctx, id: string, p: { launch?: LaunchScope; launchApproval?: boolean }): AgentTokenView | null {
+  const sets: string[] = [];
+  const args: (string | number)[] = [];
+  if (p.launch !== undefined) {
+    sets.push('launch = ?');
+    args.push(p.launch);
+  }
+  if (p.launchApproval !== undefined) {
+    sets.push('launch_approval = ?');
+    args.push(p.launchApproval ? 1 : 0);
+  }
+  if (sets.length && !ctx.db.run(`UPDATE agent_tokens SET ${sets.join(', ')} WHERE id = ? AND revoked_at IS NULL`, ...args, id).changes) return null;
+  return listAgentTokens(ctx).find((t) => t.id === id && !t.revokedAt) ?? null;
 }
 
 export function revokeAgentToken(ctx: Ctx, id: string): boolean {
@@ -51,7 +73,12 @@ export function requireAgent(ctx: Ctx): MiddlewareHandler {
   };
 }
 
-type Handler<T extends ToolName> = (ctx: Ctx, args: ToolArgs<T>, actor: string) => unknown;
+/** Who calls: the agent token's id (its launch permission lives there), null when there is none. */
+export interface Caller {
+  tokenId: string | null;
+}
+
+type Handler<T extends ToolName> = (ctx: Ctx, args: ToolArgs<T>, actor: string, caller: Caller) => unknown;
 
 function templateFor(store: ReturnType<typeof promptStore>, a: { templateId?: number; template?: string }) {
   const t = store.template(a);
@@ -115,6 +142,9 @@ export const HANDLERS: { [K in ToolName]: Handler<K> } = {
     return d;
   },
   digest_post: (ctx, a) => sendDigest(ctx, 'manual', a.note ?? null),
+  machines_list: (ctx) => listMachines(ctx),
+  tasks_launch: (ctx, a, actor, caller) => agentLaunch(ctx, 'worker', a, actor, caller.tokenId),
+  coordinator_launch: (ctx, a, actor, caller) => agentLaunch(ctx, 'coordinator', a, actor, caller.tokenId),
   control_get: (ctx, a, actor) => {
     const open = controls(ctx, { taskId: a.taskId });
     if (!a.ack || !open.length) return { requests: open, acked: false };
@@ -137,7 +167,7 @@ const KEY_TTL_MS = 30 * 24 * 3600_000;
  * With an idempotency key, a repeated key returns the first answer and changes nothing (`replayed: true`).
  * Throws FactoryError (status + message) for every refusal: unknown tool 404, bad arguments 400, and the handlers' own.
  */
-export function callTool(ctx: Ctx, name: string, rawArgs: unknown, actor: string, key: string | null = null): { result: unknown; replayed?: true } {
+export function callTool(ctx: Ctx, name: string, rawArgs: unknown, actor: string, key: string | null = null, caller: Caller = { tokenId: null }): { result: unknown; replayed?: true } {
   if (!TOOL_NAMES.includes(name as ToolName)) throw new FactoryError(404, `unknown tool ${name}`);
   const tool = name as ToolName;
   const parsed = TOOLS[tool].input.safeParse(rawArgs ?? {});
@@ -148,7 +178,7 @@ export function callTool(ctx: Ctx, name: string, rawArgs: unknown, actor: string
     if (seen) return { result: seen.result_json ? JSON.parse(seen.result_json) : null, replayed: true };
   }
   const run = () => {
-    const result = (HANDLERS[tool] as (ctx: Ctx, a: unknown, actor: string) => unknown)(ctx, parsed.data, actor) ?? null;
+    const result = (HANDLERS[tool] as (ctx: Ctx, a: unknown, actor: string, caller: Caller) => unknown)(ctx, parsed.data, actor, caller) ?? null;
     if (key) {
       db.run('INSERT INTO agent_calls (key, tool, result_json, created_at) VALUES (?, ?, ?, ?)', key, tool, JSON.stringify(result), Date.now());
       if (Math.random() < 0.01) db.run('DELETE FROM agent_calls WHERE created_at < ?', Date.now() - KEY_TTL_MS);

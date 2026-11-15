@@ -1,7 +1,7 @@
 // Settings for the factory (SPEC §11): agent tokens for `bb mcp`, the governor's thresholds, and the daily digest.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AgentTokenView, DigestView } from '../../../../shared/factory.ts';
+import { LAUNCH_SCOPES, LAUNCH_SCOPE_LABEL, type AgentTokenView, type DigestView, type LaunchScope } from '../../../../shared/factory.ts';
 import { api } from '../../lib/api.ts';
 import { Badge, CopyButton, RelTime, Toggle } from '../ui.tsx';
 import { Field, inputClass, NumberField, SaveButton, SectionCard } from './bits.tsx';
@@ -55,12 +55,16 @@ function TokensCard({ publicUrl }: { publicUrl: string }) {
       qc.invalidateQueries({ queryKey: ['agent-tokens'] });
     },
   });
+  const setLaunch = useMutation({
+    mutationFn: ({ id, ...patch }: { id: string; launch?: LaunchScope; launchApproval?: boolean }) => api.put<AgentTokenView>(`/api/agent-tokens/${id}`, patch),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['agent-tokens'] }),
+  });
   const line = fresh ? mcpAddLine(publicUrl, fresh.token) : '';
   const httpLine = fresh ? mcpHttpLine(publicUrl, fresh.token) : '';
   return (
     <SectionCard
       title="Factory: agent tokens"
-      hint="A token lets an agent (the coordinator, Claude Desktop, any MCP client) read and write the backlog, record gates and ask you decisions. It cannot do anything else."
+      hint="A token lets an agent (the coordinator, Claude Desktop, any MCP client) read and write the backlog, record gates and ask you decisions. It starts workers or coordinators on your machines only if you allow it below."
       testId="settings-factory-tokens"
     >
       <form
@@ -124,6 +128,27 @@ function TokensCard({ publicUrl }: { publicUrl: string }) {
                   created <RelTime ts={t.createdAt} /> · last used {t.lastUsedAt ? <RelTime ts={t.lastUsedAt} /> : 'never'}
                   {t.revokedAt ? <> · revoked <RelTime ts={t.revokedAt} /></> : null}
                 </div>
+                {!t.revokedAt && (
+                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+                    <label className="flex items-center gap-2 text-[15px]">
+                      <span className="text-muted">May launch</span>
+                      <select
+                        className={`${inputClass} w-auto`}
+                        value={t.launch}
+                        disabled={setLaunch.isPending}
+                        onChange={(e) => setLaunch.mutate({ id: t.id, launch: e.target.value as LaunchScope })}
+                        data-testid="agent-token-launch"
+                      >
+                        {LAUNCH_SCOPES.map((l) => <option key={l} value={l}>{LAUNCH_SCOPE_LABEL[l]}</option>)}
+                      </select>
+                    </label>
+                    {t.launch !== 'off' && (
+                      <span data-testid="agent-token-approval">
+                        <Toggle on={t.launchApproval} label="Ask me before each launch" disabled={setLaunch.isPending} onChange={(v) => setLaunch.mutate({ id: t.id, launchApproval: v })} />
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
               {!t.revokedAt &&
                 (confirm === t.id ? (
@@ -139,6 +164,11 @@ function TokensCard({ publicUrl }: { publicUrl: string }) {
         </ul>
       )}
       {revoke.error && <div role="alert" className="text-error">{(revoke.error as Error).message}</div>}
+      {setLaunch.error && <div role="alert" className="text-error">{(setLaunch.error as Error).message}</div>}
+      <p className="text-sm text-muted">
+        A token allowed to launch starts agents through a runner with <code className="font-mono">tasks_launch</code> (workers) and{' '}
+        <code className="font-mono">coordinator_launch</code>, never while the governor says no. With “Ask me” on, each launch first waits for your answer in Decisions.
+      </p>
     </SectionCard>
   );
 }

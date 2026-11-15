@@ -110,7 +110,7 @@ From the package page (`LaunchTask`), `POST /api/tasks/:id/launch`:
 | The coordinator (an agent in a herdr terminal) | `hc run --bg …` on its own machine | Yes, the normal factory path |
 | Another machine, through herdr | `hc machine add <ssh-target>`, then `hc run --on <machine> --bg …` (address `machine/t7`); or `ssh box hc run …` / `ssh box hc connect` | Yes, over ssh or a `--via` command. No machines are registered yet (`hc machine ls` → `[]`) |
 | Narcis, from the phone or browser | Package launch with `launcher: 'hc'` on any machine that runs a runner and has `hc` | Yes (web login) |
-| An external AI agent through Buildyboy | `bb mcp` or HTTP `/mcp` with an agent token | **No** |
+| An external AI agent through Buildyboy | `tasks_launch` / `coordinator_launch` over `bb mcp` or HTTP `/mcp`, with an agent token | Only when Narcis allows that token (off by default) |
 
 ### herdr on its own
 
@@ -118,30 +118,36 @@ herdr opens no network port. It reaches other machines through ssh, or through a
 (for example `--via 'wsl.exe -d Ubuntu -e sh -c' --name wsl`). `hc connect` speaks herdr's API over stdin/stdout,
 for app builders (`hc schema` prints it as JSON Schema).
 
-### Why an external agent can't launch through Buildyboy
+### Agents launching through Buildyboy
 
-- `POST /api/tasks/:id/launch`, `POST /api/jobs` and `/api/jobs/fanout` require a web session (`requireWeb`). An
-  agent token is refused.
-- None of the agent tools, in `bb mcp` or the HTTP `/mcp` endpoint, launch a job or a terminal. They cover tasks,
-  gates, decisions, control, the governor, findings, prompts, the digest, sessions and usage.
-- `gates_run` runs a gate's argv steps on the runner, but only from the recipe in the repo's main checkout. It is not
-  a way to start terminals.
+`POST /api/tasks/:id/launch`, `POST /api/jobs` and `/api/jobs/fanout` still require a web session. Agents launch
+through two tools that share the launch route's code (`server/factory/launch.ts`), so they get the same
+allowed-roots check, checked argv and claim on the package:
 
-So today an agent starts terminals only by running `hc` itself, on a machine where it already runs.
+- `tasks_launch {taskId, machineId, cwd, launcher?, model?, permissionMode?, maxBudgetUsd?, promptId?}` starts a
+  worker for a package, exactly as the package page does.
+- `coordinator_launch {machineId, cwd, …, prompt?, promptId?, title?}` starts a coordinator: terminal
+  `bb-coord-<job>`, label `bb.role=coordonator`, the built-in coordinator prompt unless it gets its own. The machine
+  needs the buildyboy MCP server registered for Claude Code so the new coordinator has the tools.
+- `machines_list` gives the `machineId`s, whether their runner is online, and their allowed roots.
 
-## 6. Possible extension: `tasks_launch` for agents
+The rules:
 
-If remote agents should be able to start workers through Buildyboy:
+- **Off by default, per token.** Settings → Factory → Agent tokens → *May launch*: Nothing, Workers, or Workers and
+  coordinators (`PUT /api/agent-tokens/:id {launch, launchApproval}`). Otherwise 403.
+- **Approval.** *Ask me before each launch* (on by default): the first call opens a decision (Launch / Refuse) and
+  answers `pending_approval`; the same call again answers the same until Narcis replies; after **Launch** the next
+  identical call starts it. One approval, one launch, valid 24 hours. Refused or cancelled → `refused`.
+- **Governor.** Refused (409) while `governor_get` says `canStart: false`, checked before asking and again at launch.
+- **Checks first.** A launch that would fail anyway (outside the allowed roots, unknown machine, bad option) is refused
+  before Narcis is asked.
+- **Audit.** `task_launch` / `coordinator_launch` as `agent:<name>` (with the decision id), plus
+  `launch_approval_asked` and `launch_refused`.
 
-- **One tool, same path.** Add an agent tool `tasks_launch {taskId, machineId, cwd, launcher?, model?,
-  maxBudgetUsd?}` that reuses the launch route's logic. That keeps the allowed-roots check, the checked argv and the
-  claim on the package.
-- **Off by default.** Turn it on per agent token or with a setting (for example `agent_launch_enabled`).
-- **Optional approval.** It could first ask Narcis through `decision_ask` and launch only after approval.
-- **Respect the governor.** Refuse while `governor_get` says no.
-- **Audit it.** Record each launch as `agent:<name>`, like the other agent writes.
+`gates_run` still only runs a gate's argv steps from the recipe in the repo's main checkout: it is not a way to start
+terminals.
 
-## 7. Settings and env, at a glance
+## 6. Settings and env, at a glance
 
 | Name | Where | Meaning |
 |---|---|---|

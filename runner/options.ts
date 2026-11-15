@@ -11,9 +11,13 @@ export interface StoredJobOptions extends JobOptions {
   launcher?: 'claude' | 'hc';
   /** the backlog package this job works on; names the herdr terminal and links it back */
   taskId?: string;
+  /** what the started agent is: a coordinator gets its own terminal name (bb-coord-…) and a bb.role label */
+  role?: (typeof JOB_ROLES)[number];
 }
 
 export const LAUNCHERS = ['claude', 'hc'] as const;
+/** The BB_ROLE values a launch can name (shared/factory.ts ROLES). */
+export const JOB_ROLES = ['lucrator', 'coordonator'] as const;
 
 /** Structured-output schemas jobs may ask for, by id. `specify` turns a rough idea into harness slots + a draft spec. */
 export const OUTPUT_SCHEMAS = {
@@ -76,6 +80,7 @@ export function checkOptions(o: unknown): StoredJobOptions {
   if (r.outputSchema !== undefined && !Object.hasOwn(OUTPUT_SCHEMAS, String(r.outputSchema))) throw new OptionError(`unknown outputSchema: ${JSON.stringify(r.outputSchema)}`);
   if (r.verify !== undefined && (!Array.isArray(r.verify) || r.verify.some((c) => typeof c !== 'string' || c.length > 2000) || r.verify.length > 30)) throw new OptionError('verify must be a list of commands');
   if (r.launcher !== undefined && r.launcher !== '' && !LAUNCHERS.includes(r.launcher as never)) throw new OptionError(`invalid launcher: ${JSON.stringify(r.launcher)}`);
+  if (r.role !== undefined && r.role !== '' && !JOB_ROLES.includes(r.role as never)) throw new OptionError(`invalid role: ${JSON.stringify(r.role)}`);
   const out: StoredJobOptions = {
     model: str(r.model, 'model', MODEL_RE),
     fallbackModel: str(r.fallbackModel, 'fallbackModel', MODEL_RE),
@@ -93,6 +98,7 @@ export function checkOptions(o: unknown): StoredJobOptions {
     outputSchema: r.outputSchema as StoredJobOptions['outputSchema'],
     launcher: (r.launcher || undefined) as StoredJobOptions['launcher'],
     taskId: str(r.taskId, 'taskId', TASK_RE),
+    role: (r.role || undefined) as StoredJobOptions['role'],
   };
   for (const k of Object.keys(out) as (keyof StoredJobOptions)[]) if (out[k] === undefined) delete out[k];
   return out;
@@ -133,6 +139,11 @@ export function hcTerminalName(taskId: string | null | undefined, jobId?: string
   return `bb-${base}`.slice(0, 32).replace(/-+$/, '');
 }
 
+/** hc terminal name for a coordinator: `bb-coord-` and the start of the job id. */
+export function hcCoordinatorName(jobId: string): string {
+  return `bb-coord-${jobId.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8) || 'x'}`;
+}
+
 const HC_ID_RE = /^[\w.-]{1,64}$/;
 /** Longest prompt we put on a command line (Windows allows about 32k characters in all). */
 export const HC_PROMPT_MAX = 24_000;
@@ -147,8 +158,10 @@ export function buildHcRunArgs(raw: unknown, a: { jobId: string; cwd: string; ti
   const prompt = a.prompt.trim();
   if (!prompt) throw new OptionError('empty prompt');
   if (prompt.length > HC_PROMPT_MAX) throw new OptionError(`prompt is too long for a terminal command line (${prompt.length} > ${HC_PROMPT_MAX} characters); launch it with claude -p`);
-  const args = ['run', '--bg', '--json', '--name', hcTerminalName(o.taskId, a.jobId), '--cwd', a.cwd, '--label', 'owner=buildyboy'];
+  const name = !o.taskId && o.role === 'coordonator' ? hcCoordinatorName(a.jobId) : hcTerminalName(o.taskId, a.jobId);
+  const args = ['run', '--bg', '--json', '--name', name, '--cwd', a.cwd, '--label', 'owner=buildyboy'];
   if (o.taskId) args.push('--label', `bb.task=${o.taskId}`);
+  if (o.role) args.push('--label', `bb.role=${o.role}`);
   args.push('--label', `bb.job=${a.jobId}`, '--no-parent', ...(a.program?.length ? a.program : ['claude']));
   if (o.model) args.push('--model', o.model);
   if (o.permissionMode) args.push('--permission-mode', o.permissionMode);

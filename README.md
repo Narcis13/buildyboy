@@ -15,8 +15,9 @@ runs from a prompt composer built on [`harness-prompt.md`](harness-prompt.md).
   paired machine through the runner.
 - **Insights**: cost and tokens over time, most-used tools, most-failed commands, wait time, job success rates, full-text
   search and `bb import` to backfill months of history.
-- **MCP for agents**: the factory's 22 tools (backlog, governor, gates, findings, decisions, digest) for any MCP client,
-  over Streamable HTTP at `https://<host>/mcp` or over stdio with `bb mcp`, authenticated with a revocable agent token.
+- **MCP for agents**: the factory's 25 tools (backlog, governor, gates, findings, decisions, digest, and, when you allow
+  it, launching workers and coordinators) for any MCP client, over Streamable HTTP at `https://<host>/mcp` or over stdio
+  with `bb mcp`, authenticated with a revocable agent token.
 
 **The user manual** is built in: open **Docs** in the app, or `/docs` on your server. It is rendered on the server
 with [Faqir UI](https://www.npmjs.com/package/@faqir-ui/template) from the templates in `server/docs/templates`; notes

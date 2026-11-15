@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { startTestServer, type TestServer, type WebClient } from './helpers.ts';
 import { createMachine } from '../server/auth.ts';
+import { createAgentToken } from '../server/factory/agent.ts';
 import { createJob } from '../server/jobs/core.ts';
 import { terminalViews } from '../server/routes/herdr.ts';
 import { startRunner, type Runner } from '../runner/main.ts';
@@ -330,7 +331,164 @@ describe('launching a package', () => {
   });
 });
 
+describe('agents launching workers and coordinators', () => {
+  let token: { id: string; token: string };
+  const call = async (tool: string, body: unknown = {}) => {
+    const r = await fetch(`${srv.url}/api/agent/${tool}`, { method: 'POST', headers: { authorization: `Bearer ${token.token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const j = (await r.json()) as { result?: any; error?: string };
+    return { status: r.status, result: j.result, error: j.error };
+  };
+  const allow = (launch: string, launchApproval: boolean) => web.put(`/api/agent-tokens/${token.id}`, { launch, launchApproval });
+  const usage = (pct: number) =>
+    fetch(`${srv.url}/api/statusline`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${machine.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: 'gov-launch', rate_limits: { five_hour: { used_percentage: pct, resets_at: Math.floor(Date.now() / 1000) + 3600 } } }),
+    });
+  const audit = (action: string) => srv.ctx.db.all<{ actor: string; target: string | null; detail: string | null }>('SELECT actor, target, detail FROM audit_log WHERE action = ? ORDER BY id', action);
+  const pending = () => srv.ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM decisions WHERE status = 'pending'")!.n;
+
+  beforeAll(async () => {
+    token = createAgentToken(srv.ctx, 'launcher');
+    // the statusline bridge only records usage for a session it knows
+    expect((await ingest(machine.token, envelope('gov-launch', Date.now(), {}))).status).toBe(200);
+  });
+
+  it('is off for a new token; machines_list shows where a launch could go', async () => {
+    expect((await web.get('/api/agent-tokens')).find((t: { id: string }) => t.id === token.id)).toMatchObject({ launch: 'off', launchApproval: true });
+    await newTask('T40');
+    const w = await call('tasks_launch', { taskId: 'T40', machineId: machine.id, cwd: repoA });
+    expect(w.status).toBe(403);
+    expect(w.error).toMatch(/may not launch workers/);
+    expect((await call('coordinator_launch', { machineId: machine.id, cwd: repoA })).status).toBe(403);
+    const machines = (await call('machines_list')).result;
+    expect(machines.find((m: { id: string }) => m.id === machine.id)).toMatchObject({ name: 'hc-box', runnerOnline: true, allowedRoots: [join(tmp, 'roots')] });
+    await expect(web.put(`/api/agent-tokens/${token.id}`, { launch: 'everything' })).rejects.toThrow(/400/);
+  });
+
+  it('starts a worker through the launch route\'s path, only while the governor allows it, recorded as the agent', async () => {
+    await allow('workers', false);
+    await usage(95);
+    const blocked = await call('tasks_launch', { taskId: 'T40', machineId: machine.id, cwd: repoA });
+    expect(blocked.status).toBe(409);
+    expect(blocked.error).toMatch(/^governor: /);
+    await usage(10);
+    // the same checks as the PWA: allowed roots, options, a known machine
+    expect((await call('tasks_launch', { taskId: 'T40', machineId: machine.id, cwd: outside })).error).toMatch(/outside the runner's allowed roots/);
+    expect((await call('tasks_launch', { taskId: 'T40', machineId: machine.id, cwd: repoA, model: 'x; rm' })).error).toMatch(/invalid model/);
+    expect((await call('tasks_launch', { taskId: 'T40', machineId: 'nope', cwd: repoA })).error).toMatch(/unknown machine/);
+    expect((await call('tasks_launch', { taskId: 'NOPE', machineId: machine.id, cwd: repoA })).status).toBe(404);
+
+    const before = hcRuns().length;
+    const r = await call('tasks_launch', { taskId: 'T40', machineId: machine.id, cwd: repoA, permissionMode: 'acceptEdits' });
+    expect(r.status).toBe(200);
+    expect(r.result).toMatchObject({ status: 'launched', kind: 'worker', launcher: 'hc', taskId: 'T40', decisionId: null });
+    expect(await task('T40')).toMatchObject({ status: 'in_lucru', claimedBy: 'agent:launcher', jobId: r.result.jobId });
+    expect((await waitStatus(r.result.jobId, 'succeeded', 'failed')).status).toBe('succeeded');
+    const argv = hcRuns().at(-1)!;
+    expect(hcRuns()).toHaveLength(before + 1);
+    expect(argv.slice(0, 5)).toEqual(['run', '--bg', '--json', '--name', 'bb-t40']);
+    expect(argv).toContain('bb.task=T40');
+    expect(argv).not.toContain('bb.role=coordonator');
+    expect(await task('T40')).toMatchObject({ terminal: expect.stringMatching(/^t\d+$/) });
+    expect(audit('task_launch').at(-1)).toMatchObject({ actor: 'agent:launcher', target: 'T40' });
+
+    // workers only: no coordinators
+    expect((await call('coordinator_launch', { machineId: machine.id, cwd: repoA })).error).toMatch(/may not launch coordinators/);
+  });
+
+  it('starts a coordinator terminal once the owner approves it, asking only once', async () => {
+    await allow('all', true);
+    const args = { machineId: machine.id, cwd: repoA, model: 'opus' };
+    const asked = pending();
+    const first = await call('coordinator_launch', args);
+    expect(first.result).toMatchObject({ status: 'pending_approval', kind: 'coordinator', decisionId: expect.any(String) });
+    expect(pending()).toBe(asked + 1);
+    const d = await web.get<{ question: string; context: string; options: string[] }[]>('/api/decisions?status=pending').then((l) => l.find((x: any) => x.id === first.result.decisionId)!);
+    expect(d.question).toBe('Start a coordinator on hc-box?');
+    expect(d.options).toEqual(['Launch', 'Refuse']);
+    expect(d.context).toContain('agent:launcher');
+    expect(d.context).toContain('Model: opus');
+
+    // asking again changes nothing while the owner has not answered; nothing was started
+    const before = hcRuns().length;
+    expect((await call('coordinator_launch', { ...args, launcher: 'hc', maxBudgetUsd: 5 })).result).toMatchObject({ status: 'pending_approval', decisionId: first.result.decisionId });
+    expect(pending()).toBe(asked + 1);
+    expect(hcRuns()).toHaveLength(before);
+
+    await web.post(`/api/decisions/${first.result.decisionId}/answer`, { answer: 'Launch' });
+    const launched = await call('coordinator_launch', args);
+    expect(launched.result).toMatchObject({ status: 'launched', kind: 'coordinator', taskId: null, decisionId: first.result.decisionId });
+    expect((await waitStatus(launched.result.jobId, 'succeeded', 'failed')).status).toBe('succeeded');
+    const argv = hcRuns().at(-1)!;
+    expect(argv[argv.indexOf('--name') + 1]).toMatch(/^bb-coord-[a-z0-9]{8}$/);
+    expect(argv).toContain('bb.role=coordonator');
+    expect(argv.some((a) => a.startsWith('bb.task='))).toBe(false);
+    expect(argv[argv.indexOf('--model') + 1]).toBe('opus');
+    expect(argv[argv.indexOf('-n') + 1]).toBe('Coordinator');
+    expect(argv.at(-1)).toContain('# Buildyboy coordinator');
+    expect(argv.at(-1)).toContain('docs_get');
+    expect(audit('coordinator_launch').at(-1)).toMatchObject({ actor: 'agent:launcher', target: launched.result.jobId });
+    expect(JSON.parse(audit('coordinator_launch').at(-1)!.detail!)).toMatchObject({ decisionId: first.result.decisionId, cwd: repoA });
+
+    // an approval is good for one launch: the same call asks again
+    const again = await call('coordinator_launch', args);
+    expect(again.result.status).toBe('pending_approval');
+    expect(again.result.decisionId).not.toBe(first.result.decisionId);
+    await web.post(`/api/decisions/${again.result.decisionId}/cancel`);
+  });
+
+  it('a refused worker launch starts nothing, and is never asked about when it would fail anyway', async () => {
+    await newTask('T41');
+    const asked = pending();
+    expect((await call('tasks_launch', { taskId: 'T41', machineId: machine.id, cwd: outside })).status).toBe(400);
+    expect(pending()).toBe(asked); // checked before the owner is bothered
+
+    const custom = { taskId: 'T41', machineId: machine.id, cwd: repoA };
+    const first = await call('tasks_launch', custom);
+    expect(first.result).toMatchObject({ status: 'pending_approval', kind: 'worker' });
+    const d = await web.get<any[]>('/api/decisions?status=pending').then((l) => l.find((x) => x.id === first.result.decisionId));
+    expect(d).toMatchObject({ taskId: 'T41', question: 'Start a worker for T41 on hc-box?' });
+    await web.post(`/api/decisions/${first.result.decisionId}/answer`, { answer: 'Refuse' });
+    const before = hcRuns().length;
+    expect((await call('tasks_launch', custom)).result).toMatchObject({ status: 'refused', answer: 'Refuse', decisionId: first.result.decisionId });
+    expect(hcRuns()).toHaveLength(before);
+    expect(await task('T41')).toMatchObject({ status: 'gata', claimedBy: null, jobId: null });
+    // a later call is a new question
+    const next = await call('tasks_launch', custom);
+    expect(next.result.status).toBe('pending_approval');
+    expect(next.result.decisionId).not.toBe(first.result.decisionId);
+    await web.post(`/api/decisions/${next.result.decisionId}/cancel`);
+  });
+
+  it('shows the owner the prompt a coordinator would start with', async () => {
+    const r = await call('coordinator_launch', { machineId: machine.id, cwd: repoA, prompt: 'Coordinate repo-a only.\nNever touch main.', title: 'repo-a coordinator' });
+    expect(r.result.status).toBe('pending_approval');
+    const d = await web.get<any[]>('/api/decisions?status=pending').then((l) => l.find((x) => x.id === r.result.decisionId));
+    expect(d.context).toContain('> Coordinate repo-a only.\n> Never touch main.');
+    expect(d.taskId).toBeNull();
+    await web.post(`/api/decisions/${r.result.decisionId}/cancel`);
+    expect((await call('coordinator_launch', { machineId: machine.id, cwd: repoA, prompt: 'Coordinate repo-a only.\nNever touch main.', title: 'repo-a coordinator' })).result)
+      .toMatchObject({ status: 'refused', reason: 'the owner cancelled the question' });
+  });
+
+  it('turning launch off stops the token at once, approval or not', async () => {
+    await allow('off', true);
+    expect((await call('tasks_launch', { taskId: 'T41', machineId: machine.id, cwd: repoA })).status).toBe(403);
+  });
+});
+
 describe('options and argv', () => {
+  it('builds a coordinator terminal: its own name and a role label', () => {
+    expect(checkOptions({ maxBudgetUsd: 1, role: 'coordonator' })).toEqual({ maxBudgetUsd: 1, role: 'coordonator' });
+    expect(() => checkOptions({ maxBudgetUsd: 1, role: 'boss' })).toThrow(/role/);
+    const a = buildHcRunArgs({ maxBudgetUsd: 1, launcher: 'hc', role: 'coordonator' }, { jobId: 'ABCD1234-ffff', cwd: '/w', title: 'Coordinator', prompt: 'go', program: ['/bin/claude'] });
+    expect(a).toEqual([
+      'run', '--bg', '--json', '--name', 'bb-coord-abcd1234', '--cwd', '/w', '--label', 'owner=buildyboy', '--label', 'bb.role=coordonator', '--label', 'bb.job=ABCD1234-ffff', '--no-parent',
+      '/bin/claude', '-n', 'Coordinator', 'go',
+    ]);
+  });
+
   it('validates launcher and taskId', () => {
     expect(checkOptions({ maxBudgetUsd: 1, launcher: 'hc', taskId: 'T-1.a' })).toEqual({ maxBudgetUsd: 1, launcher: 'hc', taskId: 'T-1.a' });
     expect(() => checkOptions({ maxBudgetUsd: 1, launcher: 'sh' })).toThrow(/launcher/);

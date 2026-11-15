@@ -30,12 +30,12 @@ export function mcpRoutes(ctx: Ctx) {
 
   const handler = createMcpHandler(
     ({ authInfo }) => {
-      const agent = authInfo?.extra as { name: string } | undefined;
+      const agent = authInfo?.extra as { id: string; name: string } | undefined;
       const server = new McpServer({ ...MCP_SERVER_INFO }, { instructions: MCP_INSTRUCTIONS });
       registerTools(server, async (name, args) => {
         if (!agent) throw new Error('unauthorized');
         checkShots(name, args);
-        return callTool(ctx, name, args, `agent:${agent.name}`).result;
+        return callTool(ctx, name, args, `agent:${agent.name}`, null, { tokenId: agent.id }).result;
       });
       return server;
     },
@@ -56,7 +56,7 @@ export function mcpRoutes(ctx: Ctx) {
         { 'www-authenticate': 'Bearer realm="buildyboy"' },
       );
     }
-    const authInfo: AuthInfo = { token: 'bba_', clientId: agent.id, scopes: ['agent'], extra: { name: agent.name } };
+    const authInfo: AuthInfo = { token: 'bba_', clientId: agent.id, scopes: ['agent'], extra: { id: agent.id, name: agent.name } };
     return handler.fetch(c.req.raw, { authInfo });
   });
 

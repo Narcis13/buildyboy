@@ -26,7 +26,9 @@ block content
     | The coordinator does not use a machine's key. It uses an
     strong agent key
     | , which can only reach the factory's tools, not your sessions' controls or settings, and which you can revoke at
-    | any time.
+    | any time. It starts nothing on your machines unless you allow it (see
+    a(href="#launch") Letting agents start agents
+    | ).
   ol
     li
       | Open
@@ -243,6 +245,45 @@ block content
     | From a package's page you can also start it as an interactive agent in a new herdr terminal, rather than as a
     | one-shot job: see
     a(href="/docs/backlog#launch") Starting a package
+    | .
+
+  h2#launch Letting agents start agents
+  p
+    | A coordinator can start workers for its packages, and even other coordinators, through a machine's runner,
+    | the same way the package page does: inside the runner's allowed folders, with checked options, and claiming the
+    | package. It is off for every key until you turn it on.
+  ol
+    li
+      | In
+      strong Settings → Factory → Agent tokens
+      | , set
+      strong May launch
+      | for that key to
+      strong Workers
+      | (the
+      code tasks_launch
+      | tool) or
+      strong Workers and coordinators
+      | (also
+      code coordinator_launch
+      | ).
+    li
+      | Leave
+      strong Ask me before each launch
+      | on to approve every launch from your phone. The agent's first call puts a question in
+      a(href="/docs/backlog#decisions") Decisions
+      | ; nothing starts until you answer
+      strong Launch
+      | and the agent asks again. An approval is good for one launch, for 24 hours.
+  p
+    | A launch is refused while the
+    a(href="#governor") governor
+    | says no new work may start, and each one is in the audit log under the key's name. A coordinator started this way
+    | runs in a herdr terminal named
+    code bb-coord-…
+    | and reads its instructions from Buildyboy, so the machine needs the MCP server registered for Claude Code (step 2).
+    | The agent finds machines and their allowed folders with
+    code machines_list
     | .
 
   h2#activate Turning it on for this machine

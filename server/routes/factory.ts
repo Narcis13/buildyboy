@@ -3,9 +3,9 @@ import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import type { Ctx } from '../context.ts';
 import { requireMachine, requireWeb, webUser } from '../auth.ts';
-import { FINDING_SEVERITIES, FINDING_STATUSES, TASK_STATUSES, TOOLS, type GateReport, type TaskStatus } from '../../shared/factory.ts';
+import { FINDING_SEVERITIES, FINDING_STATUSES, LAUNCH_SCOPES, TASK_STATUSES, TOOLS, type GateReport, type TaskStatus } from '../../shared/factory.ts';
 import { parseTaskFile, orderByDeps, TaskFileError, taskFileToCreate } from '../../shared/tasks-md.ts';
-import { agentFromToken, callTool, createAgentToken, listAgentTokens, requireAgent, revokeAgentToken } from '../factory/agent.ts';
+import { agentFromToken, callTool, createAgentToken, listAgentTokens, requireAgent, revokeAgentToken, setTokenLaunch } from '../factory/agent.ts';
 import { governor, readUsage } from '../factory/governor.ts';
 import { createTask, deleteTask, FactoryError, gateShot, getTask, listTasks, requestControl, updateTask } from '../factory/tasks.ts';
 import { answerDecision, listDecisions } from '../factory/decisions.ts';
@@ -54,7 +54,8 @@ export function factoryRoutes(ctx: Ctx) {
     // answer back and changes nothing.
     const key = c.req.header('idempotency-key')?.trim().slice(0, 200) || null;
     try {
-      const out = callTool(ctx, c.req.param('tool'), (await c.req.json().catch(() => ({}))) ?? {}, `agent:${c.get('agent').name}`, key);
+      const agent = c.get('agent');
+      const out = callTool(ctx, c.req.param('tool'), (await c.req.json().catch(() => ({}))) ?? {}, `agent:${agent.name}`, key, { tokenId: agent.id });
       return c.json(out);
     } catch (e) {
       return fail(c, e);
@@ -234,6 +235,15 @@ export function factoryRoutes(ctx: Ctx) {
     const t = createAgentToken(ctx, b.data.name);
     db.audit('web', 'agent_token_create', t.id, { name: b.data.name });
     return c.json({ id: t.id, name: b.data.name, token: t.token }, 201);
+  });
+
+  app.put('/api/agent-tokens/:id', web, async (c) => {
+    const b = z.object({ launch: z.enum(LAUNCH_SCOPES).optional(), launchApproval: z.boolean().optional() }).safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: 'launch must be off, workers or all; launchApproval true or false' }, 400);
+    const t = setTokenLaunch(ctx, c.req.param('id'), b.data);
+    if (!t) return c.json({ error: 'not found or revoked' }, 404);
+    db.audit('web', 'agent_token_launch', t.id, b.data);
+    return c.json(t);
   });
 
   app.post('/api/agent-tokens/:id/revoke', web, (c) => {
