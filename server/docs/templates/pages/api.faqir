@@ -1,0 +1,88 @@
+layout "layout.faqir"
+
+block content
+  p
+    | Every endpoint your server answers, generated from the same reference as the
+    a(href="/docs/mcp-tools") tool reference
+    | ; a test checks that it lists every route the server has. There are
+    strong {{ ref.endpointCount }} endpoints
+    | . Agents should use the
+    a(href="#api-agent") agent endpoints
+    | ; the rest is what the app, the plugin and the runner use, documented for people writing their own clients.
+  p
+    | The base address is
+    code {{ site.url }}
+    | . Bodies and answers are JSON unless an endpoint says otherwise. A refusal is a 4xx status with
+    code { "error": "…" }
+    | , and any unknown path under
+    code /api
+    | answers 404 the same way.
+
+  h2#auth Who may call what
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") Credential
+          th(data-part="th" scope="col") How to send it
+      tbody(data-part="tbody")
+        each a in ref.auth
+          tr(data-part="tr")
+            td(data-part="td")
+              strong {{ a.label }}
+            td(data-part="td") {{ a.desc }}
+  p
+    | A script can log in like the app: POST the password to
+    code /api/auth/login
+    | , keep the two cookies, and copy the
+    code bb_csrf
+    | cookie into an
+    code x-bb-csrf
+    | header on every request that is not a GET.
+
+  h2#index All endpoints
+  each group in ref.apiGroups
+    p
+      a(href="#{{ group.anchor }}")
+        strong {{ group.title }}
+      | ({{ group.endpoints.length }})
+
+  each group in ref.apiGroups
+    h2(id=group.anchor) {{ group.title }}
+    p {{ group.intro }}
+    each e in group.endpoints
+      section(data-docs="ref-entry")
+        h3(id=e.anchor)
+          code {{ e.method }} {{ e.display }}
+        p
+          span(data-ui="badge") {{ e.authLabel }}
+        p {{ e.summary }}
+        if e.hasQuery
+          p
+            strong Query
+          ul
+            each q in e.query
+              li
+                code {{ q.name }}
+                | {{ q.desc }}
+        if e.hasBody
+          p
+            strong Body
+          ul
+            each b in e.body
+              li
+                code {{ b.name }}
+                | {{ b.desc }}
+        p
+          strong Returns:
+          | {{ e.returns }}
+        if e.hasErrors
+          p
+            strong Refused with:
+          ul
+            each err in e.errors
+              li {{ err }}
+        if e.hasNotes
+          ul
+            each note in e.notes
+              li {{ note }}

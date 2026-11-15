@@ -9,8 +9,9 @@ import { analyticsRoutes } from './analytics.ts';
 import { docsRoutes } from './docs.ts';
 import { factoryRoutes } from './factory.ts';
 import { herdrRoutes } from './herdr.ts';
+import { mcpRoutes } from './mcp.ts';
 
 /** Feature route modules, each owning its own paths. */
 export function extraRoutes(ctx: Ctx): Hono[] {
-  return [promptsRoutes(ctx), jobsRoutes(ctx), installRoutes(ctx), otlpRoutes(ctx), pushRoutes(ctx), analyticsRoutes(ctx), docsRoutes(ctx), factoryRoutes(ctx), herdrRoutes(ctx)] as Hono[];
+  return [promptsRoutes(ctx), jobsRoutes(ctx), installRoutes(ctx), otlpRoutes(ctx), pushRoutes(ctx), analyticsRoutes(ctx), docsRoutes(ctx), factoryRoutes(ctx), herdrRoutes(ctx), mcpRoutes(ctx)] as Hono[];
 }

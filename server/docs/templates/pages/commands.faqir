@@ -108,8 +108,10 @@ block content
       code BUILDYBOY_URL
       | and an agent key in
       code BUILDYBOY_AGENT_TOKEN
-      | . See
-      a(href="/docs/coordinator#register") Registering the MCP server
+      | . Agents that are not on a machine with the code connect to the server's
+      code /mcp
+      | endpoint instead. See
+      a(href="/docs/agents") Connecting agents
       | .
     dt#tasks-import
       code node cli/bb.ts tasks import <file or folder> [--dry-run]

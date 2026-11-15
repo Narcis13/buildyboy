@@ -1,0 +1,333 @@
+layout "layout.faqir"
+
+block content
+  p
+    | Buildyboy speaks the
+    strong Model Context Protocol
+    | (MCP). Any agent that can use MCP tools (Claude Code, Claude Desktop, Cursor, VS Code, Codex, or your own) can read
+    | and drive the factory: the backlog, the governor, the gates, findings, decisions and the digest. This page connects
+    | one, explains the two ways to do it, and gives the loop a coordinator should run. The
+    a(href="/docs/mcp-tools") tool reference
+    | and the
+    a(href="/docs/api") HTTP API reference
+    | have the details.
+
+  +callout(variant="info")
+    @content
+      p
+        | Agents read Markdown better than web pages. Point one at
+        code {{ site.url }}/docs/agents.md
+        | (all of this section in one file) or, from inside a session, let it call the
+        code docs_get
+        | tool. There is also an
+        code {{ site.url }}/llms.txt
+        | index.
+
+  h2#token Step 1 · Create an agent key
+  p
+    | Every agent uses an
+    strong agent key
+    | : a token that starts with
+    code bba_
+    | . It reaches only the factory's tools, never your sessions' controls or settings, and you can revoke it at any time.
+  ol
+    li
+      | In
+      strong Settings → Factory → Agent tokens
+      | , type a name for what will use it, for example
+      code claude-desktop
+      | or
+      code coordinator
+      | , and create it.
+    li Copy the key right away: it is shown only once.
+  p
+    | Make one key per agent or per computer. Settings shows when each was last used, and revoking one leaves the others
+    | working. On the server itself,
+    code node cli/bb.ts agent-token NAME
+    | does the same and prints the key.
+
+  h2#transports Step 2 · Choose how the agent connects
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") Way
+          th(data-part="th" scope="col") Use it when
+          th(data-part="th" scope="col") What it gives
+      tbody(data-part="tbody")
+        tr(data-part="tr")
+          td(data-part="td")
+            strong HTTP
+            br
+            code {{ site.url }}/mcp
+          td(data-part="td") The agent runs anywhere: another computer, a cloud sandbox, a hosted agent, a phone app.
+          td(data-part="td") Every tool, nothing to install. Needs the server to be reachable when the agent calls.
+        tr(data-part="tr")
+          td(data-part="td")
+            strong stdio
+            br
+            code bb mcp
+          td(data-part="td") The agent runs on a computer with a copy of the Buildyboy code and Node 24.
+          td(data-part="td") Every tool, plus an offline queue for writes, a cache for reads, a local governor, and screenshots read from local files.
+        tr(data-part="tr")
+          td(data-part="td")
+            strong Plain HTTP
+            br
+            code POST /api/agent/TOOL
+          td(data-part="td") A script or an agent framework without MCP.
+          td(data-part="td") The same tools as ordinary JSON requests.
+  p
+    | All three take the same key in the same header,
+    code Authorization: Bearer bba_…
+    | , and give the same answers.
+
+  h2#claude-code Claude Code
+  p Over HTTP, from any computer:
+  pre
+    code
+      | claude mcp add --transport http buildyboy {{ site.url }}/mcp --header "Authorization: Bearer bba_…" --scope user
+  p With a Buildyboy checkout on this computer (adds the offline queue):
+  pre
+    code
+      | claude mcp add buildyboy --scope user -e BUILDYBOY_URL={{ site.url }} -e BUILDYBOY_AGENT_TOKEN=bba_… -- node C:\path\to\buildyboy\cli\bb.ts mcp
+  p
+    | Check with
+    code claude mcp list
+    | , and inside a session with
+    code /mcp
+    | . Leave out
+    code --scope user
+    | to add it to the current project only.
+
+  h2#claude-desktop Claude Desktop
+  p
+    | Claude Desktop reads its servers from
+    code claude_desktop_config.json
+    | . Open it with
+    strong Settings → Developer → Edit Config
+    | (that finds the right file, also for the Microsoft Store version), add one of the two entries below inside
+    code "mcpServers"
+    | , then quit Claude Desktop from the tray or menu bar and start it again.
+  h3#desktop-remote Without a checkout: through mcp-remote
+  p
+    | The config file starts local programs, so a small bridge,
+    code mcp-remote
+    | , connects it to the HTTP endpoint. It needs Node.js (for
+    code npx
+    | ). The key is passed through an environment variable because some systems split arguments at spaces.
+  pre
+    code
+      | "buildyboy": {
+      |   "command": "npx",
+      |   "args": ["-y", "mcp-remote", "{{ site.url }}/mcp", "--header", "Authorization:${BB_AUTH}"],
+      |   "env": { "BB_AUTH": "Bearer bba_…" }
+      | }
+  h3#desktop-local With a checkout: bb mcp
+  pre
+    code
+      | "buildyboy": {
+      |   "command": "C:\\Program Files\\nodejs\\node.exe",
+      |   "args": ["C:\\path\\to\\buildyboy\\cli\\bb.ts", "mcp"],
+      |   "env": { "BUILDYBOY_URL": "{{ site.url }}", "BUILDYBOY_AGENT_TOKEN": "bba_…" }
+      | }
+  p
+    | Use the full path to
+    code node
+    | (Node 24 or newer): desktop apps do not always see your terminal's PATH. The checkout needs its
+    code node_modules
+    | (
+    code npm ci
+    | ).
+  +callout(variant="muted")
+    @content
+      p
+        | Connectors added in the app's
+        strong Connectors
+        | settings sign in with OAuth and cannot send a fixed key, and Buildyboy has no OAuth. Use the config file.
+
+  h2#other-clients Cursor, VS Code, Codex and others
+  p
+    | Most clients take an HTTP server as a URL plus headers. In
+    strong Cursor
+    | ,
+    code ~/.cursor/mcp.json
+    | :
+  pre
+    code
+      | { "mcpServers": { "buildyboy": { "url": "{{ site.url }}/mcp", "headers": { "Authorization": "Bearer bba_…" } } } }
+  p
+    | In
+    strong VS Code
+    | ,
+    code .vscode/mcp.json
+    | (or the user configuration):
+  pre
+    code
+      | { "servers": { "buildyboy": { "type": "http", "url": "{{ site.url }}/mcp", "headers": { "Authorization": "Bearer bba_…" } } } }
+  p
+    | In
+    strong Codex
+    | ,
+    code ~/.codex/config.toml
+    | , with the key in the
+    code BUILDYBOY_AGENT_TOKEN
+    | environment variable:
+  pre
+    code
+      | [mcp_servers.buildyboy]
+      | url = "{{ site.url }}/mcp"
+      | bearer_token_env_var = "BUILDYBOY_AGENT_TOKEN"
+  p
+    | A client that only starts local programs works through
+    code mcp-remote
+    | as shown for Claude Desktop. Your own code can use any MCP SDK's Streamable HTTP client with the header.
+
+  h2#rest Plain HTTP
+  p
+    | Every tool is also an ordinary endpoint: POST its arguments as JSON to
+    code /api/agent/
+    | followed by the tool's name. The answer is
+    code { "result": … }
+    | ; a refused call is a 4xx with
+    code { "error": "…" }
+    | .
+  pre
+    code
+      | curl -X POST {{ site.url }}/api/agent/tasks_list -H "Authorization: Bearer bba_…" -H "Content-Type: application/json" -d '{"ready": true}'
+  p
+    | For writes you may retry, send an
+    code idempotency-key
+    | header: a repeated key gets the first answer back and changes nothing.
+
+  h2#differences HTTP or stdio: what differs
+  ul
+    li
+      strong When the server is away:
+      code bb mcp
+      | queues gates_record, tasks_update, prompts_save and digest_post and sends them later, answers reads from its
+      | cache marked stale, and computes the governor from the local status line. Over HTTP the call simply fails; try
+      | again later.
+    li
+      strong Screenshots:
+      code bb mcp
+      | reads a local
+      code path
+      | and uploads the file. Over HTTP, send the image itself as
+      code base64
+      | (png, jpeg, webp or gif, up to 5 MB each and 12 per call).
+    li
+      strong Everything else
+      | is identical: the same tools, descriptions, arguments, answers and refusals.
+
+  h2#loop The coordinator's loop
+  p
+    | The server sends every client a short version of this when it connects. A coordinator runs it again and again:
+  ol
+    li
+      code governor_get
+      | : start new work only when
+      code canStart
+      | is true. With
+      code stopAll
+      | , send a digest and stop.
+    li
+      code control_get
+      | : handle your stop and revert requests first, then call it with
+      code ack: true
+      | .
+    li
+      code tasks_list
+      | with
+      code ready: true
+      | , then
+      code tasks_claim
+      | : the package becomes În lucru and gets its port, database and migration range.
+    li
+      code prompts_render
+      | ,
+      code prompts_lint
+      | and
+      code prompts_save
+      | : the worker's prompt, kept with the package.
+    li
+      | Start the worker with
+      code BB_TASK
+      | and
+      code BB_ROLE=lucrator
+      | set, and record its branch and terminal with
+      code tasks_update
+      | .
+    li
+      | When it is done:
+      code tasks_update
+      | to La porți, then each gate with
+      code gates_run
+      | and
+      code gates_status
+      | (recipe gates on the runner) or
+      code gates_record
+      | (a check the agent ran itself). On a failure, hand the open findings back to the worker and go again.
+    li
+      | All gates pass: merge, move it to Integrată with the migrations it used, and run the cleanup lines it returns.
+    li
+      | Only you can decide something:
+      code decision_ask
+      | , keep working on other packages, and read the answer later with
+      code decision_get
+      | .
+  p
+    | Statuses keep their Romanian names in the tools:
+    code backlog
+    | ,
+    code gata
+    | (ready),
+    code in_lucru
+    | ,
+    code la_porti
+    | ,
+    code integrata
+    | and
+    code blocata
+    | . The
+    a(href="/docs/backlog") backlog page
+    | explains them, and the
+    a(href="/docs/coordinator") coordinator page
+    | covers the governor, rounds and herdr terminals.
+
+  h2#security Keeping it safe
+  ul
+    li An agent key can create and change packages, record gate results and ask you questions. It cannot see your settings, approve tool calls, start jobs or read session transcripts beyond what the session tools show.
+    li
+      | Keys are stored as hashes. Revoke one in Settings and it stops working on the next call, on every transport.
+    li
+      | The key sits in the client's configuration file in plain text. Prefer an environment variable where the client
+      | supports one (Codex's
+      code bearer_token_env_var
+      | , mcp-remote's
+      code ${BB_AUTH}
+      | ).
+    li Every change an agent makes is recorded with the key's name in the package history and the audit log.
+
+  h2#troubleshooting When it does not connect
+  dl
+    dt 401 unauthorized
+    dd
+      | The header is missing or the key is wrong or revoked. It must be exactly
+      code Authorization: Bearer bba_…
+      | (a machine key,
+      code bbm_…
+      | , does not work here).
+    dt The client tries to sign in, or talks about OAuth
+    dd The key did not reach the server, so the client looked for a sign-in page. Check that the header is set in the client's configuration.
+    dt 405 Method not allowed
+    dd
+      | A GET on
+      code /mcp
+      | . The endpoint is stateless and answers POST only; MCP clients do this on their own.
+    dt Tools listed but every call fails with "server unreachable"
+    dd
+      | That is
+      code bb mcp
+      | not reaching
+      code BUILDYBOY_URL
+      | . Check the address, or switch to HTTP if the agent is not on this computer.

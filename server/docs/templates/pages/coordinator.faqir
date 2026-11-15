@@ -61,11 +61,21 @@ block content
   p
     | Claude Code then starts
     code bb mcp
-    | by itself in every session. Check it with
+    | by itself in every session, and it keeps working while the server is away (see below). Check it with
     code claude mcp list
     | ; inside a session,
     code /mcp
     | shows the buildyboy tools.
+  p
+    | A coordinator on a machine without the Buildyboy code can use the server's HTTP endpoint instead, with no offline
+    | queue:
+  pre
+    code
+      | claude mcp add --transport http buildyboy {{ site.url }}/mcp --header "Authorization: Bearer bba_…" --scope user
+  p
+    | Claude Desktop, Cursor, VS Code, Codex and scripts are covered in
+    a(href="/docs/agents") Connecting agents
+    | .
   +callout(variant="warning")
     @content
       p
@@ -73,7 +83,10 @@ block content
         | it leaks; a revoked key stops working at once.
 
   h2#tools The tools
-  p Each tool answers with JSON. A refused call says why, for example "task P3 waits on P1".
+  p
+    | Each tool answers with JSON. A refused call says why, for example "task P3 waits on P1". The
+    a(href="/docs/mcp-tools") MCP tool reference
+    | has every argument, result and error.
   div(data-ui="table")
     table(data-part="table")
       thead(data-part="thead")
@@ -133,6 +146,10 @@ block content
           td(data-part="td")
             code control_get
           td(data-part="td") Your requests to stop a package or revert its integration, so the coordinator can act on them.
+        tr(data-part="tr")
+          td(data-part="td")
+            code docs_get
+          td(data-part="td") This manual's agent pages as Markdown, so an agent can learn the factory from inside its session.
 
   h2#governor The consumption governor
   p

@@ -10,6 +10,7 @@ import { render, type Template } from '@faqir-ui/template';
 import { components } from '@faqir-ui/template/registry';
 import { createFileLoader } from '@faqir-ui/template/node';
 import { PAGES, SECTIONS, docHref, type DocPage } from './catalog.ts';
+import { referenceData } from './reference.ts';
 
 /** templates/ and assets/ live next to this file: they are part of the code, not of a deployment's data. */
 export const DOCS_DIR = import.meta.dirname;
@@ -71,6 +72,9 @@ export function subsetCss(bundle: string, used: Set<string>): string {
 
 type SiteData = DocsSite & { assets: string; host: string };
 
+/** The agents' reference (tools, shapes, endpoints), the same for every page and every request. */
+const REF = referenceData();
+
 function pageData(page: DocPage, site: SiteData) {
   const i = PAGES.indexOf(page);
   const link = (p: DocPage | undefined) => (p ? { title: p.title, href: docHref(p.slug) } : null);
@@ -90,6 +94,7 @@ function pageData(page: DocPage, site: SiteData) {
     })),
     prev: link(PAGES[i - 1]),
     next: link(PAGES[i + 1]),
+    ref: REF,
   };
 }
 

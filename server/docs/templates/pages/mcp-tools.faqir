@@ -1,0 +1,107 @@
+layout "layout.faqir"
+
+block content
+  p
+    | Buildyboy offers
+    strong {{ ref.toolCount }} tools
+    | . They are the same whichever way the agent connects (see
+    a(href="/docs/agents") Connecting agents
+    | ): over HTTP at
+    code /mcp
+    | , over stdio with
+    code bb mcp
+    | , or as
+    code POST /api/agent/TOOL
+    | with the arguments as the JSON body. This page is generated from the server's own tool definitions, so it always
+    | matches what your server offers.
+  p
+    | Each tool answers with JSON (only
+    code docs_get
+    | answers Markdown). A refused call comes back as an MCP error result whose text is the server's reason, for example
+    code task P3 waits on P1
+    | ; over plain HTTP it is a 4xx with
+    code { "error": "…" }
+    | . Times are epoch milliseconds.
+
+  h2#index All tools
+  each group in ref.toolGroups
+    p
+      strong {{ group.title }}:
+      each tool in group.tools
+        a(href="#{{ tool.anchor }}")
+          code {{ tool.name }}
+        | {{ " " }}
+
+  each group in ref.toolGroups
+    h2(id=group.id) {{ group.title }}
+    each tool in group.tools
+      section(data-docs="ref-entry")
+        h3(id=tool.anchor)
+          code {{ tool.name }}
+        p
+          span(data-ui="badge") {{ tool.kind }}
+        p {{ tool.description }}
+        p
+          strong When:
+          | {{ tool.use }}
+        if tool.hasArgs
+          div(data-ui="table")
+            table(data-part="table")
+              thead(data-part="thead")
+                tr(data-part="tr")
+                  th(data-part="th" scope="col") Argument
+                  th(data-part="th" scope="col") Type
+                  th(data-part="th" scope="col") Required
+                  th(data-part="th" scope="col") Description
+              tbody(data-part="tbody")
+                each arg in tool.args
+                  tr(data-part="tr")
+                    td(data-part="td")
+                      code {{ arg.name }}
+                    td(data-part="td") {{ arg.type }}
+                    td(data-part="td") {{ arg.required }}
+                    td(data-part="td") {{ arg.desc }}
+        else
+          p No arguments: call it with an empty object.
+        p
+          strong Returns:
+          | {{ tool.returns }}
+        if tool.hasShapes
+          p
+            | See:
+            each shape in tool.shapes
+              a(href=shape.href) {{ shape.title }}
+              | {{ " " }}
+        if tool.hasErrors
+          p
+            strong Refused with:
+          ul
+            each err in tool.errors
+              li {{ err }}
+        if tool.hasNotes
+          ul
+            each note in tool.notes
+              li {{ note }}
+        p Example call (tools/call parameters):
+        pre
+          code {{ tool.example }}
+
+  h2#shapes Result shapes
+  p The objects the tools return, field by field.
+  each shape in ref.shapes
+    h3(id=shape.anchor) {{ shape.title }}
+    p {{ shape.intro }}
+    div(data-ui="table")
+      table(data-part="table")
+        thead(data-part="thead")
+          tr(data-part="tr")
+            th(data-part="th" scope="col") Field
+            th(data-part="th" scope="col") Type
+            th(data-part="th" scope="col") Meaning
+        tbody(data-part="tbody")
+          each field in shape.fields
+            tr(data-part="tr")
+              td(data-part="td")
+                code {{ field.name }}
+              td(data-part="td") {{ field.type }}
+              td(data-part="td") {{ field.desc }}

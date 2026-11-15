@@ -42,6 +42,14 @@ export const SECTIONS: DocSection[] = [
     ],
   },
   {
+    title: 'For agents',
+    pages: [
+      { slug: 'agents', title: 'Connecting agents', summary: 'Give Claude Code, Claude Desktop, Cursor or any MCP client the factory’s tools, over HTTP or stdio, and the loop a coordinator should run.' },
+      { slug: 'mcp-tools', title: 'MCP tool reference', summary: 'Every tool an agent can call: when to use it, its arguments, what it returns, how it fails, with an example.' },
+      { slug: 'api', title: 'HTTP API reference', summary: 'Every endpoint the server answers, who may call it, what it takes and what it returns.' },
+    ],
+  },
+  {
     title: 'Your setup',
     pages: [
       { slug: 'machines', title: 'Pairing machines', summary: 'Connecting Windows, WSL, macOS and Linux machines, checking them, and removing them again.' },
