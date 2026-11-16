@@ -14,6 +14,7 @@ import { importGithubIssues } from '../factory/import.ts';
 import { factoryConfig, factoryConfigSchema, saveFactoryConfig } from '../factory/config.ts';
 import { listFindings, updateFindings } from '../factory/findings.ts';
 import { applyGateReport, gateRunLog } from '../factory/gateruns.ts';
+import { lastSegment } from './projects.ts';
 
 function fail(c: Context, e: unknown) {
   if (e instanceof FactoryError) return c.json({ error: e.message }, e.status as 400);
@@ -99,14 +100,18 @@ export function factoryRoutes(ctx: Ctx) {
     }
   });
 
-  // ---------- factory config: gate rounds and per-repo resources and recipe ----------
+  // ---------- factory config: gate rounds and §11.7's per-repo config, kept on the projects (§12.1) ----------
   app.get('/api/factory/config', web, (c) => c.json(factoryConfig(ctx)));
   app.put('/api/factory/config', web, async (c) => {
     const b = factoryConfigSchema.safeParse(await c.req.json().catch(() => null));
     if (!b.success) return c.json({ error: `invalid config: ${b.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}` }, 400);
     const names = b.data.repos.map((r) => r.repo.toLowerCase());
     if (new Set(names).size !== names.length) return c.json({ error: 'each repo can be configured once' }, 400);
-    saveFactoryConfig(ctx, b.data);
+    try {
+      saveFactoryConfig(ctx, b.data, 'web');
+    } catch (e) {
+      return fail(c, e);
+    }
     db.audit('web', 'factory_config', null, { repos: names });
     return c.json(factoryConfig(ctx));
   });
@@ -122,7 +127,15 @@ export function factoryRoutes(ctx: Ctx) {
   // ---------- backlog ----------
   app.get('/api/tasks', web, (c) => {
     const status = (c.req.query('status') ?? '').split(',').filter((s): s is TaskStatus => TASK_STATUSES.includes(s as TaskStatus));
-    return c.json(listTasks(ctx, { status, ready: c.req.query('ready') === '1', q: c.req.query('q') }));
+    const archived = c.req.query('archived');
+    try {
+      return c.json(listTasks(ctx, {
+        status, ready: c.req.query('ready') === '1', q: c.req.query('q'), project: c.req.query('project') || undefined,
+        archived: archived === 'all' ? 'all' : archived === '1' || archived === 'true',
+      }));
+    } catch (e) {
+      return fail(c, e);
+    }
   });
 
   app.post('/api/tasks', web, async (c) => {
@@ -136,12 +149,14 @@ export function factoryRoutes(ctx: Ctx) {
   });
 
   app.post('/api/tasks/import/markdown', web, async (c) => {
-    const b = z.object({ files: z.array(z.object({ name: z.string().max(300), text: z.string().max(500_000) })).min(1).max(200) }).safeParse(await c.req.json().catch(() => null));
-    if (!b.success) return c.json({ error: 'files: [{ name, text }] required' }, 400);
+    const b = z
+      .object({ files: z.array(z.object({ name: z.string().max(300), text: z.string().max(500_000) })).min(1).max(200), project: TOOLS.tasks_create.input.shape.project })
+      .safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: 'files: [{ name, text }] required; project: a project key' }, 400);
     try {
       const parsed = orderByDeps(b.data.files.map((f) => ({ ...parseTaskFile(f.text, f.name), ref: f.name })));
       const args = parsed.map((t) => {
-        const p = TOOLS.tasks_create.input.safeParse(taskFileToCreate(t, t.ref));
+        const p = TOOLS.tasks_create.input.safeParse(taskFileToCreate(t, t.ref, b.data.project));
         if (!p.success) throw new TaskFileError(`${t.ref}: ${p.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`);
         return p.data;
       });
@@ -153,10 +168,12 @@ export function factoryRoutes(ctx: Ctx) {
   });
 
   app.post('/api/tasks/import/github', web, async (c) => {
-    const b = z.object({ owner: z.string().regex(/^[\w.-]{1,100}$/), repo: z.string().regex(/^[\w.-]{1,100}$/), label: z.string().max(100).optional() }).safeParse(await c.req.json().catch(() => null));
+    const b = z
+      .object({ owner: z.string().regex(/^[\w.-]{1,100}$/), repo: z.string().regex(/^[\w.-]{1,100}$/), label: z.string().max(100).optional(), project: TOOLS.tasks_create.input.shape.project })
+      .safeParse(await c.req.json().catch(() => null));
     if (!b.success) return c.json({ error: 'owner and repo required' }, 400);
     try {
-      return c.json(await importGithubIssues(ctx, b.data.owner, b.data.repo, b.data.label));
+      return c.json(await importGithubIssues(ctx, b.data.owner, b.data.repo, b.data.label, b.data.project));
     } catch (e) {
       if (e instanceof FactoryError) return fail(c, e);
       return c.json({ error: (e as Error).message }, 502);
@@ -186,6 +203,17 @@ export function factoryRoutes(ctx: Ctx) {
     try {
       deleteTask(ctx, c.req.param('id'), 'web');
       return c.json({ ok: true });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  /** The archive (§12.2): the same as PUT /api/tasks/:id { archived }. */
+  app.post('/api/tasks/:id/:action{archive|unarchive}', web, (c) => {
+    const action = lastSegment(c); // not the parameter: Hono's trie router matches it as a prefix
+    if (action !== 'archive' && action !== 'unarchive') return c.json({ error: 'not found' }, 404);
+    try {
+      return c.json(updateTask(ctx, { id: c.req.param('id'), archived: action === 'archive' }, 'web'));
     } catch (e) {
       return fail(c, e);
     }

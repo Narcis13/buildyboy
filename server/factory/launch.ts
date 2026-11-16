@@ -12,6 +12,7 @@ import type { LaunchResult, LaunchScope, MachineView, TaskDetail, ToolArgs } fro
 import { askDecision, getDecision } from './decisions.ts';
 import { governor } from './governor.ts';
 import { FactoryError, getTask, updateTask } from './tasks.ts';
+import { projectBlocks, projectRow } from './projects.ts';
 
 export type LaunchKind = 'worker' | 'coordinator';
 
@@ -92,6 +93,9 @@ function checkBase(ctx: Ctx, a: LaunchBase, extra: Partial<StoredJobOptions>): {
 function planWorker(ctx: Ctx, a: WorkerLaunch): Plan {
   const task = getTask(ctx, a.taskId);
   if (task.status === 'integrata') throw new FactoryError(409, 'this package is already integrated');
+  if (task.archivedAt != null) throw new FactoryError(409, 'this package is archived');
+  const blocked = projectBlocks(projectRow(ctx, task.project)); // §12.1: nothing starts in a paused or archived project
+  if (blocked) throw new FactoryError(409, blocked);
   const { machineName, options } = checkBase(ctx, a, { taskId: task.id });
   const promptId = a.promptId ?? (task.promptId && ctx.db.get('SELECT 1 FROM prompts WHERE id = ?', task.promptId) ? task.promptId : null);
   return {

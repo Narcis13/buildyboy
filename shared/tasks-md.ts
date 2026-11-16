@@ -1,10 +1,11 @@
 // Markdown task files: YAML-like frontmatter plus a body. Generic on purpose (any repo's spec folder works).
 //
 //   ---
-//   id: P2
+//   id: P2                     # in a project with an id prefix it becomes ED-P2 (SPEC §12.2)
 //   title: Gestiune
 //   status: backlog            # optional: backlog | gata | in_lucru | la_porti | integrata | blocata
 //   depends_on: [P1]           # or `after:`; a list or a comma-separated string
+//   project: arond             # optional: the factory project (`bb tasks import --project` sets it for every file)
 //   repo: arond
 //   branch: pachet/P2
 //   priority: 10
@@ -24,6 +25,7 @@ export interface TaskFile {
   body: string;
   status?: TaskStatus;
   dependsOn: string[];
+  project?: string;
   repo?: string;
   branch?: string;
   priority?: number;
@@ -134,6 +136,7 @@ export function parseTaskFile(text: string, fileName = ''): TaskFile {
     body,
     status: status as TaskStatus | undefined,
     dependsOn: list(d.depends_on ?? d.after ?? d.dependencies ?? d.dupa),
+    project: str(d.project),
     repo: str(d.repo),
     branch: str(d.branch),
     priority: priority === undefined ? undefined : Number(priority),
@@ -164,14 +167,19 @@ export function orderByDeps<T extends { id?: string; dependsOn: string[] }>(task
 
 /**
  * tasks_create arguments for one file (always an upsert). Absent lists stay absent, so a re-import never wipes
- * dependencies or criteria added elsewhere; a file without an `id` is matched again by `ref` (its path).
+ * dependencies or criteria added elsewhere; a file without an `id` is matched again by `ref` (its path, within its
+ * project). `project` (the import's, e.g. `--project`) applies to files that name none; a file naming another one is
+ * refused.
  */
-export function taskFileToCreate(t: TaskFile, ref: string) {
+export function taskFileToCreate(t: TaskFile, ref: string, project?: string) {
+  if (project && t.project && t.project !== project) throw new TaskFileError(`${ref}: project ${t.project}, but the import is into ${project}`);
+  const into = t.project ?? project;
   return {
     ...t,
+    project: into,
     dependsOn: t.dependsOn.length ? t.dependsOn : undefined,
     acceptance: t.acceptance.length ? t.acceptance : undefined,
-    extRef: t.id ? undefined : `md:${ref.split('\\').join('/')}`.slice(0, 300),
+    extRef: t.id ? undefined : `md:${into ? `${into}:` : ''}${ref.split('\\').join('/')}`.slice(0, 300),
     upsert: true,
   };
 }

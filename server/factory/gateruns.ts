@@ -1,13 +1,14 @@
-// Gates as runner jobs (SPEC §11.7). gates_run sends the gate to the runner of the repo's machine; the runner reads the
-// recipe from the trusted main checkout, runs its argv steps and reports back (POST /api/runner/gates/:id). The server
-// records the gate result with the verdict, summary and findings, keeps the log, and never hands the log to the agent.
+// Gates as runner jobs (SPEC §11.7). gates_run sends the gate to the runner of the package's project (its machine,
+// §12.1); the runner reads the recipe (the project's line file) from the trusted main checkout, runs its argv steps and
+// reports back (POST /api/runner/gates/:id). The server records the gate result with the verdict, summary and
+// findings, keeps the log, and never hands the log to the agent.
 import { randomUUID } from 'node:crypto';
 import type { Ctx } from '../context.ts';
 import { json } from '../db.ts';
 import { sendToRunner } from '../jobs/core.ts';
 import { findingSchema, type FindingInput, type Gate, type GateCommand, type GateReport, type GateRunStatus, type GateRunView, type ToolArgs, type Verdict } from '../../shared/factory.ts';
-import { repoConfig } from './config.ts';
-import { FactoryError, recordGate, taskVars } from './tasks.ts';
+import { projectRow } from './projects.ts';
+import { FactoryError, recordGate, taskVars, type TaskRow } from './tasks.ts';
 
 /** The server keeps the tail of a gate's log. */
 export const LOG_KEEP = 256 * 1024;
@@ -34,28 +35,28 @@ export function listGateRuns(ctx: Ctx, taskId: string, limit = 50): GateRunView[
 }
 
 export function startGateRun(ctx: Ctx, a: ToolArgs<'gates_run'>, actor: string): GateRunView & { sent: boolean } {
-  const t = ctx.db.get<Parameters<typeof taskVars>[0]>('SELECT * FROM tasks WHERE id = ?', a.taskId);
+  const t = ctx.db.get<TaskRow>('SELECT * FROM tasks WHERE id = ?', a.taskId);
   if (!t) throw new FactoryError(404, `unknown task ${a.taskId}`);
-  const cfg = repoConfig(ctx, t.repo);
-  if (!cfg) throw new FactoryError(400, `${a.taskId}: no factory config for repo ${t.repo ?? '(none)'}; set it in Settings → Factory`);
-  if (!cfg.machineId || !cfg.checkout || !cfg.recipe) throw new FactoryError(400, `repo ${cfg.repo}: the factory config needs a machine, the main checkout and the recipe path`);
-  if (!ctx.db.get('SELECT 1 FROM machines WHERE id = ? AND revoked = 0', cfg.machineId)) throw new FactoryError(400, `repo ${cfg.repo}: unknown machine ${cfg.machineId}`);
+  const p = projectRow(ctx, t.project);
+  if (!p) throw new FactoryError(400, `${a.taskId} belongs to no factory project (repo ${t.repo ?? '(none)'}); set its repo up in Settings → Factory`);
+  if (!p.machine_id || !p.checkout || !p.line_file) throw new FactoryError(400, `project ${p.key}: it needs a machine, the main checkout and the line file (the recipe path)`);
+  if (!ctx.db.get('SELECT 1 FROM machines WHERE id = ? AND revoked = 0', p.machine_id)) throw new FactoryError(400, `project ${p.key}: unknown machine ${p.machine_id}`);
   const id = randomUUID();
   const round = Math.max(1, t.round);
   const command: GateCommand = {
     type: 'gate',
-    run: { id, taskId: t.id, gate: a.gate, round, args: a.args ?? [], checkout: cfg.checkout, recipe: cfg.recipe, vars: taskVars(t, cfg) },
+    run: { id, taskId: t.id, gate: a.gate, round, args: a.args ?? [], checkout: p.checkout, recipe: p.line_file, vars: taskVars(t, p) },
   };
   ctx.db.run(
     "INSERT INTO gate_runs (id, task_id, gate, round, args_json, machine_id, command_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)",
-    id, t.id, a.gate, round, JSON.stringify(a.args ?? []), cfg.machineId, JSON.stringify(command), Date.now(),
+    id, t.id, a.gate, round, JSON.stringify(a.args ?? []), p.machine_id, JSON.stringify(command), Date.now(),
   );
   ctx.db.run(
     'INSERT INTO task_events (task_id, ts, actor, kind, from_status, to_status, detail_json) VALUES (?, ?, ?, ?, NULL, NULL, ?)',
     t.id, Date.now(), actor, 'gate_run', JSON.stringify({ runId: id, gate: a.gate, round }),
   );
   ctx.bus.publish('tasks', 'changed', { id: t.id });
-  const sent = sendToRunner(ctx, cfg.machineId, command as unknown as Record<string, unknown>);
+  const sent = sendToRunner(ctx, p.machine_id, command as unknown as Record<string, unknown>);
   return { ...view(get(ctx, id)!), sent };
 }
 

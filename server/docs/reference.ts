@@ -25,13 +25,17 @@ export const SHAPES: Shape[] = [
     title: 'Task (package) summary',
     intro: 'Returned by tasks_list, tasks_create, tasks_claim (as task) and tasks_update. Times are epoch milliseconds.',
     fields: [
-      ['id', 'string', 'Given (P2, arond-12) or generated (T<n>). Letters, digits, ".", "_" and "-", at most 64.'],
+      ['id', 'string', 'Given (P2, arond-12) or generated (T<n>; <prefix><n> in a project with an id prefix). Letters, digits, ".", "_" and "-", at most 64. Globally unique.'],
+      ['localId', 'string', 'The id without its project\'s prefix (ED-P1 → P1); the id itself in a project without one.'],
+      ['project', 'string | null', 'The factory project it belongs to, for life (projects_list). null for old data and one-off packages.'],
       ['title', 'string', 'One line.'],
       ['status', 'enum', 'backlog · gata (ready) · in_lucru (in progress) · la_porti (at the gates) · integrata (integrated) · blocata (blocked).'],
-      ['ready', 'boolean', 'status is gata and every dependency is integrata: tasks_claim may take it.'],
+      ['stage', 'string | null', 'Where the conductor has it on the project\'s line (prepare, qa, build, G1…G5, cleanup); null off the line.'],
+      ['archivedAt', 'number | null', 'Epoch ms when it was archived (left out of lists unless asked for); null when not archived.'],
+      ['ready', 'boolean', 'status is gata and every dependency is integrata: tasks_claim may take it (unless its project is paused or archived).'],
       ['dependsOn', 'string[]', 'Ids this package waits for.'],
       ['waitingOn', 'string[]', 'The dependencies not yet integrated.'],
-      ['repo', 'string | null', 'Repository name; matches a repo in Settings → Factory (case-insensitive) for resources and gates_run.'],
+      ['repo', 'string | null', 'Repository name (owner/name). A package created with a repo and no project lands in the project of that repo.'],
       ['branch', 'string | null', 'The worker branch, set with tasks_update.'],
       ['priority', 'integer', 'Higher first (-1000…1000, default 0). tasks_claim picks by priority, then age.'],
       ['costUsd', 'number | null', 'Sum of the linked sessions\' costs when any are linked, else the value set by hand.'],
@@ -40,7 +44,7 @@ export const SHAPES: Shape[] = [
       ['linkedSessions', 'integer', 'Sessions linked through BB_TASK, the package\'s herdr terminal or its job.'],
       ['round', 'integer', 'Current gate round, 0 before the first.'],
       ['maxRounds', 'integer', 'Round limit (setting gate_max_rounds, default 3, plus approved extra rounds).'],
-      ['resources', 'object | null', '{ port, db, migrations: { from, to } } allocated by tasks_claim from the repo\'s factory config.'],
+      ['resources', 'object | null', '{ port, db, migrations: { from, to } } allocated by tasks_claim from its project\'s config.'],
       ['migrationsUsed', 'integer[]', 'Migration numbers the package reported with tasks_update.'],
       ['openFindings', 'object', 'Open findings by severity: { blocker, major, minor }.'],
       ['promptId · promptVersion', 'integer | null', 'The saved worker prompt (prompts_save with taskId sets both).'],
@@ -62,7 +66,7 @@ export const SHAPES: Shape[] = [
     intro: 'Returned by tasks_get: every Task summary field, plus:',
     fields: [
       ['body', 'string', 'The package description (Markdown).'],
-      ['events', 'TaskEvent[]', 'History, newest first: { ts, actor, kind, from, to, detail }. kind is created, status, update, note, gate, gate_run, control or warning.'],
+      ['events', 'TaskEvent[]', 'History, newest first: { ts, actor, kind, from, to, detail }. kind is created, status, update, note, gate, gate_run, control, warning, archived or unarchived.'],
       ['gateResults', 'GateResult[]', 'Every gate result, newest first (see Gate result).'],
       ['controls', 'ControlRequest[]', 'Stop/revert requests, open and handled (see Control request).'],
       ['decisions', 'Decision[]', 'Decisions tied to the package.'],
@@ -78,7 +82,41 @@ export const SHAPES: Shape[] = [
       ['task', 'Task | null', 'The claimed package, now in_lucru, or null.'],
       ['governor', 'GovernorVerdict', 'The governor\'s answer at the time of the claim.'],
       ['reason', 'string?', 'Why nothing was claimed: "governor: …", "no task is ready to start", "task P3 waits on P1", "task P3 is in_lucru, not gata".'],
-      ['resources', 'object | null', '{ port, db, migrations: { from, to } }; null when the repo has no factory config.'],
+      ['resources', 'object | null', '{ port, db, migrations: { from, to } }; null when its project has no resource config.'],
+    ],
+  },
+  {
+    id: 'project',
+    title: 'Project',
+    intro: 'Returned by projects_list (and inside projects_get). A factory project owns its packages, its config and where its line runs. Times are epoch ms.',
+    fields: [
+      ['key', 'string', 'Never changes: a lower-case letter, then letters, digits and "-", 2–24 characters (arond, shop-2).'],
+      ['name', 'string', 'Display name.'],
+      ['repo', 'string | null', 'owner/name. tasks_create with this repo and no project puts the package here.'],
+      ['idPrefix', 'string', '"" or e.g. "ED-": the package ids it owns. A package created in it as P1 is stored as ED-P1; one created without an id gets ED-<n>.'],
+      ['machineId · machineName · checkout', 'string | null', 'Where its line runs: the trusted main checkout on a paired machine. gates_run needs all three.'],
+      ['lineFile', 'string', 'Relative to the checkout: factory.json by default; a migrated project keeps its gate recipe path.'],
+      ['config', 'object', '{ legacy?, limits?: { workers, rounds }, models?: { worker, qa, review, visual, foreman, planner }, integrate?: { approval } }. legacy holds the §11.7 resource fields: worktree, portFrom, portTo, dbPrefix, migrationFrom, migrationBlock, cleanup.'],
+      ['resolvedLine · lineSeenAt · lineError', '', 'The line as the runner last reported it (null until then).'],
+      ['state', 'enum', 'active; paused (nothing new starts: no claim, no launch); archived (hidden, its packages archived, nothing starts).'],
+      ['autopilot', 'boolean', 'The conductor moves its packages along the line.'],
+      ['createdAt · updatedAt · archivedAt', 'number | null', 'Epoch ms.'],
+      ['counts', 'object', 'Packages per status, archived ones left out: { backlog, gata, in_lucru, la_porti, integrata, blocata }.'],
+      ['archived · integrated', 'integer', 'Archived packages; packages integrated ever.'],
+      ['costUsd', 'number', 'Sum over its packages.'],
+      ['openDecisions · attention', 'integer', 'Pending decisions on its packages; packages waiting on the owner (blocked, or with a pending decision).'],
+      ['lastActivityAt', 'number | null', 'The newest change to one of its packages.'],
+      ['checkoutIds', 'integer[]', 'The checkouts seen by telemetry (GET /api/projects) whose GitHub repo is this one.'],
+    ],
+  },
+  {
+    id: 'project-detail',
+    title: 'Project detail',
+    intro: 'Returned by projects_get: every Project field, plus:',
+    fields: [
+      ['line', 'Task[]', 'Its packages in in_lucru and la_porti, with their stage.'],
+      ['next', 'Task[]', 'Its ready packages, in claim order.'],
+      ['decisions', 'Decision[]', 'Pending decisions tied to its packages.'],
     ],
   },
   {
@@ -250,6 +288,7 @@ export const TOOL_GROUPS = [
   { id: 'usage', title: 'Usage and the governor' },
   { id: 'sessions', title: 'Sessions' },
   { id: 'backlog', title: 'Backlog' },
+  { id: 'projects', title: 'Projects' },
   { id: 'prompts', title: 'Prompts' },
   { id: 'gates', title: 'Gates and findings' },
   { id: 'launch', title: 'Launching workers and coordinators' },
@@ -317,15 +356,18 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
   },
   tasks_list: {
     group: 'backlog',
-    use: 'Read the backlog. With ready: true, only packages that can start now (status gata and every dependency integrated), in claim order.',
+    use: 'Read the backlog. With ready: true, only packages that can start now (status gata and every dependency integrated), in claim order. Archived packages are left out unless you ask for them.',
     args: {
       status: 'Only these statuses.',
-      ready: 'Only packages tasks_claim could take now.',
+      ready: 'Only packages whose dependencies allow tasks_claim to take them.',
       limit: 'At most this many (default 500).',
+      project: 'Only the packages of this project (a key from projects_list).',
+      archived: 'true: only archived packages (integrated work that left the board, or an archived project\'s).',
     },
     returns: 'Task summary[], by priority (high first), then age.',
     shapes: ['task'],
-    example: { ready: true },
+    errors: ['404 unknown project <key>'],
+    example: { ready: true, project: 'arond' },
   },
   tasks_get: {
     group: 'backlog',
@@ -340,12 +382,13 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
     group: 'backlog',
     use: 'Add a package to the backlog, or (upsert) update one you created earlier, e.g. when re-importing a plan. fromFindings turns chosen gate findings into a follow-up package.',
     args: {
-      id: 'Package id; generated as T<n> when omitted. Letters, digits, ".", "_" and "-".',
+      project: 'The project it belongs to, for life. Without it, the project whose repo is `repo` (if any). Not an archived project.',
+      id: 'Package id; generated as T<n> (or <prefix><n> in a project with an id prefix) when omitted. In a project with prefix ED-, P1 is stored as ED-P1. Letters, digits, ".", "_" and "-".',
       title: 'One line.',
       body: 'Description (Markdown).',
       acceptance: 'Acceptance criteria, one per item. The gates check against them.',
-      dependsOn: 'Ids this package waits for; it becomes ready only when all are integrata.',
-      repo: 'Repository name. Must match Settings → Factory for resources and gates_run.',
+      dependsOn: 'Ids this package waits for; it becomes ready only when all are integrata. Local ids (P1) resolve inside the project first.',
+      repo: 'Repository name (owner/name). Defaults to the project\'s repo; picks the project when none is given.',
       branch: 'Worker branch.',
       priority: 'Higher is claimed first (-1000…1000, default 0).',
       sensitive: 'Auth, RLS, import, pseudonymisation: flagged in the digest.',
@@ -359,24 +402,31 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
     errors: [
       '409 task <id> already exists (without upsert)',
       '409 <extRef> already belongs to another task',
+      '409 task <id> belongs to project <key> (a package never changes project)',
+      '404 unknown project <key> · 409 project <key> is archived',
       '400 a bad id, a dependency that does not exist or a dependency cycle',
       '400 too many acceptance criteria or too long a body with fromFindings',
     ],
-    example: { id: 'P4', title: 'Export to CSV', status: 'gata', repo: 'arond', dependsOn: ['P3'], acceptance: ['`pnpm test export` passes', 'The export button downloads a CSV of the visible rows'] },
+    example: { project: 'arond', id: 'P4', title: 'Export to CSV', status: 'gata', dependsOn: ['P3'], acceptance: ['`pnpm test export` passes', 'The export button downloads a CSV of the visible rows'] },
   },
   tasks_claim: {
     group: 'backlog',
-    use: 'Take a package to work on. Without id, the next ready one by priority. It becomes in_lucru, claimed by you, and gets its port, database name and migration range.',
+    use: 'Take a package to work on. Without id, the next ready one by priority, in `project` or across the active projects. It becomes in_lucru, claimed by you, and gets its port, database name and migration range.',
     args: {
       id: 'Claim this package (it must be ready).',
       agent: 'Name recorded as claimedBy (default: agent:<token name>).',
       force: 'Claim even when the governor says canStart is false. Only when the human asked for it.',
+      project: 'Claim only in this project.',
     },
     returns: 'Claim result. When nothing can be claimed, task is null and reason says why: this is not an error.',
     shapes: ['claim', 'task', 'governor'],
-    errors: ['404 unknown task <id> (with id)'],
-    example: { agent: 'coordinator' },
-    notes: ['Claiming is atomic: two coordinators never get the same package.', 'Resources are kept until the package is integrated.'],
+    errors: ['404 unknown task <id> (with id) · 404 unknown project <key>'],
+    example: { agent: 'coordinator', project: 'arond' },
+    notes: [
+      'Claiming is atomic: two coordinators never get the same package.',
+      'Resources are kept until the package is integrated.',
+      'Nothing is claimed in a paused or archived project, and no archived package: reason says so ("project shop is paused").',
+    ],
   },
   tasks_update: {
     group: 'backlog',
@@ -394,12 +444,36 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
       dependsOn: 'Replace the dependencies.',
       acceptance: 'Replace the acceptance criteria.',
       migrationsUsed: 'Migration numbers the package uses; checked against the other active packages when it is integrated.',
+      archived: 'true archives the package (it leaves the lists), false brings it back. Only an operator token (or the owner) may.',
     },
-    returns: 'Task summary, plus cleanup (string[]: the repo\'s cleanup lines, filled in) and warnings (string[]: other packages that must renumber migrations) when it was integrated.',
+    returns: 'Task summary, plus cleanup (string[]: the project\'s cleanup lines, filled in) and warnings (string[]: other packages that must renumber migrations) when it was integrated.',
     shapes: ['task'],
-    errors: ['404 unknown task <id>', '409 <id> has used its N gate rounds (moving into la_porti)', '400 a dependency cycle or an unknown dependency'],
+    errors: [
+      '404 unknown task <id>', '409 <id> has used its N gate rounds (moving into la_porti)', '400 a dependency cycle or an unknown dependency',
+      '403 archiving needs an operator token', '409 unarchiving a package of an archived project',
+    ],
     example: { id: 'P3', status: 'la_porti', branch: 'pachet/P3', terminal: 't7', note: 'worker finished, all tests green' },
-    notes: ['Every change is kept in the package history with you as the actor.', 'Queued by `bb mcp` while the server is unreachable.'],
+    notes: [
+      'Every change is kept in the package history with you as the actor.', 'Queued by `bb mcp` while the server is unreachable.',
+      'Dependencies given as local ids resolve inside the package\'s project first.',
+    ],
+  },
+  projects_list: {
+    group: 'projects',
+    use: 'See the factory\'s projects: each owns its packages, where its line runs, its state (active, paused, archived), autopilot, counts per status, cost and what waits on the owner.',
+    args: { state: 'active, paused, archived or all (default: active and paused).' },
+    returns: 'Project[], oldest first.',
+    shapes: ['project'],
+    example: {},
+  },
+  projects_get: {
+    group: 'projects',
+    use: 'One project in detail: its packages on the line (with their stage), the ready ones and its pending decisions.',
+    args: { key: 'The project key.' },
+    returns: 'Project detail.',
+    shapes: ['project-detail', 'project', 'task'],
+    errors: ['404 unknown project <key>'],
+    example: { key: 'arond' },
   },
   prompts_render: {
     group: 'prompts',
@@ -471,11 +545,11 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
   },
   gates_run: {
     group: 'gates',
-    use: 'Run a gate on the repo\'s runner, from the recipe in its main checkout (Settings → Factory). Then poll gates_status until done or error.',
-    args: { taskId: 'Package id; its repo needs a factory config.', gate: 'G1…G5.', args: 'Extra arguments for the recipe\'s {args} placeholder.' },
+    use: 'Run a gate on the runner of the package\'s project, from the recipe (its line file) in the project\'s main checkout. Then poll gates_status until done or error.',
+    args: { taskId: 'Package id; its project needs a machine, a checkout and a line file.', gate: 'G1…G5.', args: 'Extra arguments for the recipe\'s {args} placeholder.' },
     returns: '{ runId, status, round, machineId, sent, note? }. sent is false when the runner is offline; the run starts when gates_status finds it back.',
     shapes: ['gate-run'],
-    errors: ['404 unknown task <taskId>', '400 no factory config for the repo, or one without a machine, checkout or recipe'],
+    errors: ['404 unknown task <taskId>', '400 the package has no project, or its project has no machine or checkout'],
     example: { taskId: 'P3', gate: 'G1' },
     notes: [
       'The runner runs the gate\'s argv steps without a shell, in the main checkout. Exit 0 = pass (or skip), 1 = fail, anything else = error; the last stdout line is JSON { verdict, summary, details?, findings?, shots? }.',
@@ -840,7 +914,7 @@ export const API_GROUPS: ApiGroup[] = [
       {
         method: 'GET', path: '/api/settings', auth: 'web',
         summary: 'Server settings. Secrets read back masked.',
-        returns: '{ walk_mode, pause_all, stop_wait_min, retention_days, redaction_rules, budget_session_usd, budget_job_usd, watchers, ntfy_url, quiet_hours, push_types, github_token (masked), context_threshold_pct, governor_five_hour_pct, governor_seven_day_pct, governor_max_age_min, digest_enabled, digest_time, public_url, vapid_public_key }.',
+        returns: '{ walk_mode, pause_all, stop_wait_min, retention_days, redaction_rules, budget_session_usd, budget_job_usd, watchers, ntfy_url, quiet_hours, push_types, github_token (masked), context_threshold_pct, governor_five_hour_pct, governor_seven_day_pct, governor_max_age_min, digest_enabled, digest_time, archive_done_after_hours, public_url, vapid_public_key }.',
       },
       {
         method: 'PUT', path: '/api/settings', auth: 'web',
@@ -942,34 +1016,47 @@ export const API_GROUPS: ApiGroup[] = [
     intro: 'The PWA\'s side of the factory. Agents do the same through the MCP tools; these take a web login.',
     endpoints: [
       {
-        method: 'GET', path: '/api/tasks', auth: 'web', summary: 'The backlog.',
-        query: [f('status', 'Comma-separated statuses.'), f('ready', '1: only ready packages.'), f('q', 'Text in the id, title or body.')],
+        method: 'GET', path: '/api/tasks', auth: 'web', summary: 'The backlog. Archived packages are left out unless asked for.',
+        query: [
+          f('status', 'Comma-separated statuses.'), f('ready', '1: only ready packages.'), f('q', 'Text in the id, title or body.'), f('project', 'Only this project\'s packages.'),
+          f('archived', '1: only archived packages; all: archived and not.'),
+        ],
         returns: 'Task summary[].',
+        errors: ['404 unknown project'],
       },
-      { method: 'POST', path: '/api/tasks', auth: 'web', summary: 'Create a package (the tasks_create arguments, except upsert and extRef).', body: [f('(tasks_create arguments)', 'title is required.')], returns: '201 Task summary.', errors: ['400 a title is required', '409 exists'] },
+      {
+        method: 'POST', path: '/api/tasks', auth: 'web', summary: 'Create a package (the tasks_create arguments, except upsert and extRef; project included).',
+        body: [f('(tasks_create arguments)', 'title is required.')], returns: '201 Task summary.', errors: ['400 a title is required', '409 exists', '404 unknown project', '409 archived project'],
+      },
       {
         method: 'POST', path: '/api/tasks/import/markdown', auth: 'web',
-        summary: 'Import Markdown task files (frontmatter id, title, status, depends_on, repo, branch, priority, sensitive, acceptance; or an "Acceptance criteria" section). Upserts by id; ordered by dependencies.',
-        body: [f('files', '[{ name, text }], 1–200 files.')],
+        summary: 'Import Markdown task files (frontmatter id, title, status, depends_on, project, repo, branch, priority, sensitive, acceptance; or an "Acceptance criteria" section). Upserts by id; ordered by dependencies.',
+        body: [f('files', '[{ name, text }], 1–200 files.'), f('project', 'Optional: the project every file goes into (a file naming another project is refused).')],
         returns: '{ imported: string[] }.',
-        errors: ['400 a file that does not parse'],
+        errors: ['400 a file that does not parse, or names another project', '404 unknown project'],
       },
       {
         method: 'POST', path: '/api/tasks/import/github', auth: 'web',
         summary: 'Import the open issues of a GitHub repository (optionally one label) as packages, upserted by owner/repo#n. Uses the GitHub token from Settings.',
-        body: [f('owner', 'Repository owner.'), f('repo', 'Repository name.'), f('label', 'Optional label filter.')],
+        body: [f('owner', 'Repository owner.'), f('repo', 'Repository name.'), f('label', 'Optional label filter.'), f('project', 'Optional: the project they go into (default: the project of owner/repo).')],
         returns: 'Import summary.',
-        errors: ['400 owner and repo required', '502 GitHub failed'],
+        errors: ['400 owner and repo required', '404 unknown project', '502 GitHub failed'],
       },
       { method: 'GET', path: '/api/tasks/:id', auth: 'web', summary: 'One package.', returns: 'Task detail.', errors: ['404 unknown task'] },
       {
         method: 'PUT', path: '/api/tasks/:id', auth: 'web',
-        summary: 'Update a package: the tasks_update arguments, plus title, body, repo, priority and sensitive.',
+        summary: 'Update a package: the tasks_update arguments (archived included), plus title, body, repo, priority and sensitive.',
         body: [f('(tasks_update arguments without id)', ''), f('title · body · repo · priority · sensitive', 'Web-only fields.')],
         returns: 'Task summary (+ cleanup, warnings).',
         errors: ['400 invalid task', '404 unknown task', '409 round limit'],
       },
       { method: 'DELETE', path: '/api/tasks/:id', auth: 'web', summary: 'Delete a package and its history.', returns: OK, errors: ['404 unknown task'] },
+      {
+        method: 'POST', path: '/api/tasks/:id/:action{archive|unarchive}', auth: 'web',
+        summary: 'Archive a package (it leaves the board and the lists) or bring it back. The same as PUT /api/tasks/:id { archived }.',
+        returns: 'Task summary.',
+        errors: ['404 unknown task', '409 unarchiving a package of an archived project'],
+      },
       {
         method: 'POST', path: '/api/tasks/:id/control', auth: 'web',
         summary: '"Stop the package" or "Revert its integration": recorded for the coordinator, which reads it with control_get.',
@@ -990,8 +1077,16 @@ export const API_GROUPS: ApiGroup[] = [
       { method: 'GET', path: '/api/gate-runs/:id/log', auth: 'web', summary: 'The last 256 KB of a gate run\'s log.', returns: 'text/plain.', errors: ['404 no log'] },
       { method: 'GET', path: '/api/findings', auth: 'web', summary: 'Findings.', query: [f('taskId · status · severity', 'Filters.')], returns: 'Finding[].' },
       { method: 'POST', path: '/api/findings/update', auth: 'web', summary: 'Set the status of findings (the findings_update arguments).', body: [f('ids · status · note', 'As findings_update.')], returns: 'Finding[].' },
-      { method: 'GET', path: '/api/factory/config', auth: 'web', summary: 'Settings → Factory: the round limit and the per-repo config.', returns: '{ maxRounds, repos: [{ repo, machineId, checkout, recipe, worktree, portFrom, portTo, dbPrefix, migrationFrom, migrationBlock, cleanup }] }.' },
-      { method: 'PUT', path: '/api/factory/config', auth: 'web', summary: 'Replace the factory config. Each repo once.', body: [f('maxRounds', '1–50.'), f('repos', 'Up to 50 repo configs (shape as in GET).')], returns: 'The saved config.', errors: ['400 invalid config or a repo twice'] },
+      {
+        method: 'GET', path: '/api/factory/config', auth: 'web',
+        summary: 'Settings → Factory: the round limit and the per-repo config, read from the projects that carry it (machine, checkout, recipe = line file, config.legacy).',
+        returns: '{ maxRounds, repos: [{ repo, machineId, checkout, recipe, worktree, portFrom, portTo, dbPrefix, migrationFrom, migrationBlock, cleanup }] }.',
+      },
+      {
+        method: 'PUT', path: '/api/factory/config', auth: 'web',
+        summary: 'Replace the factory config. Each repo once. Each repo is written onto its project (a new project for a new repo); a project no longer listed loses its legacy fields, not its packages.',
+        body: [f('maxRounds', '1–50.'), f('repos', 'Up to 50 repo configs (shape as in GET).')], returns: 'The saved config.', errors: ['400 invalid config or a repo twice'],
+      },
       { method: 'GET', path: '/api/decisions', auth: 'web', summary: 'Decisions.', query: [f('status', 'pending, answered or cancelled.')], returns: 'Decision[].' },
       { method: 'POST', path: '/api/decisions/:id/answer', auth: 'web', summary: 'Answer a decision.', body: [f('answer', 'Free text or one of its options.')], returns: 'Decision.', errors: ['409 not found or already answered'] },
       { method: 'POST', path: '/api/decisions/:id/cancel', auth: 'web', summary: 'Cancel a pending decision.', returns: 'Decision.', errors: ['409 not found or already answered'] },
@@ -1008,6 +1103,49 @@ export const API_GROUPS: ApiGroup[] = [
       { method: 'GET', path: '/api/digests', auth: 'web', summary: 'The last 30 digests.', returns: 'Digest[].' },
       { method: 'POST', path: '/api/digests', auth: 'web', summary: 'Send the digest now.', body: [f('note', 'Optional.')], returns: '201 Digest.' },
       { method: 'GET', path: '/api/terminals', auth: 'web', summary: 'herdr terminals reported by the runners, linked to sessions and packages.', returns: '[{ machineId, machineName, address, name, agent, cwd, state, status, turn, where, taskId, sessionId, seenAt }].' },
+    ],
+  },
+  {
+    id: 'projects',
+    title: 'Factory projects (web)',
+    intro: 'Projects own their packages, their config and where their line runs. Agents read them with projects_list and projects_get; these take a web login. (GET /api/projects is something else: the checkouts seen by telemetry.)',
+    endpoints: [
+      {
+        method: 'GET', path: '/api/factory/projects', auth: 'web', summary: 'Factory projects, oldest first.',
+        query: [f('state', 'active, paused, archived or all (default: active and paused).')],
+        returns: 'Project[].',
+        errors: ['400 bad state'],
+      },
+      {
+        method: 'POST', path: '/api/factory/projects', auth: 'web',
+        summary: 'Create a project. It adopts the packages of its repo that have no project yet.',
+        body: [
+          f('key', 'Required, never changes: a lower-case letter, then letters, digits and "-", 2–24 characters.'), f('name', 'Default: the repo name, else the key.'),
+          f('repo', 'owner/name; one project per repo.'), f('idPrefix', '"" (default) or e.g. "ED-"; one project per prefix.'),
+          f('machineId · checkout · lineFile', 'Where its line runs; lineFile defaults to factory.json.'),
+          f('config', '{ legacy?, limits?, models?, integrate? } (see Project).'),
+        ],
+        returns: '201 Project.',
+        errors: ['400 invalid project or unknown machine', '409 the key, repo or id prefix is taken'],
+      },
+      { method: 'GET', path: '/api/factory/projects/:key', auth: 'web', summary: 'One project with its packages on the line, the ready ones and its pending decisions.', returns: 'Project detail.', errors: ['404 unknown project'] },
+      {
+        method: 'PUT', path: '/api/factory/projects/:key', auth: 'web',
+        summary: 'Change a project. config is merged key by key (a key set to null is removed). The id prefix can change only while it has no packages.',
+        body: [f('name · repo · idPrefix · machineId · checkout · lineFile', 'Any of them.'), f('config', '{ legacy?, limits?, models?, integrate? }, each null to remove.')],
+        returns: 'Project.',
+        errors: ['400 invalid project or unknown machine', '404 unknown project', '409 the repo or prefix is taken, or the prefix of a project with packages'],
+      },
+      { method: 'DELETE', path: '/api/factory/projects/:key', auth: 'web', summary: 'Delete a project that has no packages (archive one that has).', returns: OK, errors: ['404 unknown project', '409 it has packages'] },
+      {
+        method: 'POST', path: '/api/factory/projects/:key/:action{pause|resume|archive-done|archive|unarchive|refresh|autopilot}', auth: 'web',
+        summary:
+          'pause (nothing new starts; work in flight goes on), resume, archive (hidden; its packages are archived; nothing starts), unarchive (back to active, with the packages archived with it), autopilot (body on), archive-done (archive its integrated packages now), refresh (ask the runner for the line).',
+        body: [f('on', 'autopilot: true or false.')],
+        returns: 'Project; refresh: { sent, reason }; archive-done: { archived: string[] }.',
+        errors: ['404 unknown project', '409 pause, resume or autopilot on an archived project', '400 autopilot without on'],
+        notes: ['refresh sends nothing yet ({ sent: false }): the runner reports lines in a later version.'],
+      },
     ],
   },
   {
@@ -1142,9 +1280,15 @@ curl -X POST ${u}/api/agent/tasks_list -H "Authorization: Bearer bba_…" -H "Co
 
 - **Package (task)**: one unit of work in the backlog, with an id (P3), acceptance criteria, dependencies, a repo and a
   status. Statuses are Romanian: ${TASK_STATUSES.map((s) => `\`${s}\` (${STATUS_LABEL[s]})`).join(', ')}.
+- **Project**: a package belongs to one project for life (\`projects_list\`). The project says where its line runs
+  (machine, main checkout, line file), may give its package ids a prefix (\`ED-\`: P1 is stored as ED-P1; \`localId\`
+  is P1), and can be paused (nothing new starts) or archived. Pass \`project\` to \`tasks_list\`, \`tasks_create\` and
+  \`tasks_claim\` to work in one project.
+- **Archive**: integrated packages leave the lists a day later (and an archived project's at once); \`tasks_list
+  {archived: true}\` shows them. \`tasks_get\` and dependencies are unaffected.
 - **Ready**: status \`gata\` and every dependency \`integrata\`. Only ready packages can be claimed.
-- **Claim**: \`tasks_claim\` moves a ready package to \`in_lucru\` and allocates its **resources** from the repo's
-  factory config: a port, a database name and a block of migration numbers, kept until it is integrated.
+- **Claim**: \`tasks_claim\` moves a ready package to \`in_lucru\` and allocates its **resources** from its project's
+  config: a port, a database name and a block of migration numbers, kept until it is integrated.
 - **Gates**: ${GATES.map((g) => `${g} ${GATE_LABEL[g]}`).join('; ')}. A gate result is pass, fail or skip, with a
   summary, optional screenshots and **findings** (blocker, major, minor).
 - **Rounds**: every move into \`la_porti\` starts a gate round. A failing gate in the last allowed round (3 by

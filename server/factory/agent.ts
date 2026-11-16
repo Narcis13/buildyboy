@@ -16,6 +16,7 @@ import { sendDigest } from './digest.ts';
 import { listFindings, updateFindings } from './findings.ts';
 import { gateRunStatus, startGateRun } from './gateruns.ts';
 import { agentLaunch, listMachines } from './launch.ts';
+import { getProject, listProjects } from './projects.ts';
 
 export function createAgentToken(ctx: Ctx, name: string): { id: string; token: string } {
   const id = randomUUID();
@@ -78,6 +79,11 @@ export interface Caller {
   tokenId: string | null;
 }
 
+/** An operator token acts for the owner (§12.7, `agent_tokens.operator`, off by default). */
+export function isOperator(ctx: Ctx, tokenId: string | null): boolean {
+  return !!tokenId && !!ctx.db.get('SELECT 1 FROM agent_tokens WHERE id = ? AND operator = 1 AND revoked_at IS NULL', tokenId);
+}
+
 type Handler<T extends ToolName> = (ctx: Ctx, args: ToolArgs<T>, actor: string, caller: Caller) => unknown;
 
 function templateFor(store: ReturnType<typeof promptStore>, a: { templateId?: number; template?: string }) {
@@ -96,11 +102,17 @@ export const HANDLERS: { [K in ToolName]: Handler<K> } = {
     if (!s) throw new FactoryError(404, `unknown session ${a.id}`);
     return s;
   },
-  tasks_list: (ctx, a) => listTasks(ctx, { status: a.status, ready: a.ready, limit: a.limit }),
+  tasks_list: (ctx, a) => listTasks(ctx, { status: a.status, ready: a.ready, limit: a.limit, project: a.project, archived: a.archived }),
   tasks_get: (ctx, a) => getTask(ctx, a.id),
   tasks_create: (ctx, a, actor) => createTask(ctx, { ...a, source: 'agent' }, actor),
   tasks_claim: (ctx, a, actor) => claimTask(ctx, a, actor),
-  tasks_update: (ctx, a, actor) => updateTask(ctx, a, actor),
+  tasks_update: (ctx, a, actor, caller) => {
+    // archiving is the owner's, or an operator's (§12.2, §12.7)
+    if (a.archived !== undefined && !isOperator(ctx, caller.tokenId)) throw new FactoryError(403, 'only the owner or an operator token may archive packages');
+    return updateTask(ctx, a, actor);
+  },
+  projects_list: (ctx, a) => listProjects(ctx, { state: a.state }),
+  projects_get: (ctx, a) => getProject(ctx, a.key),
   prompts_render: (ctx, a) => {
     const { row, parsed } = templateFor(promptStore(ctx), a);
     return { templateId: row.id, template: row.name, rendered: renderTemplate(parsed, a.slots, a.extraMd), warnings: lintPrompt(parsed, a.slots) };

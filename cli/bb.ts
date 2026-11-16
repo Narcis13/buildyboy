@@ -9,7 +9,7 @@
 //   bb backup [--out <file>]       online SQLite backup
 //   bb doctor                      check config, server reachability, spool and what the factory still needs
 //   bb mcp                         MCP server (stdio) for a coordinator; needs BUILDYBOY_AGENT_TOKEN
-//   bb tasks import <path>         Markdown task files into the backlog; needs BUILDYBOY_AGENT_TOKEN
+//   bb tasks import <path> [--project <key>]  Markdown task files into the backlog (a project); needs BUILDYBOY_AGENT_TOKEN
 //   bb agent-token <name>          create an agent token and print it (server host only)
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';

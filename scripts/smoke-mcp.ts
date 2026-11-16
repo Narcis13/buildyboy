@@ -9,7 +9,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { startServer } from '../server/main.ts';
 import { createMachine } from '../server/auth.ts';
-import { createAgentToken, revokeAgentToken } from '../server/factory/agent.ts';
+import { createAgentToken, revokeAgentToken, setTokenLaunch } from '../server/factory/agent.ts';
 import { answerDecision } from '../server/factory/decisions.ts';
 import { requestControl } from '../server/factory/tasks.ts';
 import { saveFactoryConfig } from '../server/factory/config.ts';
@@ -103,6 +103,10 @@ console.log(JSON.stringify({ verdict: 'pass', summary: 'G1 pass: 3 tests', findi
     const claim = await call('tasks_claim', { agent: 'coordinator' });
     assert(claim.task?.id === 'P1' && claim.task.status === 'in_lucru', 'tasks_claim P1');
     assert(claim.resources?.port === 5600 && claim.resources.db === 'arond_p1' && claim.resources.migrations?.from === 40, 'tasks_claim allocates the resources');
+    const projects = await call<any[]>('projects_list');
+    assert(projects.length === 1 && projects[0].key === 'arond' && projects[0].counts.in_lucru === 1, 'projects_list: the arond project, P1 in progress');
+    const arond = await call('projects_get', { key: 'arond' });
+    assert(arond.line.map((t: any) => t.id).join() === 'P1' && claim.task.project === 'arond', 'projects_get: P1 on the line');
 
     const rendered = await call('prompts_render', { slots: { Goal: 'Build P1', 'Done when': '`pnpm verify` passes' } });
     assert(typeof rendered.rendered === 'string' && rendered.rendered.includes('Build P1'), 'prompts_render');
@@ -124,6 +128,16 @@ console.log(JSON.stringify({ verdict: 'pass', summary: 'G1 pass: 3 tests', findi
     }
     assert(status?.status === 'done' && status.verdict === 'pass' && status.summary === 'G1 pass: 3 tests' && status.gateResultId > 0, `gates_status done (${JSON.stringify(status)})`);
     assert(!JSON.stringify(status).includes('G1 log line'), 'gates_status returns no log text');
+    const machines = await call<any[]>('machines_list');
+    assert(machines.some((m) => m.id === machine.id && m.runnerOnline), 'machines_list: this machine, runner online');
+    // launching allowed with the owner's approval: the first call asks and starts nothing
+    setTokenLaunch(srv.ctx, agent.id, { launch: 'all', launchApproval: true });
+    const launch = await call('tasks_launch', { taskId: 'P2', machineId: machine.id, cwd: checkout });
+    assert(launch.status === 'pending_approval' && launch.decisionId, `tasks_launch waits for approval (${JSON.stringify(launch)})`);
+    const coord = await call('coordinator_launch', { machineId: machine.id, cwd: checkout });
+    assert(coord.status === 'pending_approval', 'coordinator_launch waits for approval');
+    answerDecision(srv.ctx, launch.decisionId, null, 'web');
+    answerDecision(srv.ctx, coord.decisionId, null, 'web');
     const gate = await call('gates_record', {
       taskId: 'P1', gate: 'G4', verdict: 'pass', summary: 'Desktop and phone look right', screenshots: [{ name: 'desktop', path: shot }],
       findings: [{ severity: 'minor', title: 'Button 2px off on phone', file: 'web/src/x.tsx', line: 4 }],

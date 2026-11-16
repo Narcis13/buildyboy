@@ -1,5 +1,6 @@
 // The digest (SPEC §11.5): once a day at a configurable time, and on demand (digest_post), a phone notification with
-// what was integrated, the gates, usage and the decisions that wait.
+// what was integrated, the gates, usage and the decisions that wait. When its packages come from more than one
+// project (§12.1), each line names their project.
 import type { Ctx } from '../context.ts';
 import type { DigestView } from '../../shared/factory.ts';
 import { governor } from './governor.ts';
@@ -20,6 +21,8 @@ export interface DigestData {
   controlsOpen: number;
   usage: { fiveHourPct: number | null; sevenDayPct: number | null; canStart: boolean; stopAll: boolean; reason: string };
   note: string | null;
+  /** the project of every package named above that has one */
+  projects?: Record<string, string>;
 }
 
 export function digestData(ctx: Ctx, now = Date.now(), note: string | null = null): DigestData {
@@ -28,7 +31,7 @@ export function digestData(ctx: Ctx, now = Date.now(), note: string | null = nul
   const gates = db.all<{ task_id: string; gate: string; verdict: string }>('SELECT task_id, gate, verdict FROM gate_results WHERE created_at > ? ORDER BY id', since);
   const g = governor(ctx, now);
   const n = (sql: string) => db.get<{ n: number }>(sql)!.n;
-  return {
+  const d: DigestData = {
     since,
     integrated: db
       .all<{ id: string; title: string; sensitive: number }>("SELECT id, title, sensitive FROM tasks WHERE status = 'integrata' AND integrated_at > ? ORDER BY integrated_at", since)
@@ -39,8 +42,8 @@ export function digestData(ctx: Ctx, now = Date.now(), note: string | null = nul
       skip: gates.filter((x) => x.verdict === 'skip').length,
       failed: gates.filter((x) => x.verdict === 'fail').map((x) => ({ taskId: x.task_id, gate: x.gate })),
     },
-    blocked: db.all<{ id: string }>("SELECT id FROM tasks WHERE status = 'blocata' ORDER BY id").map((t) => t.id),
-    inProgress: db.all<{ id: string }>("SELECT id FROM tasks WHERE status IN ('in_lucru','la_porti') ORDER BY id").map((t) => t.id),
+    blocked: db.all<{ id: string }>("SELECT id FROM tasks WHERE status = 'blocata' AND archived_at IS NULL ORDER BY id").map((t) => t.id),
+    inProgress: db.all<{ id: string }>("SELECT id FROM tasks WHERE status IN ('in_lucru','la_porti') AND archived_at IS NULL ORDER BY id").map((t) => t.id),
     decisionsPending: n("SELECT COUNT(*) n FROM decisions WHERE status = 'pending'"),
     decisions: db
       .all<{ id: string; task_id: string | null; question: string; created_at: number }>("SELECT id, task_id, question, created_at FROM decisions WHERE status = 'pending' ORDER BY created_at LIMIT 20")
@@ -52,6 +55,16 @@ export function digestData(ctx: Ctx, now = Date.now(), note: string | null = nul
     usage: { fiveHourPct: g.usage.fiveHour?.pct ?? null, sevenDayPct: g.usage.sevenDay?.pct ?? null, canStart: g.canStart, stopAll: g.stopAll, reason: g.reason },
     note,
   };
+  const named = [...new Set([
+    ...d.integrated.map((t) => t.id), ...d.gates.failed.map((f) => f.taskId), ...d.blocked, ...d.inProgress, ...d.warnings.map((w) => w.taskId),
+    ...d.decisions.flatMap((x) => (x.taskId ? [x.taskId] : [])),
+  ])];
+  d.projects = {};
+  for (let i = 0; i < named.length; i += 500) {
+    const ids = named.slice(i, i + 500);
+    for (const r of db.all<{ id: string; project: string }>(`SELECT id, project FROM tasks WHERE project IS NOT NULL AND id IN (${ids.map(() => '?').join(',')})`, ...ids)) d.projects[r.id] = r.project;
+  }
+  return d;
 }
 
 const pct = (v: number | null) => (v === null ? '–' : `${Math.round(v)}%`);
@@ -65,21 +78,33 @@ export function age(ms: number): string {
 }
 
 export function digestText(d: DigestData): { title: string; body: string } {
+  // with packages from more than one project, lists group by project ("arond: P8, P9; shop: ED-3") and single
+  // packages carry it ("shop ED-3")
+  const projects = d.projects ?? {};
+  const multi = new Set(Object.values(projects)).size > 1;
+  const one = (id: string) => (multi && projects[id] ? `${projects[id]} ${id}` : id);
+  const many = (items: { id: string; text: string }[]) => {
+    if (!multi) return items.map((i) => i.text).join(', ');
+    const by = new Map<string, string[]>();
+    for (const i of items) by.set(projects[i.id] ?? '', [...(by.get(projects[i.id] ?? '') ?? []), i.text]);
+    return [...by].map(([k, v]) => (k ? `${k}: ${v.join(', ')}` : v.join(', '))).join('; ');
+  };
+  const ids = (list: string[]) => many(list.map((id) => ({ id, text: id })));
   const lines: string[] = [];
   if (d.note) lines.push(d.note);
   lines.push(
     d.integrated.length
-      ? `Integrated: ${d.integrated.map((t) => `${t.id}${t.sensitive ? ' (sensitive)' : ''}`).join(', ')}`
+      ? `Integrated: ${many(d.integrated.map((t) => ({ id: t.id, text: `${t.id}${t.sensitive ? ' (sensitive)' : ''}` })))}`
       : 'Integrated: nothing in the last 24 h',
   );
-  lines.push(`Gates: ${d.gates.pass} passed, ${d.gates.fail} failed${d.gates.failed.length ? ` (${d.gates.failed.slice(0, 6).map((f) => `${f.taskId} ${f.gate}`).join(', ')})` : ''}`);
-  if (d.inProgress.length) lines.push(`In progress: ${d.inProgress.join(', ')}`);
-  if (d.blocked.length) lines.push(`Blocked: ${d.blocked.join(', ')}`);
+  lines.push(`Gates: ${d.gates.pass} passed, ${d.gates.fail} failed${d.gates.failed.length ? ` (${many(d.gates.failed.slice(0, 6).map((f) => ({ id: f.taskId, text: `${f.taskId} ${f.gate}` })))})` : ''}`);
+  if (d.inProgress.length) lines.push(`In progress: ${ids(d.inProgress)}`);
+  if (d.blocked.length) lines.push(`Blocked: ${ids(d.blocked)}`);
   lines.push(`Usage: 5 h ${pct(d.usage.fiveHourPct)}, 7 d ${pct(d.usage.sevenDayPct)}${d.usage.stopAll ? ' — factory stopped' : d.usage.canStart ? '' : ' — no new workers'}`);
-  for (const w of d.warnings ?? []) lines.push(`Warning ${w.taskId}: ${w.message}`);
+  for (const w of d.warnings ?? []) lines.push(`Warning ${one(w.taskId)}: ${w.message}`);
   if (d.decisionsPending) {
     lines.push(`Decisions waiting: ${d.decisionsPending}`);
-    for (const q of d.decisions ?? []) lines.push(`  · ${q.taskId ? `${q.taskId}, ` : ''}${age(q.ageMs)}: ${q.question.length > 90 ? `${q.question.slice(0, 89)}…` : q.question}`);
+    for (const q of d.decisions ?? []) lines.push(`  · ${q.taskId ? `${one(q.taskId)}, ` : ''}${age(q.ageMs)}: ${q.question.length > 90 ? `${q.question.slice(0, 89)}…` : q.question}`);
   }
   if (d.controlsOpen) lines.push(`Your stop/revert requests not yet handled: ${d.controlsOpen}`);
   const title = `Factory digest: ${d.integrated.length} integrated${d.decisionsPending ? `, ${d.decisionsPending} decision${d.decisionsPending > 1 ? 's' : ''} waiting` : ''}`;

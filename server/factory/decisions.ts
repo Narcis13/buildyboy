@@ -13,7 +13,7 @@ const view = (r: Row): DecisionView => ({
   askedBy: r.asked_by, createdAt: r.created_at, answeredAt: r.answered_at,
 });
 
-export function listDecisions(ctx: Ctx, f: { status?: DecisionView['status']; taskId?: string; limit?: number } = {}): DecisionView[] {
+export function listDecisions(ctx: Ctx, f: { status?: DecisionView['status']; taskId?: string; project?: string; limit?: number } = {}): DecisionView[] {
   const where = ['1 = 1'];
   const args: (string | number)[] = [];
   if (f.status) {
@@ -23,6 +23,11 @@ export function listDecisions(ctx: Ctx, f: { status?: DecisionView['status']; ta
   if (f.taskId) {
     where.push('task_id = ?');
     args.push(f.taskId);
+  }
+  if (f.project) {
+    // decisions tied to the project's packages (§12.1)
+    where.push('task_id IN (SELECT id FROM tasks WHERE project = ?)');
+    args.push(f.project);
   }
   return ctx.db.all<Row>(`SELECT * FROM decisions WHERE ${where.join(' AND ')} ORDER BY status = 'pending' DESC, created_at DESC LIMIT ?`, ...args, f.limit ?? 200).map(view);
 }

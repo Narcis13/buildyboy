@@ -1,4 +1,4 @@
-// The factory (SPEC §11): types shared by the server, the PWA and `bb mcp`, plus the MCP tool list.
+// The factory (SPEC §11, §12): types shared by the server, the PWA and `bb mcp`, plus the MCP tool list.
 // Each tool is one HTTP endpoint, POST /api/agent/<name>, behind an agent token. The same zod schema validates the
 // arguments in `bb mcp` (where the SDK derives the model-facing JSON Schema) and again on the server.
 import { z } from 'zod';
@@ -27,8 +27,16 @@ export type Verdict = 'pass' | 'fail' | 'skip';
 
 export interface TaskSummary {
   id: string;
+  /** the id without its project's prefix (`ED-P1` → `P1`); the id itself when the project has none */
+  localId: string;
+  /** the factory project it belongs to (for life); null for old data and one-off packages */
+  project: string | null;
   title: string;
   status: TaskStatus;
+  /** where the conductor has it on the line (§12.5: prepare, qa, build, G1…G5, cleanup); null off the line */
+  stage: string | null;
+  /** archived packages leave the default lists (§12.2); null when not archived */
+  archivedAt: number | null;
   /** status is `gata` and every dependency is `integrata` */
   ready: boolean;
   dependsOn: string[];
@@ -48,7 +56,7 @@ export interface TaskSummary {
   /** current gate round (0 before the first one) and the limit, after which the package is blocked */
   round: number;
   maxRounds: number;
-  /** allocated by tasks_claim from the repo's factory config; null when the repo has none */
+  /** allocated by tasks_claim from the project's config; null when it has none */
   resources: TaskResources | null;
   migrationsUsed: number[];
   /** open findings by severity */
@@ -179,7 +187,11 @@ export interface GateRunView {
   finishedAt: number | null;
 }
 
-/** Per-repo factory config (Settings → Factory). */
+/**
+ * §11.7's per-repo factory config, as the Settings card still reads and writes it (GET/PUT /api/factory/config). Since
+ * migration 009 it is a view of the projects: machineId, checkout and recipe (= lineFile) are the project's own columns,
+ * the other fields its config.legacy.
+ */
 export interface RepoFactoryConfig {
   /** matches the task's `repo` (case-insensitive) */
   repo: string;
@@ -205,6 +217,137 @@ export interface FactoryConfig {
   repos: RepoFactoryConfig[];
 }
 
+// ---------- projects (§12.1) ----------
+
+export const PROJECT_STATES = ['active', 'paused', 'archived'] as const;
+export type ProjectState = (typeof PROJECT_STATES)[number];
+/** a project key: never changes */
+export const PROJECT_KEY_RE = /^[a-z][a-z0-9-]{1,23}$/;
+/** a package id prefix: '' or e.g. `ED-` */
+export const ID_PREFIX_RE = /^(?:[A-Z][A-Z0-9]{0,7}-)?$/;
+/** the roles whose model a project may override (§12.3 `models`) */
+export const MODEL_ROLES = ['worker', 'qa', 'review', 'visual', 'foreman', 'planner'] as const;
+export type ModelRole = (typeof MODEL_ROLES)[number];
+
+/** §11.7's per-repo allocation fields, kept in a project that came from that config (config.legacy). */
+export const legacyRepoConfigSchema = z.object({
+  /** the package's worktree, with placeholders */
+  worktree: z.string().trim().max(1000).default(''),
+  portFrom: z.number().int().min(1).max(65535).nullable().default(null),
+  portTo: z.number().int().min(1).max(65535).nullable().default(null),
+  dbPrefix: z.string().trim().max(60).regex(/^[\w-]*$/, 'letters, digits, _ and - only').default(''),
+  migrationFrom: z.number().int().min(0).max(1_000_000).nullable().default(null),
+  migrationBlock: z.number().int().min(1).max(1000).default(10),
+  /** cleanup lines returned when a package is integrated, with placeholders */
+  cleanup: z.array(z.string().max(2000)).max(30).default([]),
+});
+export type LegacyRepoConfig = z.infer<typeof legacyRepoConfigSchema>;
+
+/**
+ * A project's config_json: the owner's (or an operator's) overrides, which win over the line file (§12.3), and the
+ * legacy allocation fields of a project migrated from `factory_repos`.
+ */
+const limitsSchema = z.object({ workers: z.number().int().min(1).max(20).optional(), rounds: z.number().int().min(1).max(50).optional() });
+/** model per role; null turns that role off (the foreman: everything goes to the owner) */
+const model = z.string().trim().min(1).max(100).nullable().optional();
+const modelsSchema = z.object({ worker: model, qa: model, review: model, visual: model, foreman: model, planner: model } satisfies Record<ModelRole, unknown>);
+const integrateSchema = z.object({ approval: z.enum(['never', 'sensitive', 'always']).optional() });
+export const projectConfigSchema = z.object({
+  legacy: legacyRepoConfigSchema.optional(),
+  limits: limitsSchema.optional(),
+  models: modelsSchema.optional(),
+  integrate: integrateSchema.optional(),
+});
+export type ProjectConfig = z.infer<typeof projectConfigSchema>;
+
+const projectKey = z.string().trim().regex(PROJECT_KEY_RE, 'a project key: a lower-case letter, then letters, digits and "-", 2–24 characters');
+
+/** The fields of a project the owner (or an operator, §12.7) sets: POST and PUT /api/factory/projects. */
+export const projectFieldsSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  repo: z.string().trim().max(200).regex(/^[\w.-]+(?:\/[\w.-]+)*$/, 'owner/name').nullable(),
+  idPrefix: z.string().regex(ID_PREFIX_RE, "'' or an upper-case prefix ending in '-', e.g. ED-"),
+  machineId: z.string().trim().min(1).max(100).nullable(),
+  checkout: z.string().trim().min(1).max(1000).nullable(),
+  lineFile: z.string().trim().min(1).max(1000),
+  config: projectConfigSchema,
+});
+export const projectCreateSchema = projectFieldsSchema.partial().extend({ key: projectKey });
+/** config is merged key by key into the stored one; a key set to null is removed */
+export const projectPatchSchema = projectFieldsSchema.omit({ config: true }).partial().extend({
+  config: z.object({
+    legacy: legacyRepoConfigSchema.nullable().optional(),
+    limits: limitsSchema.nullable().optional(),
+    models: modelsSchema.nullable().optional(),
+    integrate: integrateSchema.nullable().optional(),
+  }).optional(),
+});
+export type ProjectCreate = z.infer<typeof projectCreateSchema>;
+export type ProjectPatch = z.infer<typeof projectPatchSchema>;
+
+/** POST /api/factory/projects/:key/<action> */
+export const PROJECT_ACTIONS = ['pause', 'resume', 'archive-done', 'archive', 'unarchive', 'refresh', 'autopilot'] as const;
+export type ProjectAction = (typeof PROJECT_ACTIONS)[number];
+
+/** A factory project as projects_list and GET /api/factory/projects return it. Times are epoch ms. */
+export interface ProjectView {
+  key: string;
+  name: string;
+  /** `owner/name` (or a bare name, from old data); packages created with this repo and no project land here */
+  repo: string | null;
+  /** '' or e.g. `ED-`: the package ids it owns (§12.2) */
+  idPrefix: string;
+  /** where its line runs: the trusted main checkout on a paired machine */
+  machineId: string | null;
+  machineName: string | null;
+  checkout: string | null;
+  /** relative to the checkout (default factory.json; a migrated project keeps its §11.7 recipe path) */
+  lineFile: string;
+  config: ProjectConfig;
+  /** the resolved line as the runner last reported it (§12.3; its shape is shared/line.ts's), null until then */
+  resolvedLine: unknown;
+  lineSeenAt: number | null;
+  lineError: string | null;
+  state: ProjectState;
+  autopilot: boolean;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt: number | null;
+  /** packages per status, archived ones left out */
+  counts: Record<TaskStatus, number>;
+  /** archived packages */
+  archived: number;
+  /** packages integrated, ever */
+  integrated: number;
+  /** sum over its packages (measured, else set by hand) */
+  costUsd: number;
+  /** pending decisions tied to its packages */
+  openDecisions: number;
+  /** packages waiting on the owner: blocked, or with a pending decision (archived ones left out) */
+  attention: number;
+  /** the newest change to one of its packages */
+  lastActivityAt: number | null;
+  /** the §5 projects (checkouts seen by telemetry) whose GitHub repo is this one */
+  checkoutIds: number[];
+}
+
+/** projects_get and GET /api/factory/projects/:key */
+export interface ProjectDetail extends ProjectView {
+  /** its packages on the line: in_lucru and la_porti, with their stage */
+  line: TaskSummary[];
+  /** its ready packages, in claim order */
+  next: TaskSummary[];
+  /** pending decisions tied to its packages, newest first */
+  decisions: DecisionView[];
+}
+
+/**
+ * Placeholders of every template the factory fills (§12.2): factory.json, cleanup lines, the worktree template.
+ * {recipeDir} and {args} exist only in gate recipe steps.
+ */
+export const TASK_VAR_NAMES = ['id', 'idLower', 'localId', 'localIdLower', 'project', 'round', 'port', 'db', 'worktree', 'branch'] as const;
+export type TaskVars = Record<(typeof TASK_VAR_NAMES)[number], string>;
+
 /** One argv step of a gate (no shell). Placeholders: {id} {idLower} {worktree} {round} {port} {db} {recipeDir} {args}. */
 export interface RecipeStep {
   name?: string;
@@ -228,8 +371,10 @@ export interface GateCommand {
     round: number;
     args: string[];
     checkout: string;
+    /** the project's line file, relative to the checkout */
     recipe: string;
-    vars: Record<'id' | 'idLower' | 'worktree' | 'round' | 'port' | 'db', string>;
+    /** the six the runner fills in recipe steps, plus the rest of §12.2's placeholders (localId, project, branch…) */
+    vars: Record<'id' | 'idLower' | 'worktree' | 'round' | 'port' | 'db', string> & Partial<TaskVars>;
   };
 }
 
@@ -447,8 +592,8 @@ export const QUEUEABLE_TOOLS = ['gates_record', 'tasks_update', 'digest_post', '
 
 /** Tools that change nothing (MCP `readOnlyHint`). control_get changes state only with ack: true. */
 export const READ_ONLY_TOOLS = [
-  'usage_get', 'governor_get', 'sessions_list', 'sessions_get', 'tasks_list', 'tasks_get', 'prompts_render', 'prompts_lint', 'gates_status',
-  'findings_list', 'decision_get', 'machines_list', 'docs_get',
+  'usage_get', 'governor_get', 'sessions_list', 'sessions_get', 'tasks_list', 'tasks_get', 'projects_list', 'projects_get', 'prompts_render', 'prompts_lint',
+  'gates_status', 'findings_list', 'decision_get', 'machines_list', 'docs_get',
 ] as const;
 
 /** Longest coordinator prompt: it goes on a herdr command line (runner/options.ts HC_PROMPT_MAX). */
@@ -485,16 +630,23 @@ export const TOOLS = {
     input: z.object({ id: z.string().min(1).max(200) }),
   },
   tasks_list: {
-    description: 'Backlog packages. `ready: true` returns only tasks that can start now (status gata, all dependencies integrated).',
-    input: z.object({ status: z.array(status).optional(), ready: z.boolean().optional(), limit: z.number().int().min(1).max(500).optional() }),
+    description: 'Backlog packages. `ready: true` returns only tasks that can start now (status gata, all dependencies integrated). Archived packages are left out unless `archived: true` (then only they are listed).',
+    input: z.object({
+      status: z.array(status).optional(),
+      ready: z.boolean().optional(),
+      limit: z.number().int().min(1).max(500).optional(),
+      project: projectKey.optional().describe('Only the packages of this project (projects_list)'),
+      archived: z.boolean().optional().describe('true: only archived packages'),
+    }),
   },
   tasks_get: {
     description: 'One package with its history, gate results, control requests and decisions.',
     input: z.object({ id }),
   },
   tasks_create: {
-    description: 'Create a package. With upsert: true an existing id is updated instead (status is kept unless given).',
+    description: "Create a package. With upsert: true an existing id is updated instead (status is kept unless given). In a project with an id prefix, the id gets the prefix (P1 → ED-P1) and dependencies resolve inside the project first; without project, the project whose repo matches `repo` is used.",
     input: z.object({
+      project: projectKey.optional().describe('The project it belongs to (for life); default: the project whose repo is `repo`'),
       id: id.optional(),
       title: z.string().trim().min(1).max(200),
       body: z.string().max(100_000).optional(),
@@ -511,8 +663,13 @@ export const TOOLS = {
     }),
   },
   tasks_claim: {
-    description: "Claim a package for work: the given id, or the next ready one by priority. Sets it to in_lucru and returns its resources (port, database, migration range) from the repo's factory config. Refused when the governor says canStart is false, unless force is true.",
-    input: z.object({ id: id.optional(), agent: z.string().max(100).optional(), force: z.boolean().optional() }),
+    description: "Claim a package for work: the given id, or the next ready one by priority (in `project`, or across active projects). Sets it to in_lucru and returns its resources (port, database, migration range) from its project's config. Never in a paused or archived project. Refused when the governor says canStart is false, unless force is true.",
+    input: z.object({
+      id: id.optional(),
+      agent: z.string().max(100).optional(),
+      force: z.boolean().optional(),
+      project: projectKey.optional().describe('Claim only in this project'),
+    }),
   },
   tasks_update: {
     description: 'Update a package: status, branch, cost, prompt version, terminal, session, used migrations or a note. Every change is kept in its history. Moving to integrata returns the cleanup list; moving from blocata back to in_lucru with a note allows one more gate round.',
@@ -529,7 +686,16 @@ export const TOOLS = {
       dependsOn: z.array(id).max(50).optional(),
       acceptance: z.array(z.string().max(2000)).max(100).optional(),
       migrationsUsed: z.array(z.number().int().min(0)).max(500).optional().describe('Migration numbers the package uses; checked against the other active packages when it is integrated'),
+      archived: z.boolean().optional().describe('Archive (true) or unarchive (false) the package'),
     }),
+  },
+  projects_list: {
+    description: 'Factory projects: each one owns its packages, its config and where its line runs. Default: active and paused ones.',
+    input: z.object({ state: z.enum([...PROJECT_STATES, 'all']).optional().describe('active, paused, archived, or all (default: active and paused)') }),
+  },
+  projects_get: {
+    description: 'One project: its counts, cost and what waits on the owner, plus its packages on the line, the ready ones and its pending decisions.',
+    input: z.object({ key: projectKey }),
   },
   prompts_render: {
     description: 'Render a harness prompt from a template and slot values; returns the Markdown and lint warnings.',
@@ -564,7 +730,7 @@ export const TOOLS = {
     }),
   },
   gates_run: {
-    description: "Run a gate on the runner from the repo's recipe (Settings → Factory). Returns a runId; gates_status gives the verdict, summary and findings once it is done. The log stays on the server.",
+    description: "Run a gate on the runner of the package's project, from its recipe (the project's line file). Returns a runId; gates_status gives the verdict, summary and findings once it is done. The log stays on the server.",
     input: z.object({ taskId: id, gate: z.enum(GATES), args: z.array(z.string().max(2000)).max(30).optional() }),
   },
   gates_status: {

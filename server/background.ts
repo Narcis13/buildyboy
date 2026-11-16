@@ -4,8 +4,9 @@ import { expireOrphans } from './control/pending.ts';
 import { startGithubPoller } from './github/poller.ts';
 import { startJobScheduler } from './jobs/scheduler.ts';
 import { maybeDailyDigest } from './factory/digest.ts';
+import { archiveSweep } from './factory/projects.ts';
 
-/** Periodic jobs: watchers, retention, the job scheduler and the GitHub poller. Returns a stop function. */
+/** Periodic jobs: watchers, retention, the factory's digest and archive sweep, the job scheduler and the GitHub poller. Returns a stop function. */
 export function startBackground(ctx: Ctx): () => void {
   const timers: NodeJS.Timeout[] = [];
   const every = (ms: number, fn: () => void) => {
@@ -22,6 +23,7 @@ export function startBackground(ctx: Ctx): () => void {
 
   every(60_000, () => runWatchers(ctx));
   every(60_000, () => maybeDailyDigest(ctx));
+  every(5 * 60_000, () => archiveSweep(ctx));
   every(30_000, () => expireOrphans(ctx));
   every(6 * 3600_000, () => purgeOld(ctx));
 
