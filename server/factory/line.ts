@@ -316,9 +316,9 @@ function stepDone(e: Env, t: TaskRow, st: LineState, name: StepName, runId: stri
       if (!ok) return attention(e, t, { ...st, runId: undefined }, `the revert failed: ${said}`, 'revert');
       e.ctx.db.tx(() => {
         const open = e.ctx.db.all<{ id: number }>("SELECT id FROM control_requests WHERE task_id = ? AND kind = 'revert' AND status = 'open'", t.id).map((r) => r.id);
-        updateTask(e.ctx, { id: t.id, status: 'gata', note: `reverted: ${cut(summary, 500)}` }, LINE_ACTOR);
+        updateTask(e.ctx, { id: t.id, status: 'backlog', note: `reverted: ${cut(summary, 500)}` }, LINE_ACTOR);
         ackControls(e.ctx, open, LINE_ACTOR);
-        persist(e, t, null, { stage: null, text: `Reverted (${said}): back to gata.` });
+        persist(e, t, null, { stage: null, text: `Reverted (${said}): back to backlog: the owner decides whether it is built again.` });
       });
       return true;
     }

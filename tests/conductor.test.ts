@@ -695,7 +695,7 @@ describe('controls', () => {
     expect(db().get<any>('SELECT status FROM control_requests WHERE task_id = ?', id).status).toBe('acked');
   });
 
-  it('revert: the G5 range is reverted and the package goes back to gata', async () => {
+  it('revert: the G5 range is reverted and the package goes back to backlog', async () => {
     await project('rev', LINE_VERIFY);
     const id = await pkg('rev', 'V1');
     const { sid } = await toWorker('rev', id, false);
@@ -710,7 +710,7 @@ describe('controls', () => {
     expect(run.args).toEqual(['aaaaaaa..bbbbbbb']);
     await report(run.id, { status: 'done', verdict: 'pass', summary: 'reverted aaaaaaa..bbbbbbb' });
     go('rev');
-    expect(task(id)).toMatchObject({ status: 'gata', stage: null, line_json: null });
+    expect(task(id)).toMatchObject({ status: 'backlog', stage: null, line_json: null });
     expect(db().get<any>('SELECT status FROM control_requests WHERE task_id = ?', id).status).toBe('acked');
 
     // a revert of a package never integrated: nothing to do, acknowledged with the reason

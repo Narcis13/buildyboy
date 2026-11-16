@@ -1,7 +1,7 @@
 // The conductor's questions and the owner's levers (SPEC §12.5): needs-attention, integration approval and the
 // protected-paths refusal of G5 (decisions asked by `factory:line` with fixed English options, matched exactly when
 // answered, by the owner or an operator), the round-limit decision of §11.7 (`factory:rounds`), and the controls
-// (`stop`: tell the worker to commit, push and stop, then `hc kill`, `blocata`; `revert`: step revert, back to `gata`).
+// (`stop`: tell the worker to commit, push and stop, then `hc kill`, `blocata`; `revert`: step revert, back to `backlog`).
 import { sendToRunner } from '../jobs/core.ts';
 import { GATES, LINE_ANSWERS, ROUND_ANSWERS, type GateRunView } from '../../shared/factory.ts';
 import { findingsMessage } from './brief.ts';
@@ -336,5 +336,5 @@ export function control(e: Env, t: TaskRow, st: LineState | null, ctl: { id: num
   const s = st ?? fresh(e, t, 'revert run');
   if (s.decisionId && getDecision(e.ctx, s.decisionId)?.status === 'pending') answerDecision(e.ctx, s.decisionId, null, LINE_ACTOR);
   const next = fresh(e, t, 'revert run', { worktree: s.worktree });
-  return persist(e, t, next, { stage: 'revert', text: `Revert requested${ctl.note ? ` (${cut(ctl.note, 300)})` : ''}: the integration is reverted on ${e.line.base}, then the package goes back to gata.` });
+  return persist(e, t, next, { stage: 'revert', text: `Revert requested${ctl.note ? ` (${cut(ctl.note, 300)})` : ''}: the integration is reverted on ${e.line.base}, then the package goes back to backlog.` });
 }

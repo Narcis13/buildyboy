@@ -616,7 +616,7 @@ One JSON file in the main checkout, read and validated by the runner (`shared/li
 | `context` | `["CLAUDE.md"]` | files every role reads first |
 
 - Command lines run through the shell, in the worktree, with placeholders filled from validated values only (ids `[\w.-]`, numbers, paths the runner computed). They come from the main checkout, never from a worktree: a worker cannot change its own gates.
-- A package that changes `factory.json` or another protected path does so through G5 only with the owner's approval (§12.5).
+- A package that must change `factory.json` or another protected path asks first (the guard of §12.8 blocks the write; the worker raises it with its `question` status line), and such a change passes G5 only with the owner's approval (§12.5).
 - The server keeps the resolved line the runner reports (`line_json`): with every `prepare`, and on demand (`{type: 'line'}` → `POST /api/runner/lines`, behind "Check setup" and `refresh`). Operator overrides in `config_json` (`limits.workers`, `limits.rounds`, `models.*`, `integrate.approval`) win over the file.
 
 ### 12.4 Steps: the kit in the runner
@@ -656,7 +656,7 @@ One JSON file in the main checkout, read and validated by the runner (`shared/li
 - **The brief** is composed by the server: the harness template (§5.4) with Goal, Done when (the line's commands), Scope (the worktree; protected paths read-only), Limit, Subagents, Branch `current`, PR and Unattended from the line; then the package (body, criteria, resources); then the kit's worker rules (who you are, read `context` and `factory/worker.md`, never touch acceptance tests or the line file, commit small and push the branch, never merge, the status line). It is saved in the prompt library (§11.1 `prompts_save` semantics) and written to `.factory/brief.md`; the launch line only says to read it.
 - **Errors.** A step that ends in `error` (no verdict) is retried once after a minute; a second error needs attention. So does a worker past `worker.limitHours`.
 - **Needs attention** = one decision tied to the package (`asked_by factory:line`) with what happened and the options that apply: Retry, Ask the foreman, Stop the package, I'll take it from here (the conductor leaves the package alone until its status changes by hand). The conductor acts on the answer; it also acts on the round-limit decision of §11.7 (one more round → back to `build` with the findings; stop → stop).
-- **Controls** (§11.5). `stop`: tell the worker to commit, push and stop; then `hc kill`; `blocata`; ack. `revert`: step `revert`; back to `gata`; ack.
+- **Controls** (§11.5). `stop`: tell the worker to commit, push and stop; then `hc kill`; `blocata`; ack. `revert`: step `revert`; back to `backlog` (not `gata`: with autopilot on it would be built again at once; the owner decides); ack.
 - **Governor.** `canStart: false`: nothing new is claimed and no worker is launched; packages in flight go on. `stopAll`: also no step that spends tokens (`qa`, G3, G4, foreman) and each active worker is told once to commit, push, update PROGRESS.md and wait; when it clears they are told to resume.
 - **By hand.** With autopilot off nothing here runs: a coordinator session (§11) or the owner drives the same tools (`tasks_claim`, `steps_run`, `tasks_launch`, `gates_run`, `tasks_update`). A package moved by hand while autopilot is on is picked up from its new status.
 
