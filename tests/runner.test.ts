@@ -114,6 +114,7 @@ describe('runner jobs', () => {
     expect(lines.some((l) => l.includes('"tool_use"'))).toBe(true);
     const init = await initOf(first);
     expect(init.fake_job_id).toBe(first);
+    expect(init.fake_bb).toEqual({ BB_TASK: null, BB_ROLE: null }); // a job for no package carries no package
     const argv: string[] = init.fake_argv;
     expect(argv.slice(0, 7)).toEqual(['-p', '--output-format', 'stream-json', '--verbose', '--include-hook-events', '--input-format', 'stream-json']);
     expect(argv[argv.indexOf('--session-id') + 1]).toBe(j.sessionId);
@@ -125,6 +126,15 @@ describe('runner jobs', () => {
     expect(notes.some((n) => n.type === 'job' && n.url === `/jobs/${first}`)).toBe(true);
     const list = await web.get('/api/jobs?status=succeeded');
     expect(list.map((x: { id: string }) => x.id)).toContain(first);
+  });
+
+  it('gives a job for a package BB_TASK and BB_ROLE (lucrator, or the role it names) in its environment', async () => {
+    const worker = await launch('Work on it', repoA, { taskId: 'ENV-1' });
+    expect((await waitStatus(worker, 'succeeded', 'failed')).status).toBe('succeeded');
+    expect((await initOf(worker)).fake_bb).toEqual({ BB_TASK: 'ENV-1', BB_ROLE: 'lucrator' });
+    const foreman = await launch('Judge it', repoA, { bbTask: 'ENV-1', role: 'coordonator' });
+    expect((await waitStatus(foreman, 'succeeded', 'failed')).status).toBe('succeeded');
+    expect((await initOf(foreman)).fake_bb).toEqual({ BB_TASK: 'ENV-1', BB_ROLE: 'coordonator' });
   });
 
   it('Spec-ify runs an Opus job with the specify schema and returns structured output', async () => {

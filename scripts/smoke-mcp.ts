@@ -9,8 +9,8 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { startServer } from '../server/main.ts';
 import { createMachine } from '../server/auth.ts';
-import { createAgentToken, revokeAgentToken } from '../server/factory/agent.ts';
-import { answerDecision } from '../server/factory/decisions.ts';
+import { createAgentToken, revokeAgentToken, setTokenLaunch } from '../server/factory/agent.ts';
+import { answerDecision, askDecision } from '../server/factory/decisions.ts';
 import { requestControl } from '../server/factory/tasks.ts';
 import { saveFactoryConfig } from '../server/factory/config.ts';
 import { startRunner, type Runner } from '../runner/main.ts';
@@ -103,6 +103,10 @@ console.log(JSON.stringify({ verdict: 'pass', summary: 'G1 pass: 3 tests', findi
     const claim = await call('tasks_claim', { agent: 'coordinator' });
     assert(claim.task?.id === 'P1' && claim.task.status === 'in_lucru', 'tasks_claim P1');
     assert(claim.resources?.port === 5600 && claim.resources.db === 'arond_p1' && claim.resources.migrations?.from === 40, 'tasks_claim allocates the resources');
+    const projects = await call<any[]>('projects_list');
+    assert(projects.length === 1 && projects[0].key === 'arond' && projects[0].counts.in_lucru === 1, 'projects_list: the arond project, P1 in progress');
+    const arond = await call('projects_get', { key: 'arond' });
+    assert(arond.line.map((t: any) => t.id).join() === 'P1' && claim.task.project === 'arond', 'projects_get: P1 on the line');
 
     const rendered = await call('prompts_render', { slots: { Goal: 'Build P1', 'Done when': '`pnpm verify` passes' } });
     assert(typeof rendered.rendered === 'string' && rendered.rendered.includes('Build P1'), 'prompts_render');
@@ -124,6 +128,25 @@ console.log(JSON.stringify({ verdict: 'pass', summary: 'G1 pass: 3 tests', findi
     }
     assert(status?.status === 'done' && status.verdict === 'pass' && status.summary === 'G1 pass: 3 tests' && status.gateResultId > 0, `gates_status done (${JSON.stringify(status)})`);
     assert(!JSON.stringify(status).includes('G1 log line'), 'gates_status returns no log text');
+    // a kit step on a §11.7 recipe (no "commands"): the runner answers with an error, no verdict, no round
+    const step = await call('steps_run', { taskId: 'P1', step: 'prepare' });
+    assert(typeof step.runId === 'string' && step.step === 'prepare' && step.sent === true, 'steps_run sent to the runner');
+    let stepStatus: any = null;
+    for (let i = 0; i < 300 && !(stepStatus && (stepStatus.status === 'done' || stepStatus.status === 'error')); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      stepStatus = await call('gates_status', { runId: step.runId });
+    }
+    assert(stepStatus?.status === 'error' && /without "commands"/.test(stepStatus.error) && stepStatus.gateResultId === null, `steps_run prepare on a recipe is an error (${JSON.stringify(stepStatus)})`);
+    const machines = await call<any[]>('machines_list');
+    assert(machines.some((m) => m.id === machine.id && m.runnerOnline), 'machines_list: this machine, runner online');
+    // launching allowed with the owner's approval: the first call asks and starts nothing
+    setTokenLaunch(srv.ctx, agent.id, { launch: 'all', launchApproval: true });
+    const launch = await call('tasks_launch', { taskId: 'P2', machineId: machine.id, cwd: checkout });
+    assert(launch.status === 'pending_approval' && launch.decisionId, `tasks_launch waits for approval (${JSON.stringify(launch)})`);
+    const coord = await call('coordinator_launch', { machineId: machine.id, cwd: checkout });
+    assert(coord.status === 'pending_approval', 'coordinator_launch waits for approval');
+    answerDecision(srv.ctx, launch.decisionId, null, 'web');
+    answerDecision(srv.ctx, coord.decisionId, null, 'web');
     const gate = await call('gates_record', {
       taskId: 'P1', gate: 'G4', verdict: 'pass', summary: 'Desktop and phone look right', screenshots: [{ name: 'desktop', path: shot }],
       findings: [{ severity: 'minor', title: 'Button 2px off on phone', file: 'web/src/x.tsx', line: 4 }],
@@ -148,6 +171,42 @@ console.log(JSON.stringify({ verdict: 'pass', summary: 'G1 pass: 3 tests', findi
     const ctl = await call('control_get', { ack: true });
     assert(ctl.requests.length === 1 && ctl.requests[0].kind === 'stop', 'control_get');
     assert((await call('control_get')).requests.length === 0, 'control_get after ack');
+
+    // operators (§12.7): the owner makes this token an operator and lets it answer the Inbox
+    const refused = (await client.callTool({ name: 'control_request', arguments: { taskId: 'P2', kind: 'stop' } })) as { isError?: boolean; content: { text: string }[] };
+    assert(refused.isError && /“Operator”/.test(refused.content[0].text), 'control_request needs the Operator switch');
+    setTokenLaunch(srv.ctx, agent.id, { operator: true, inbox: true });
+    const overview = await call('factory_status');
+    assert(overview.projects.some((p: any) => p.key === 'arond') && typeof overview.waiting.inbox === 'number', 'factory_status');
+    const other = askDecision(srv.ctx, { question: 'Merge P2 today?', options: ['Yes', 'No'], taskId: 'P2' }, 'agent:another-coordinator');
+    const drop = askDecision(srv.ctx, { question: 'Still needed?' }, 'agent:another-coordinator');
+    const pending = await call<any[]>('decisions_list', { status: 'pending' });
+    assert(pending.find((d) => d.id === other.id)?.mayAnswer === true, 'decisions_list: the operator may answer it');
+    const ans = await call('decision_answer', { id: other.id, answer: 'no' });
+    assert(ans.answer === 'No' && ans.answeredBy === 'agent:smoke-coordinator', 'decision_answer');
+    assert((await call('decision_cancel', { id: drop.id })).status === 'cancelled', 'decision_cancel');
+    const stop = await call('control_request', { taskId: 'P2', kind: 'stop', note: 'smoke' });
+    assert((await call('control_get', { taskId: 'P2', ack: true })).requests[0]?.id === stop.id, 'control_request reaches control_get');
+    const saved2 = await call('projects_save', { key: 'smoke-ops', name: 'Smoke ops', checkout: checkout, machineId: machine.id });
+    assert(saved2.created === true && saved2.project.checkout === checkout, 'projects_save');
+    assert((await call('projects_set', { key: 'smoke-ops', autopilot: true, state: 'paused' })).state === 'paused', 'projects_set');
+    const planned = await call('plan_request', { project: 'smoke-ops', goal: 'Smoke the planner', notes: 'nothing real' });
+    assert(planned.status === 'running' && typeof planned.jobId === 'string', 'plan_request starts the planner job');
+    srv.ctx.db.setSetting('walk_mode', true);
+    const hook = post('/api/hook/PermissionRequest', {
+      v: 1, ts: Date.now(), env: {}, hostname: 'h', platform: process.platform, user: 'u', pid: 1, ppid: 1, hookVersion: 'smoke',
+      event: { session_id: sid, cwd: dir, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'npm test' } },
+    }).then((r) => r.text());
+    let item: any = null;
+    for (let i = 0; i < 200 && !item; i++) {
+      item = (await call('inbox_list')).pending.find((p: any) => p.sessionId === sid) ?? null;
+      if (!item) await new Promise((r) => setTimeout(r, 25));
+    }
+    assert(item?.kind === 'permission', 'inbox_list shows the permission');
+    assert((await call('inbox_answer', { id: item.id, type: 'allow' })).ok === true, 'inbox_answer');
+    assert(JSON.parse((await hook).trim()).output?.hookSpecificOutput?.decision?.behavior === 'allow', 'the session got the answer');
+    srv.ctx.db.setSetting('walk_mode', false);
+    log('✔ operator tools: status, decisions, control, projects, the Inbox');
 
     const integrated = await call('tasks_update', { id: 'P1', status: 'integrata' });
     assert(integrated.cleanup?.[0] === 'bash curata.sh P1', 'integration returns the cleanup list');

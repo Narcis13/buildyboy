@@ -1,5 +1,6 @@
-// bb tasks import <path> — Markdown task files (one task per file, frontmatter + body) into the backlog.
-// A directory imports every *.md in it (recursively) that has frontmatter. Existing ids are updated, never duplicated.
+// bb tasks import <path> [--project <key>] — Markdown task files (one task per file, frontmatter + body) into the
+// backlog, optionally into a factory project (SPEC §12.1; its id prefix applies). A directory imports every *.md in it
+// (recursively) that has frontmatter. Existing ids are updated, never duplicated.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -33,22 +34,27 @@ export function readTaskFiles(path: string): { tasks: (TaskFile & { ref: string 
   return { tasks, skipped };
 }
 
+const USAGE = 'usage: bb tasks import <file.md | dir> [--project <key>] [--dry-run]';
+
 export async function tasksCli(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   if (sub !== 'import') {
-    console.error('usage: bb tasks import <file.md | dir> [--dry-run]');
+    console.error(USAGE);
     return 1;
   }
-  const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { 'dry-run': { type: 'boolean' } } });
+  const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { 'dry-run': { type: 'boolean' }, project: { type: 'string' } } });
   const path = positionals[0];
-  if (!path) {
-    console.error('usage: bb tasks import <file.md | dir> [--dry-run]');
+  const project = values.project?.trim() || undefined;
+  if (!path || (values.project !== undefined && !project)) {
+    console.error(USAGE);
     return 1;
   }
   let batch: (TaskFile & { ref: string })[];
+  let create: ReturnType<typeof taskFileToCreate>[];
   try {
     const r = readTaskFiles(path);
     batch = orderByDeps(r.tasks);
+    create = batch.map((t) => taskFileToCreate(t, t.ref, project));
     for (const s of r.skipped) console.error(`skipped (no frontmatter): ${s}`);
   } catch (e) {
     if (e instanceof TaskFileError) {
@@ -71,8 +77,8 @@ export async function tasksCli(args: string[]): Promise<number> {
     return 1;
   }
   const client = agentClient(url, token);
-  for (const t of batch) {
-    const out = (await client.call('tasks_create', taskFileToCreate(t, t.ref))) as { id: string; status: string };
+  for (const [i, t] of batch.entries()) {
+    const out = (await client.call('tasks_create', create[i])) as { id: string; status: string };
     console.log(`${out.id}\t${out.status}\t${t.title}`);
   }
   return 0;

@@ -25,13 +25,17 @@ export const SHAPES: Shape[] = [
     title: 'Task (package) summary',
     intro: 'Returned by tasks_list, tasks_create, tasks_claim (as task) and tasks_update. Times are epoch milliseconds.',
     fields: [
-      ['id', 'string', 'Given (P2, arond-12) or generated (T<n>). Letters, digits, ".", "_" and "-", at most 64.'],
+      ['id', 'string', 'Given (P2, arond-12) or generated (T<n>; <prefix><n> in a project with an id prefix). Letters, digits, ".", "_" and "-", at most 64. Globally unique.'],
+      ['localId', 'string', 'The id without its project\'s prefix (ED-P1 → P1); the id itself in a project without one.'],
+      ['project', 'string | null', 'The factory project it belongs to, for life (projects_list). null for old data and one-off packages.'],
       ['title', 'string', 'One line.'],
       ['status', 'enum', 'backlog · gata (ready) · in_lucru (in progress) · la_porti (at the gates) · integrata (integrated) · blocata (blocked).'],
-      ['ready', 'boolean', 'status is gata and every dependency is integrata: tasks_claim may take it.'],
+      ['stage', 'string | null', 'Where the conductor has it on the project\'s line (prepare, qa, build, G1…G5, cleanup); null off the line.'],
+      ['archivedAt', 'number | null', 'Epoch ms when it was archived (left out of lists unless asked for); null when not archived.'],
+      ['ready', 'boolean', 'status is gata and every dependency is integrata: tasks_claim may take it (unless its project is paused or archived).'],
       ['dependsOn', 'string[]', 'Ids this package waits for.'],
       ['waitingOn', 'string[]', 'The dependencies not yet integrated.'],
-      ['repo', 'string | null', 'Repository name; matches a repo in Settings → Factory (case-insensitive) for resources and gates_run.'],
+      ['repo', 'string | null', 'Repository name (owner/name). A package created with a repo and no project lands in the project of that repo.'],
       ['branch', 'string | null', 'The worker branch, set with tasks_update.'],
       ['priority', 'integer', 'Higher first (-1000…1000, default 0). tasks_claim picks by priority, then age.'],
       ['costUsd', 'number | null', 'Sum of the linked sessions\' costs when any are linked, else the value set by hand.'],
@@ -40,7 +44,7 @@ export const SHAPES: Shape[] = [
       ['linkedSessions', 'integer', 'Sessions linked through BB_TASK, the package\'s herdr terminal or its job.'],
       ['round', 'integer', 'Current gate round, 0 before the first.'],
       ['maxRounds', 'integer', 'Round limit (setting gate_max_rounds, default 3, plus approved extra rounds).'],
-      ['resources', 'object | null', '{ port, db, migrations: { from, to } } allocated by tasks_claim from the repo\'s factory config.'],
+      ['resources', 'object | null', '{ port, db, migrations: { from, to } } allocated by tasks_claim from its project\'s config.'],
       ['migrationsUsed', 'integer[]', 'Migration numbers the package reported with tasks_update.'],
       ['openFindings', 'object', 'Open findings by severity: { blocker, major, minor }.'],
       ['promptId · promptVersion', 'integer | null', 'The saved worker prompt (prompts_save with taskId sets both).'],
@@ -62,7 +66,7 @@ export const SHAPES: Shape[] = [
     intro: 'Returned by tasks_get: every Task summary field, plus:',
     fields: [
       ['body', 'string', 'The package description (Markdown).'],
-      ['events', 'TaskEvent[]', 'History, newest first: { ts, actor, kind, from, to, detail }. kind is created, status, update, note, gate, gate_run, control or warning.'],
+      ['events', 'TaskEvent[]', 'History, newest first: { ts, actor, kind, from, to, detail }. kind is created, status, update, note, gate, gate_run, control, warning, archived or unarchived.'],
       ['gateResults', 'GateResult[]', 'Every gate result, newest first (see Gate result).'],
       ['controls', 'ControlRequest[]', 'Stop/revert requests, open and handled (see Control request).'],
       ['decisions', 'Decision[]', 'Decisions tied to the package.'],
@@ -78,7 +82,56 @@ export const SHAPES: Shape[] = [
       ['task', 'Task | null', 'The claimed package, now in_lucru, or null.'],
       ['governor', 'GovernorVerdict', 'The governor\'s answer at the time of the claim.'],
       ['reason', 'string?', 'Why nothing was claimed: "governor: …", "no task is ready to start", "task P3 waits on P1", "task P3 is in_lucru, not gata".'],
-      ['resources', 'object | null', '{ port, db, migrations: { from, to } }; null when the repo has no factory config.'],
+      ['resources', 'object | null', '{ port, db, migrations: { from, to } }; null when its project has no resource config.'],
+    ],
+  },
+  {
+    id: 'project',
+    title: 'Project',
+    intro: 'Returned by projects_list (and inside projects_get). A factory project owns its packages, its config and where its line runs. Times are epoch ms.',
+    fields: [
+      ['key', 'string', 'Never changes: a lower-case letter, then letters, digits and "-", 2–24 characters (arond, shop-2).'],
+      ['name', 'string', 'Display name.'],
+      ['repo', 'string | null', 'owner/name. tasks_create with this repo and no project puts the package here.'],
+      ['idPrefix', 'string', '"" or e.g. "ED-": the package ids it owns. A package created in it as P1 is stored as ED-P1; one created without an id gets ED-<n>.'],
+      ['machineId · machineName · checkout', 'string | null', 'Where its line runs: the trusted main checkout on a paired machine. gates_run needs all three.'],
+      ['lineFile', 'string', 'Relative to the checkout: factory.json by default; a migrated project keeps its gate recipe path.'],
+      ['config', 'object', '{ legacy?, limits?: { workers, rounds }, models?: { worker, qa, review, visual, foreman, planner }, integrate?: { approval } }. legacy holds the §11.7 resource fields: worktree, portFrom, portTo, dbPrefix, migrationFrom, migrationBlock, cleanup.'],
+      ['resolvedLine · lineSeenAt · lineError', '', 'The line as the runner last reported it (null until then).'],
+      ['state', 'enum', 'active; paused (nothing new starts: no claim, no launch); archived (hidden, its packages archived, nothing starts).'],
+      ['autopilot', 'boolean', 'The conductor moves its packages along the line.'],
+      ['autopilotHeld', 'string | null', 'With autopilot on: why the conductor holds it now (paused, runner offline or older than 0.2.0, the line unknown or invalid, a §11.7 recipe line without built-in steps, the governor), else null.'],
+      ['createdAt · updatedAt · archivedAt', 'number | null', 'Epoch ms.'],
+      ['counts', 'object', 'Packages per status, archived ones left out: { backlog, gata, in_lucru, la_porti, integrata, blocata }.'],
+      ['archived · integrated', 'integer', 'Archived packages; packages integrated ever.'],
+      ['costUsd', 'number', 'Sum over its packages.'],
+      ['openDecisions · attention', 'integer', 'Pending decisions on its packages; packages waiting on the owner (blocked, or with a pending decision).'],
+      ['lastActivityAt', 'number | null', 'The newest change to one of its packages.'],
+      ['checkoutIds', 'integer[]', 'The checkouts seen by telemetry (GET /api/projects) whose GitHub repo is this one.'],
+    ],
+  },
+  {
+    id: 'project-detail',
+    title: 'Project detail',
+    intro: 'Returned by projects_get: every Project field, plus:',
+    fields: [
+      ['line', 'Task[]', 'Its packages in in_lucru and la_porti, with their stage.'],
+      ['next', 'Task[]', 'Its ready packages, in claim order.'],
+      ['decisions', 'Decision[]', 'Pending decisions tied to its packages or its plans.'],
+      ['plans', 'Plan[]', 'Its five newest plans.'],
+    ],
+  },
+  {
+    id: 'plan',
+    title: 'Plan',
+    intro: "Returned by plan_request and POST /api/factory/projects/:key/plan; listed in a project's detail (plans). Times are epoch ms.",
+    fields: [
+      ['id · project · goal · notes', 'string', 'What was asked, for which project.'],
+      ['status', 'enum', "running (the planner works) · proposed (its packages are in backlog; a decision asks Approve or Discard) · approved (they became gata) · discarded (the untouched ones were deleted) · failed (no packages: a decision asks the planner's questions; an answer plans again) · cancelled."],
+      ['jobId · decisionId', 'string | null', "The planner's claude -p job; the decision that waits on the owner."],
+      ['summary · questions', 'string | null · string[]', "The planner's summary, and what it asks or assumed."],
+      ['packages', 'string[]', 'The packages created from it (plan_id), still existing.'],
+      ['error · actor', 'string | null · string', 'Why it failed; who asked for it.'],
     ],
   },
   {
@@ -115,15 +168,16 @@ export const SHAPES: Shape[] = [
   {
     id: 'gate-run',
     title: 'Gate run',
-    intro: 'Returned by gates_status. The log never leaves the server.',
+    intro: 'Returned by gates_status, for gates (gates_run) and kit steps (steps_run). The log never leaves the server.',
     fields: [
       ['id', 'string', 'The runId.'],
-      ['taskId · gate · round · args · machineId', '', 'What runs where.'],
+      ['taskId · gate · round · args · machineId', '', 'What runs where; gate is G1–G5 or a kit step (prepare, qa, cleanup, revert).'],
       ['status', 'enum', 'queued (waiting for the runner), running, done (has a verdict) or error (no verdict: the gate could not run; no round is used).'],
       ['verdict · summary', '', 'Once done.'],
       ['findings', 'object[]', 'The findings the recipe reported.'],
       ['gateResultId', 'integer | null', 'The gate result recorded for it.'],
       ['exitCode · error', '', 'Diagnostics for error runs.'],
+      ['details', 'object | null', 'What the step reported besides its verdict: G5 { range, old, new, pushed }, qa { commit, tag, files, costUsd }, G3/G4 { costUsd }, prepare { worktree, branch, base, created, head }.'],
       ['logBytes', 'integer', 'Size of the log kept on the server (GET /api/gate-runs/:id/log, web login).'],
       ['createdAt · startedAt · finishedAt', 'number | null', 'Epoch ms.'],
       ['sent', 'boolean?', 'Whether a queued run was (re)sent to the runner just now.'],
@@ -132,7 +186,7 @@ export const SHAPES: Shape[] = [
   {
     id: 'decision',
     title: 'Decision',
-    intro: 'Returned by decision_ask and decision_get.',
+    intro: 'Returned by decision_ask, decision_get, decision_answer and decision_cancel.',
     fields: [
       ['id', 'string', 'UUID.'],
       ['taskId', 'string | null', 'The package it is tied to.'],
@@ -142,6 +196,49 @@ export const SHAPES: Shape[] = [
       ['answer', 'string | null', 'The human\'s answer.'],
       ['askedBy', 'string', 'agent:<token name>, or factory:rounds for round-limit questions.'],
       ['createdAt · answeredAt', 'number | null', 'Epoch ms.'],
+      ['answeredBy', 'string | null', 'Who answered or cancelled it: web (the owner), agent:<token name> (an operator), a factory: actor; null when unknown.'],
+    ],
+  },
+  {
+    id: 'operator-decision',
+    title: 'Operator decision',
+    intro: 'Returned by decisions_list: every Decision field, plus:',
+    fields: [
+      ['kind', 'enum', 'launch_approval (only the owner answers it), round_limit (§11.7: another round or stop), line (from the conductor: needs attention, integration approval) or question (from an agent: a coordinator, the foreman…).'],
+      ['project', 'string | null', 'The project of its package.'],
+      ['mayAnswer', 'boolean', 'Your token may answer or cancel it now.'],
+      ['why', 'string?', 'Pending but not yours to answer: why.'],
+    ],
+  },
+  {
+    id: 'factory-status',
+    title: 'Factory status',
+    intro: 'Returned by factory_status. Made for small contexts: no bodies, no histories; titles cut to 80 characters, questions to 100, options to 40; ages in minutes; every list capped, with a count of the rest; in list items a field that would be null (or a zero round or priority) is left out. About 6 KB for a busy factory, at most ~20 KB.',
+    fields: [
+      ['at', 'number', 'Epoch ms of the answer.'],
+      ['governor', 'object', '{ canStart, stopAll, reason, waitUntil, fiveHourPct, sevenDayPct, usageAgeMin }.'],
+      ['alerts', 'string[]', 'One line each: the governor holding work, a runner offline, autopilot held (paused, governor, runner), a line file error.'],
+      ['projects', 'object[]', 'Active and paused projects (or the one asked for): { key, name, state, autopilot, machine, runnerOnline, counts } (counts per status, zeros left out).'],
+      ['line · lineMore', 'object[] · integer', 'Up to 20 packages in in_lucru, la_porti or blocata, blocked first then the longest unchanged: { id, project, title, status, stage, round, maxRounds, waits, sinceMin }. waits: worker, gates, decision (one is pending on it), stop request / revert request (open), owner (blocked), or what the line says.'],
+      ['ready · readyMore', 'object[] · integer', 'Up to 10 ready packages in claim order: { id, project, title, priority }.'],
+      ['waiting.decisions · decisionsMore', 'object[] · integer', 'Up to 20 pending decisions, oldest first: { id, kind, taskId, question, options, askedBy, ageMin, mayAnswer }.'],
+      ['waiting.controls · controlsMore', 'object[] · integer', 'Up to 10 open stop/revert requests: { id, taskId, kind, ageMin }.'],
+      ['waiting.inbox', 'integer', 'Pending Inbox actions of sessions in walk mode (inbox_list needs an Inbox token).'],
+    ],
+  },
+  {
+    id: 'inbox-item',
+    title: 'Inbox item',
+    intro: 'Returned by inbox_list (in pending).',
+    fields: [
+      ['id', 'string', 'The action to answer with inbox_answer.'],
+      ['kind', 'enum', 'permission (a tool call waits for approval), question (AskUserQuestion), plan (ExitPlanMode), stop_wait (the turn ended; the session waits for a reply).'],
+      ['sessionId · session · project · machine · cwd · branch', 'string | null', 'Which session asks, and where.'],
+      ['tool', 'string | null', 'The tool that waits.'],
+      ['ageMin · expiresInMin', 'number', 'How long it has waited; when it times out (the session then goes on its own way).'],
+      ['detail', 'string', 'The tool input (permission), the plan, or the last message of the turn, cut to 1 500 characters.'],
+      ['questions', 'object[]?', 'question: { question, options (labels), multiSelect } for each question.'],
+      ['answers', 'string[]', 'The answer types this item takes.'],
     ],
   },
   {
@@ -171,6 +268,7 @@ export const SHAPES: Shape[] = [
       ['allowedRoots', 'string[]', 'Folders the runner may work in; a cwd outside them is refused. Empty: the runner has not said.'],
       ['concurrency', 'number | null', 'How many jobs the runner runs at once.'],
       ['runnerSeenAt', 'number | null', 'Epoch ms of its last heartbeat.'],
+      ['runnerVersion', 'string | null', 'The version its runner last reported; the line\'s built-in steps (and so the conductor) need 0.2.0 or later.'],
     ],
   },
   {
@@ -250,10 +348,12 @@ export const TOOL_GROUPS = [
   { id: 'usage', title: 'Usage and the governor' },
   { id: 'sessions', title: 'Sessions' },
   { id: 'backlog', title: 'Backlog' },
+  { id: 'projects', title: 'Projects' },
   { id: 'prompts', title: 'Prompts' },
   { id: 'gates', title: 'Gates and findings' },
   { id: 'launch', title: 'Launching workers and coordinators' },
   { id: 'human', title: 'The human: decisions, controls, digest' },
+  { id: 'operators', title: "Operators: acting for the owner" },
   { id: 'docs', title: 'Documentation' },
 ] as const;
 type ToolGroupId = (typeof TOOL_GROUPS)[number]['id'];
@@ -317,15 +417,18 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
   },
   tasks_list: {
     group: 'backlog',
-    use: 'Read the backlog. With ready: true, only packages that can start now (status gata and every dependency integrated), in claim order.',
+    use: 'Read the backlog. With ready: true, only packages that can start now (status gata and every dependency integrated), in claim order. Archived packages are left out unless you ask for them.',
     args: {
       status: 'Only these statuses.',
-      ready: 'Only packages tasks_claim could take now.',
+      ready: 'Only packages whose dependencies allow tasks_claim to take them.',
       limit: 'At most this many (default 500).',
+      project: 'Only the packages of this project (a key from projects_list).',
+      archived: 'true: only archived packages (integrated work that left the board, or an archived project\'s).',
     },
     returns: 'Task summary[], by priority (high first), then age.',
     shapes: ['task'],
-    example: { ready: true },
+    errors: ['404 unknown project <key>'],
+    example: { ready: true, project: 'arond' },
   },
   tasks_get: {
     group: 'backlog',
@@ -340,12 +443,13 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
     group: 'backlog',
     use: 'Add a package to the backlog, or (upsert) update one you created earlier, e.g. when re-importing a plan. fromFindings turns chosen gate findings into a follow-up package.',
     args: {
-      id: 'Package id; generated as T<n> when omitted. Letters, digits, ".", "_" and "-".',
+      project: 'The project it belongs to, for life. Without it, the project whose repo is `repo` (if any). Not an archived project.',
+      id: 'Package id; generated as T<n> (or <prefix><n> in a project with an id prefix) when omitted. In a project with prefix ED-, P1 is stored as ED-P1. Letters, digits, ".", "_" and "-".',
       title: 'One line.',
       body: 'Description (Markdown).',
       acceptance: 'Acceptance criteria, one per item. The gates check against them.',
-      dependsOn: 'Ids this package waits for; it becomes ready only when all are integrata.',
-      repo: 'Repository name. Must match Settings → Factory for resources and gates_run.',
+      dependsOn: 'Ids this package waits for; it becomes ready only when all are integrata. Local ids (P1) resolve inside the project first.',
+      repo: 'Repository name (owner/name). Defaults to the project\'s repo; picks the project when none is given.',
       branch: 'Worker branch.',
       priority: 'Higher is claimed first (-1000…1000, default 0).',
       sensitive: 'Auth, RLS, import, pseudonymisation: flagged in the digest.',
@@ -359,24 +463,31 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
     errors: [
       '409 task <id> already exists (without upsert)',
       '409 <extRef> already belongs to another task',
+      '409 task <id> belongs to project <key> (a package never changes project)',
+      '404 unknown project <key> · 409 project <key> is archived',
       '400 a bad id, a dependency that does not exist or a dependency cycle',
       '400 too many acceptance criteria or too long a body with fromFindings',
     ],
-    example: { id: 'P4', title: 'Export to CSV', status: 'gata', repo: 'arond', dependsOn: ['P3'], acceptance: ['`pnpm test export` passes', 'The export button downloads a CSV of the visible rows'] },
+    example: { project: 'arond', id: 'P4', title: 'Export to CSV', status: 'gata', dependsOn: ['P3'], acceptance: ['`pnpm test export` passes', 'The export button downloads a CSV of the visible rows'] },
   },
   tasks_claim: {
     group: 'backlog',
-    use: 'Take a package to work on. Without id, the next ready one by priority. It becomes in_lucru, claimed by you, and gets its port, database name and migration range.',
+    use: 'Take a package to work on. Without id, the next ready one by priority, in `project` or across the active projects. It becomes in_lucru, claimed by you, and gets its port, database name and migration range.',
     args: {
       id: 'Claim this package (it must be ready).',
       agent: 'Name recorded as claimedBy (default: agent:<token name>).',
       force: 'Claim even when the governor says canStart is false. Only when the human asked for it.',
+      project: 'Claim only in this project.',
     },
     returns: 'Claim result. When nothing can be claimed, task is null and reason says why: this is not an error.',
     shapes: ['claim', 'task', 'governor'],
-    errors: ['404 unknown task <id> (with id)'],
-    example: { agent: 'coordinator' },
-    notes: ['Claiming is atomic: two coordinators never get the same package.', 'Resources are kept until the package is integrated.'],
+    errors: ['404 unknown task <id> (with id) · 404 unknown project <key>'],
+    example: { agent: 'coordinator', project: 'arond' },
+    notes: [
+      'Claiming is atomic: two coordinators never get the same package.',
+      'Resources are kept until the package is integrated.',
+      'Nothing is claimed in a paused or archived project, and no archived package: reason says so ("project shop is paused").',
+    ],
   },
   tasks_update: {
     group: 'backlog',
@@ -394,12 +505,36 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
       dependsOn: 'Replace the dependencies.',
       acceptance: 'Replace the acceptance criteria.',
       migrationsUsed: 'Migration numbers the package uses; checked against the other active packages when it is integrated.',
+      archived: 'true archives the package (it leaves the lists), false brings it back. Only an operator token (or the owner) may.',
     },
-    returns: 'Task summary, plus cleanup (string[]: the repo\'s cleanup lines, filled in) and warnings (string[]: other packages that must renumber migrations) when it was integrated.',
+    returns: 'Task summary, plus cleanup (string[]: the project\'s cleanup lines, filled in) and warnings (string[]: other packages that must renumber migrations) when it was integrated.',
     shapes: ['task'],
-    errors: ['404 unknown task <id>', '409 <id> has used its N gate rounds (moving into la_porti)', '400 a dependency cycle or an unknown dependency'],
+    errors: [
+      '404 unknown task <id>', '409 <id> has used its N gate rounds (moving into la_porti)', '400 a dependency cycle or an unknown dependency',
+      '403 archiving needs an operator token', '409 unarchiving a package of an archived project',
+    ],
     example: { id: 'P3', status: 'la_porti', branch: 'pachet/P3', terminal: 't7', note: 'worker finished, all tests green' },
-    notes: ['Every change is kept in the package history with you as the actor.', 'Queued by `bb mcp` while the server is unreachable.'],
+    notes: [
+      'Every change is kept in the package history with you as the actor.', 'Queued by `bb mcp` while the server is unreachable.',
+      'Dependencies given as local ids resolve inside the package\'s project first.',
+    ],
+  },
+  projects_list: {
+    group: 'projects',
+    use: 'See the factory\'s projects: each owns its packages, where its line runs, its state (active, paused, archived), autopilot, counts per status, cost and what waits on the owner.',
+    args: { state: 'active, paused, archived or all (default: active and paused).' },
+    returns: 'Project[], oldest first.',
+    shapes: ['project'],
+    example: {},
+  },
+  projects_get: {
+    group: 'projects',
+    use: 'One project in detail: its packages on the line (with their stage), the ready ones and its pending decisions.',
+    args: { key: 'The project key.' },
+    returns: 'Project detail.',
+    shapes: ['project-detail', 'project', 'task'],
+    errors: ['404 unknown project <key>'],
+    example: { key: 'arond' },
   },
   prompts_render: {
     group: 'prompts',
@@ -471,26 +606,53 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
   },
   gates_run: {
     group: 'gates',
-    use: 'Run a gate on the repo\'s runner, from the recipe in its main checkout (Settings → Factory). Then poll gates_status until done or error.',
-    args: { taskId: 'Package id; its repo needs a factory config.', gate: 'G1…G5.', args: 'Extra arguments for the recipe\'s {args} placeholder.' },
+    use: 'Run a gate on the runner of the package\'s project, from the recipe (its line file) in the project\'s main checkout. Then poll gates_status until done or error.',
+    args: { taskId: 'Package id; its project needs a machine, a checkout and a line file.', gate: 'G1…G5.', args: 'Extra arguments for the recipe\'s {args} placeholder.' },
     returns: '{ runId, status, round, machineId, sent, note? }. sent is false when the runner is offline; the run starts when gates_status finds it back.',
     shapes: ['gate-run'],
-    errors: ['404 unknown task <taskId>', '400 no factory config for the repo, or one without a machine, checkout or recipe'],
+    errors: [
+      '404 unknown task <taskId>', '400 the package has no project, or its project has no machine or checkout',
+      '409 the gate needs the kit\'s built-in and the project\'s runner is older than 0.2.0 (restart `bb runner` there)',
+    ],
     example: { taskId: 'P3', gate: 'G1' },
     notes: [
-      'The runner runs the gate\'s argv steps without a shell, in the main checkout. Exit 0 = pass (or skip), 1 = fail, anything else = error; the last stdout line is JSON { verdict, summary, details?, findings?, shots? }.',
+      'The runner reads the line file (factory.json) in the main checkout and runs the line\'s argv steps for the gate if it has any (without a shell, in the main checkout: exit 0 = pass or skip, 1 = fail, anything else = error; the last stdout line is JSON { verdict, summary, details?, findings?, shots? }), else the kit\'s built-in gate (G1 commands.verify, G2 the acceptance tests, G3 a claude -p reviewer, G4 screenshots and a visual judge, G5 merge, G1 and G2 again, fast-forward and push).',
+      'A §11.7 recipe (argv steps and no "commands") runs only its argv steps, exactly as before.',
+      'G3: args ["--security"] adds the security review; ["--note", "<text>"] adds a note for the reviewer (also G4). From round 2 the reviewer gets the earlier open findings first.',
+      'G5: refused with "needs approval: <paths>" when the branch changed the line file, other packages\' acceptance tests or paths.protected; args ["--allow-protected"] once the owner agreed. Its summary and details.range hold <old>..<new>.',
       'A verdict is recorded like gates_record (actor runner:gate). An error records nothing and uses no round.',
     ],
   },
   gates_status: {
     group: 'gates',
-    use: 'Poll a gate run (every 10–30 s is plenty). Re-sends a run still queued to its runner.',
-    args: { runId: 'From gates_run.' },
-    returns: 'Gate run: state, and once done the verdict, summary, findings and gate result id. Never the log.',
+    use: 'Poll a gate or step run (every 10–30 s is plenty). Re-sends a run still queued to its runner.',
+    args: { runId: 'From gates_run or steps_run.' },
+    returns: 'Gate run: state, and once done the verdict, summary, findings, details and gate result id (null for a kit step). Never the log.',
     shapes: ['gate-run'],
     errors: ['404 unknown gate run <runId>'],
     example: { runId: '0b8e…' },
     notes: ['A run still running 6 h after it started becomes an error.'],
+  },
+  steps_run: {
+    group: 'gates',
+    use: 'Run a kit step of the line for a package on its project\'s runner (SPEC §12.4): prepare before work starts, qa to write the acceptance tests before the code, cleanup after integration, revert to undo an integration. Then poll gates_status.',
+    args: {
+      taskId: 'Package id; its project needs a machine, a checkout and a line file.',
+      step: 'prepare (fetch, the worktree and branch from origin/<base>, the env file, .factory/ with package.md and guard.json, commands.setup; reports the resolved line), qa (claude -p writes black-box acceptance tests under paths.acceptance, commits them and tags bb-acceptance/<id>), cleanup (only once the branch is in origin/<base>: the worker\'s terminal, the worktree, the branch, commands.cleanup) or revert (git revert of the G5 range on <base>, G1, push).',
+      args: 'revert: ["<old>..<new>"] (default: the range of the package\'s last G5 pass); qa: ["--note", "<text>"]; argv steps of the line: their {args}.',
+    },
+    returns: '{ runId, step, status, round, machineId, sent, note? }.',
+    shapes: ['gate-run'],
+    errors: [
+      '404 unknown task <taskId>', '400 the package has no project, or its project has no machine or checkout; revert without a known range',
+      '409 the project\'s runner is older than 0.2.0 (restart `bb runner` there)',
+    ],
+    example: { taskId: 'P3', step: 'prepare' },
+    notes: [
+      'A step makes no gate result and uses no round; its run (verdict, summary, details) is in gates_status and in the package\'s history.',
+      'The line\'s argv steps for the step (steps.<name>.steps) win over the built-in. A §11.7 recipe without "commands" has no kit steps.',
+      'The resolved line that prepare reports is kept on the project (resolvedLine).',
+    ],
   },
   findings_list: {
     group: 'gates',
@@ -607,10 +769,144 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
     example: { ack: true },
     notes: ['Buildyboy never runs git on your repositories: a revert request is yours to carry out.'],
   },
+  factory_status: {
+    group: 'operators',
+    use: 'The first call of every operator loop, and whenever you need the whole picture: it fits a small context (titles cut to 80 characters, ages in minutes, lists capped with a count of the rest: 20 on the line, 10 ready, 20 decisions, 10 controls).',
+    args: { project: 'Only this project: its line, ready packages, decisions and controls.' },
+    returns: 'Factory status.',
+    shapes: ['factory-status'],
+    errors: ['404 unknown project <key>'],
+    example: {},
+    notes: ['Any agent token may read it. waiting.decisions[].mayAnswer already says whether your token may answer each one.'],
+  },
+  decisions_list: {
+    group: 'operators',
+    use: 'Read decisions in full (context included) before answering, or look back at what was answered and by whom.',
+    args: { status: 'pending, answered or cancelled (default: all, pending first).', project: "Only those tied to this project's packages.", limit: '1–200, default 20.' },
+    returns: 'Operator decision[]: Decision plus kind, project, mayAnswer and, when you may not answer a pending one, why.',
+    shapes: ['decision', 'operator-decision'],
+    errors: ['404 unknown project <key>'],
+    example: { status: 'pending', limit: 10 },
+  },
+  decision_answer: {
+    group: 'operators',
+    use: 'Answer a pending decision for the owner, when the context you were given lets you judge it. Leave the rest to the owner (docs_get {topic: "operator"}).',
+    args: { id: 'The decision (factory_status or decisions_list).', answer: 'One of its options when it has some (matched ignoring case); free text otherwise.' },
+    returns: 'Decision (status answered, answeredBy agent:<your token name>).',
+    shapes: ['decision'],
+    errors: [
+      '403 this agent token may not answer decisions (turn on “Operator”)', '403 decision <id> is a launch approval', '403 decision <id> was asked by this token',
+      '400 the answer must be one of its options', '404 unknown decision <id>', '409 decision <id> is already answered / cancelled',
+    ],
+    example: { id: '3c0d…', answer: 'Încă o rundă' },
+    notes: ['Audited as agent:<name> and listed in the digest under "Answered by operators".', 'Send an idempotency-key header when you may retry.'],
+  },
+  decision_cancel: {
+    group: 'operators',
+    use: 'Withdraw a question nobody needs answered any more (the package was stopped, or it was asked twice).',
+    args: { id: 'The decision.' },
+    returns: 'Decision (status cancelled).',
+    shapes: ['decision'],
+    errors: ['403 as decision_answer', '404 unknown decision <id>', '409 already answered or cancelled'],
+    example: { id: '3c0d…' },
+  },
+  control_request: {
+    group: 'operators',
+    use: "Stop a package, or ask for its integration to be reverted, as the owner's buttons do. Only when the owner told you to, or a package is clearly running away (say so in the note).",
+    args: { taskId: 'The package.', kind: 'stop or revert.', note: 'Why, for whoever carries it out.' },
+    returns: 'Control request (status open).',
+    shapes: ['control'],
+    errors: ['403 this agent token may not ask for a stop/revert (turn on “Operator”)', '404 unknown task <id>'],
+    example: { taskId: 'P3', kind: 'stop', note: 'the owner asked to pause it until Monday' },
+    notes: ['The coordinator or the conductor carries it out and acknowledges it (control_get {ack: true}).'],
+  },
+  projects_save: {
+    group: 'operators',
+    use: "Put a repo on the factory (a new key creates the project) or change a project's fields. Only the fields you pass change.",
+    args: {
+      key: 'The project key: a lower-case letter, then letters, digits and "-", 2–24 characters. New key: a new project.',
+      name: 'Display name (default: the repo name).',
+      repo: 'owner/name; null clears it. One project per repo.',
+      idPrefix: '"" or e.g. "ED-": the package ids it owns. Fixed once it has packages.',
+      machineId: 'The machine whose runner runs its line (machines_list); null clears it. Security-sensitive: set it only as the owner told you.',
+      checkout: 'The trusted main checkout on that machine; null clears it. Security-sensitive.',
+      lineFile: 'The line file, relative to the checkout (default factory.json). Security-sensitive.',
+      config: 'Overrides, merged key by key (a key set to null is removed): { limits: { workers, rounds }, models: { worker, qa, review, visual, foreman, planner }, integrate: { approval: never | sensitive | always }, legacy }.',
+    },
+    returns: '{ created, project: Project }.',
+    shapes: ['project'],
+    errors: ['403 this agent token may not create or change projects (turn on “Operator”)', '400 invalid key, prefix or config / unknown machine', '409 repo or id prefix belongs to another project / prefix fixed once it has packages'],
+    example: { key: 'shop', name: 'Shop', repo: 'acme/shop', idPrefix: 'SH-' },
+    notes: ['machineId, checkout and lineFile decide what the runner executes: never change them on your own initiative.', 'Audited as agent:<name> (project_create, project_update).'],
+  },
+  projects_set: {
+    group: 'operators',
+    use: "Switch a project's autopilot, pause or resume it, archive or unarchive it.",
+    args: {
+      key: 'The project.',
+      autopilot: 'true: the conductor moves its packages along the line; false: nothing moves unless a coordinator or the owner does it.',
+      state: 'active (resume, or unarchive), paused (nothing new starts; work in flight continues) or archived (it and its packages leave the lists).',
+    },
+    returns: 'Project.',
+    shapes: ['project'],
+    errors: ['403 (turn on “Operator”)', '400 give autopilot, state or both', '404 unknown project', '409 project <key> is archived: unarchive it first (autopilot on an archived project)'],
+    example: { key: 'shop', autopilot: false },
+    notes: ['State changes first, then autopilot. Archiving archives its packages; unarchiving brings back exactly those.'],
+  },
+  plan_request: {
+    group: 'operators',
+    use: 'Turn the owner\'s goal into packages for a project, when the owner asked for it. The planner (a read-only claude -p job on the project\'s runner, in its main checkout) reads the repo and proposes packages; they are created in backlog as one plan, and a decision asks the owner to Approve (they become gata; with autopilot on the conductor starts them) or Discard (the untouched ones are deleted).',
+    args: {
+      project: 'The project (it needs a machine and the main checkout).',
+      goal: 'What to build, in the owner\'s words.',
+      notes: 'Constraints, sources to read, what is out of scope.',
+    },
+    returns: 'Plan (status running). Follow it with projects_get {key} (plans) and decisions_list.',
+    shapes: ['plan'],
+    errors: [
+      '403 this agent token may not request plans (turn on “Operator”)', '400 the project needs a machine and the main checkout', '404 unknown project',
+      '409 the project is archived / the planner is off (models.planner null) / governor: stop all',
+    ],
+    example: { project: 'shop', goal: 'Customers can download every invoice of a month as one PDF', notes: 'Reuse the existing PDF renderer; no new dependencies.' },
+    notes: [
+      'A plan with no packages (the goal was too vague, or the planner failed) asks the owner its questions instead; an answer runs the planner again with it as notes.',
+      'The plan\'s decision is kind plan (decisions_list); an operator may answer it only when the owner told it to.',
+      'Its cost is the planner job\'s (role coordonator); it is not counted on a package.',
+    ],
+  },
+  inbox_list: {
+    group: 'operators',
+    use: 'See what sessions in walk mode wait for: a permission, a question, a plan to approve, or a reply at the end of a turn. They time out if nobody answers.',
+    args: { limit: '1–50, default 10.' },
+    returns: '{ pending: Inbox item[], more }.',
+    shapes: ['inbox-item'],
+    errors: ['403 this agent token may not read the Inbox (turn on “Inbox”)'],
+    example: {},
+  },
+  inbox_answer: {
+    group: 'operators',
+    use: "Answer one Inbox item the way the owner would in the web Inbox. Allow only what is clearly inside the session's task; deny with a message otherwise.",
+    args: {
+      id: 'The item (inbox_list).',
+      type: "One of the item's answers: allow, deny (permission, plan); answers, deny (question); reply, release (finished turn).",
+      scope: 'allow: once (default) or session (allow this for the rest of the session).',
+      message: 'deny: what Claude is told instead.',
+      interrupt: 'deny: also stop the turn.',
+      answers: 'answers: { [question]: chosen option label }, one entry per question.',
+      text: 'reply: the next instruction for the session.',
+    },
+    returns: '{ ok: true }.',
+    errors: [
+      '403 this agent token may not answer the Inbox (turn on “Inbox”)', '400 a <kind> takes <types>, not <type>', '400 answers / text is required', '404 not found',
+      '409 already answered, timed out or superseded',
+    ],
+    example: { id: '9b1e…', type: 'deny', message: 'Not on production: use the staging database' },
+    notes: ['The same path as POST /api/actions/:id/answer; recorded in the session timeline and the audit log as agent:<name>.'],
+  },
   docs_get: {
     group: 'docs',
-    use: 'Read this manual from inside a session. Topic start once before your first run; tools or api when you need the details.',
-    args: { topic: 'start (default), tools, api or all.', tool: 'One tool\'s entry only, e.g. "tasks_claim".' },
+    use: 'Read this manual from inside a session. Topic start once before your first run; operator if you act for the owner; tools or api when you need the details.',
+    args: { topic: 'start (default), operator, tools, api or all.', tool: 'One tool\'s entry only, e.g. "tasks_claim".' },
     returns: 'Markdown text.',
     errors: ['400 unknown tool'],
     example: { topic: 'start' },
@@ -692,7 +988,7 @@ export const AUTH: Record<Auth, { label: string; desc: string }> = {
     desc: 'The PWA\'s session cookie bb_session (from POST /api/auth/login). Every request other than GET also needs the header x-bb-csrf with the value of the bb_csrf cookie.',
   },
   machine: { label: 'Machine token', desc: '"Authorization: Bearer bbm_…": the token a paired machine keeps in ~/.buildyboy/config.json. Used by the plugin\'s hooks, the statusline bridge, OTEL export and the runner.' },
-  agent: { label: 'Agent token', desc: '"Authorization: Bearer bba_…": created in Settings → Factory → Agent tokens, revocable. Reaches only the agent API, /mcp, /api/governor and /api/usage. It starts workers or coordinators only when the owner allows it for that token.' },
+  agent: { label: 'Agent token', desc: '"Authorization: Bearer bba_…": created in Settings → Factory → Agent tokens, revocable. Reaches only the agent API, /mcp, /api/governor and /api/usage. It starts workers or coordinators, acts for the owner (operator) or answers the Inbox only when the owner allows it for that token.' },
   'web-or-agent': { label: 'Web login or agent token', desc: 'Either one.' },
 };
 
@@ -784,7 +1080,7 @@ export const API_GROUPS: ApiGroup[] = [
       {
         method: 'GET', path: '/docs/agents.md', auth: 'public',
         summary: 'The whole agent guide as one Markdown file: concepts, connecting, the loop, every tool, every endpoint. The best thing to give an agent to read.',
-        query: [f('topic', 'start, tools, api or all (default all).')],
+        query: [f('topic', 'start, operator, tools, api or all (default all).')],
         returns: 'text/markdown.',
       },
       { method: 'GET', path: '/llms.txt', auth: 'public', summary: 'A short llms.txt index pointing agents at the guide and the MCP endpoint.', returns: 'text/markdown.' },
@@ -840,7 +1136,7 @@ export const API_GROUPS: ApiGroup[] = [
       {
         method: 'GET', path: '/api/settings', auth: 'web',
         summary: 'Server settings. Secrets read back masked.',
-        returns: '{ walk_mode, pause_all, stop_wait_min, retention_days, redaction_rules, budget_session_usd, budget_job_usd, watchers, ntfy_url, quiet_hours, push_types, github_token (masked), context_threshold_pct, governor_five_hour_pct, governor_seven_day_pct, governor_max_age_min, digest_enabled, digest_time, public_url, vapid_public_key }.',
+        returns: '{ walk_mode, pause_all, stop_wait_min, retention_days, redaction_rules, budget_session_usd, budget_job_usd, watchers, ntfy_url, quiet_hours, push_types, github_token (masked), context_threshold_pct, governor_five_hour_pct, governor_seven_day_pct, governor_max_age_min, digest_enabled, digest_time, archive_done_after_hours, public_url, vapid_public_key }.',
       },
       {
         method: 'PUT', path: '/api/settings', auth: 'web',
@@ -942,34 +1238,47 @@ export const API_GROUPS: ApiGroup[] = [
     intro: 'The PWA\'s side of the factory. Agents do the same through the MCP tools; these take a web login.',
     endpoints: [
       {
-        method: 'GET', path: '/api/tasks', auth: 'web', summary: 'The backlog.',
-        query: [f('status', 'Comma-separated statuses.'), f('ready', '1: only ready packages.'), f('q', 'Text in the id, title or body.')],
+        method: 'GET', path: '/api/tasks', auth: 'web', summary: 'The backlog. Archived packages are left out unless asked for.',
+        query: [
+          f('status', 'Comma-separated statuses.'), f('ready', '1: only ready packages.'), f('q', 'Text in the id, title or body.'), f('project', 'Only this project\'s packages.'),
+          f('archived', '1: only archived packages; all: archived and not.'),
+        ],
         returns: 'Task summary[].',
+        errors: ['404 unknown project'],
       },
-      { method: 'POST', path: '/api/tasks', auth: 'web', summary: 'Create a package (the tasks_create arguments, except upsert and extRef).', body: [f('(tasks_create arguments)', 'title is required.')], returns: '201 Task summary.', errors: ['400 a title is required', '409 exists'] },
+      {
+        method: 'POST', path: '/api/tasks', auth: 'web', summary: 'Create a package (the tasks_create arguments, except upsert and extRef; project included).',
+        body: [f('(tasks_create arguments)', 'title is required.')], returns: '201 Task summary.', errors: ['400 a title is required', '409 exists', '404 unknown project', '409 archived project'],
+      },
       {
         method: 'POST', path: '/api/tasks/import/markdown', auth: 'web',
-        summary: 'Import Markdown task files (frontmatter id, title, status, depends_on, repo, branch, priority, sensitive, acceptance; or an "Acceptance criteria" section). Upserts by id; ordered by dependencies.',
-        body: [f('files', '[{ name, text }], 1–200 files.')],
+        summary: 'Import Markdown task files (frontmatter id, title, status, depends_on, project, repo, branch, priority, sensitive, acceptance; or an "Acceptance criteria" section). Upserts by id; ordered by dependencies.',
+        body: [f('files', '[{ name, text }], 1–200 files.'), f('project', 'Optional: the project every file goes into (a file naming another project is refused).')],
         returns: '{ imported: string[] }.',
-        errors: ['400 a file that does not parse'],
+        errors: ['400 a file that does not parse, or names another project', '404 unknown project'],
       },
       {
         method: 'POST', path: '/api/tasks/import/github', auth: 'web',
         summary: 'Import the open issues of a GitHub repository (optionally one label) as packages, upserted by owner/repo#n. Uses the GitHub token from Settings.',
-        body: [f('owner', 'Repository owner.'), f('repo', 'Repository name.'), f('label', 'Optional label filter.')],
+        body: [f('owner', 'Repository owner.'), f('repo', 'Repository name.'), f('label', 'Optional label filter.'), f('project', 'Optional: the project they go into (default: the project of owner/repo).')],
         returns: 'Import summary.',
-        errors: ['400 owner and repo required', '502 GitHub failed'],
+        errors: ['400 owner and repo required', '404 unknown project', '502 GitHub failed'],
       },
       { method: 'GET', path: '/api/tasks/:id', auth: 'web', summary: 'One package.', returns: 'Task detail.', errors: ['404 unknown task'] },
       {
         method: 'PUT', path: '/api/tasks/:id', auth: 'web',
-        summary: 'Update a package: the tasks_update arguments, plus title, body, repo, priority and sensitive.',
+        summary: 'Update a package: the tasks_update arguments (archived included), plus title, body, repo, priority and sensitive.',
         body: [f('(tasks_update arguments without id)', ''), f('title · body · repo · priority · sensitive', 'Web-only fields.')],
         returns: 'Task summary (+ cleanup, warnings).',
         errors: ['400 invalid task', '404 unknown task', '409 round limit'],
       },
       { method: 'DELETE', path: '/api/tasks/:id', auth: 'web', summary: 'Delete a package and its history.', returns: OK, errors: ['404 unknown task'] },
+      {
+        method: 'POST', path: '/api/tasks/:id/:action{archive|unarchive}', auth: 'web',
+        summary: 'Archive a package (it leaves the board and the lists) or bring it back. The same as PUT /api/tasks/:id { archived }.',
+        returns: 'Task summary.',
+        errors: ['404 unknown task', '409 unarchiving a package of an archived project'],
+      },
       {
         method: 'POST', path: '/api/tasks/:id/control', auth: 'web',
         summary: '"Stop the package" or "Revert its integration": recorded for the coordinator, which reads it with control_get.',
@@ -990,17 +1299,29 @@ export const API_GROUPS: ApiGroup[] = [
       { method: 'GET', path: '/api/gate-runs/:id/log', auth: 'web', summary: 'The last 256 KB of a gate run\'s log.', returns: 'text/plain.', errors: ['404 no log'] },
       { method: 'GET', path: '/api/findings', auth: 'web', summary: 'Findings.', query: [f('taskId · status · severity', 'Filters.')], returns: 'Finding[].' },
       { method: 'POST', path: '/api/findings/update', auth: 'web', summary: 'Set the status of findings (the findings_update arguments).', body: [f('ids · status · note', 'As findings_update.')], returns: 'Finding[].' },
-      { method: 'GET', path: '/api/factory/config', auth: 'web', summary: 'Settings → Factory: the round limit and the per-repo config.', returns: '{ maxRounds, repos: [{ repo, machineId, checkout, recipe, worktree, portFrom, portTo, dbPrefix, migrationFrom, migrationBlock, cleanup }] }.' },
-      { method: 'PUT', path: '/api/factory/config', auth: 'web', summary: 'Replace the factory config. Each repo once.', body: [f('maxRounds', '1–50.'), f('repos', 'Up to 50 repo configs (shape as in GET).')], returns: 'The saved config.', errors: ['400 invalid config or a repo twice'] },
+      {
+        method: 'GET', path: '/api/factory/config', auth: 'web',
+        summary: 'Settings → Factory: the round limit and the per-repo config, read from the projects that carry it (machine, checkout, recipe = line file, config.legacy).',
+        returns: '{ maxRounds, repos: [{ repo, machineId, checkout, recipe, worktree, portFrom, portTo, dbPrefix, migrationFrom, migrationBlock, cleanup }] }.',
+      },
+      {
+        method: 'PUT', path: '/api/factory/config', auth: 'web',
+        summary: 'Replace the factory config. Each repo once. Each repo is written onto its project (a new project for a new repo); a project no longer listed loses its legacy fields, not its packages.',
+        body: [f('maxRounds', '1–50.'), f('repos', 'Up to 50 repo configs (shape as in GET).')], returns: 'The saved config.', errors: ['400 invalid config or a repo twice'],
+      },
       { method: 'GET', path: '/api/decisions', auth: 'web', summary: 'Decisions.', query: [f('status', 'pending, answered or cancelled.')], returns: 'Decision[].' },
       { method: 'POST', path: '/api/decisions/:id/answer', auth: 'web', summary: 'Answer a decision.', body: [f('answer', 'Free text or one of its options.')], returns: 'Decision.', errors: ['409 not found or already answered'] },
       { method: 'POST', path: '/api/decisions/:id/cancel', auth: 'web', summary: 'Cancel a pending decision.', returns: 'Decision.', errors: ['409 not found or already answered'] },
-      { method: 'GET', path: '/api/agent-tokens', auth: 'web', summary: 'Agent tokens (never the token itself).', returns: '[{ id, name, createdAt, lastUsedAt, revokedAt, launch, launchApproval }].' },
+      { method: 'GET', path: '/api/agent-tokens', auth: 'web', summary: 'Agent tokens (never the token itself).', returns: '[{ id, name, createdAt, lastUsedAt, revokedAt, launch, launchApproval, operator, inbox }].' },
       { method: 'POST', path: '/api/agent-tokens', auth: 'web', summary: 'Create an agent token. The token is in this answer only.', body: [f('name', 'What uses it, e.g. coordinator or claude-desktop.')], returns: '201 { id, name, token (bba_…) }.' },
       {
         method: 'PUT', path: '/api/agent-tokens/:id', auth: 'web',
-        summary: 'What the token may launch with tasks_launch and coordinator_launch, and whether each launch waits for your approval.',
-        body: [f('launch', 'off (default), workers or all (workers and coordinators).'), f('launchApproval', 'true (default): every launch is a decision you answer first.')],
+        summary: 'What the token may launch with tasks_launch and coordinator_launch, whether each launch waits for your approval, and whether it acts for you (operator, inbox). Only the fields given change.',
+        body: [
+          f('launch', 'off (default), workers or all (workers and coordinators).'), f('launchApproval', 'true (default): every launch is a decision you answer first.'),
+          f('operator', 'true: it may answer decisions (never its own, never a launch approval), ask for stop or revert, create and change projects and archive packages. Off by default.'),
+          f('inbox', 'true: it may answer the Inbox (permissions, questions, plans, replies) of sessions in walk mode. Off by default.'),
+        ],
         returns: 'The token, as in GET.',
         errors: ['400 invalid values', '404 not found or revoked'],
       },
@@ -1008,6 +1329,56 @@ export const API_GROUPS: ApiGroup[] = [
       { method: 'GET', path: '/api/digests', auth: 'web', summary: 'The last 30 digests.', returns: 'Digest[].' },
       { method: 'POST', path: '/api/digests', auth: 'web', summary: 'Send the digest now.', body: [f('note', 'Optional.')], returns: '201 Digest.' },
       { method: 'GET', path: '/api/terminals', auth: 'web', summary: 'herdr terminals reported by the runners, linked to sessions and packages.', returns: '[{ machineId, machineName, address, name, agent, cwd, state, status, turn, where, taskId, sessionId, seenAt }].' },
+    ],
+  },
+  {
+    id: 'projects',
+    title: 'Factory projects (web)',
+    intro: 'Projects own their packages, their config and where their line runs. Agents read them with projects_list and projects_get; these take a web login. (GET /api/projects is something else: the checkouts seen by telemetry.)',
+    endpoints: [
+      {
+        method: 'GET', path: '/api/factory/projects', auth: 'web', summary: 'Factory projects, oldest first.',
+        query: [f('state', 'active, paused, archived or all (default: active and paused).')],
+        returns: 'Project[].',
+        errors: ['400 bad state'],
+      },
+      {
+        method: 'POST', path: '/api/factory/projects', auth: 'web',
+        summary: 'Create a project. It adopts the packages of its repo that have no project yet.',
+        body: [
+          f('key', 'Required, never changes: a lower-case letter, then letters, digits and "-", 2–24 characters.'), f('name', 'Default: the repo name, else the key.'),
+          f('repo', 'owner/name; one project per repo.'), f('idPrefix', '"" (default) or e.g. "ED-"; one project per prefix.'),
+          f('machineId · checkout · lineFile', 'Where its line runs; lineFile defaults to factory.json.'),
+          f('config', '{ legacy?, limits?, models?, integrate? } (see Project).'),
+        ],
+        returns: '201 Project.',
+        errors: ['400 invalid project or unknown machine', '409 the key, repo or id prefix is taken'],
+      },
+      { method: 'GET', path: '/api/factory/projects/:key', auth: 'web', summary: 'One project with its packages on the line, the ready ones and its pending decisions.', returns: 'Project detail.', errors: ['404 unknown project'] },
+      {
+        method: 'PUT', path: '/api/factory/projects/:key', auth: 'web',
+        summary: 'Change a project. config is merged key by key (a key set to null is removed). The id prefix can change only while it has no packages.',
+        body: [f('name · repo · idPrefix · machineId · checkout · lineFile', 'Any of them.'), f('config', '{ legacy?, limits?, models?, integrate? }, each null to remove.')],
+        returns: 'Project.',
+        errors: ['400 invalid project or unknown machine', '404 unknown project', '409 the repo or prefix is taken, or the prefix of a project with packages'],
+      },
+      { method: 'DELETE', path: '/api/factory/projects/:key', auth: 'web', summary: 'Delete a project that has no packages (archive one that has).', returns: OK, errors: ['404 unknown project', '409 it has packages'] },
+      {
+        method: 'POST', path: '/api/factory/projects/:key/:action{pause|resume|archive-done|archive|unarchive|refresh|autopilot}', auth: 'web',
+        summary:
+          'pause (nothing new starts; work in flight goes on), resume, archive (hidden; its packages are archived; nothing starts), unarchive (back to active, with the packages archived with it), autopilot (body on), archive-done (archive its integrated packages now), refresh (ask the runner for the line).',
+        body: [f('on', 'autopilot: true or false.')],
+        returns: 'Project; refresh: { sent, reason }; archive-done: { archived: string[] }.',
+        errors: ['404 unknown project', '409 pause, resume or autopilot on an archived project', '400 autopilot without on'],
+        notes: ['refresh sends { type: line } to the project\'s runner ({ sent: false } when it is offline); the resolved line arrives on POST /api/runner/lines and shows in resolvedLine, lineSeenAt and lineError.'],
+      },
+      {
+        method: 'POST', path: '/api/factory/projects/:key/plan', auth: 'web',
+        summary: 'Plan new work (§12.6): the planner (a read-only claude -p job on the project\'s runner) turns the goal into packages in backlog as one plan, then a decision asks Approve or Discard. The same as the plan_request tool.',
+        body: [f('goal', 'Required, 3–4000 characters: what to build.'), f('notes', 'Optional: constraints, sources, what is out of scope.')],
+        returns: '201 Plan (status running).',
+        errors: ['400 no goal, or the project has no machine or checkout', '404 unknown project', '409 archived project, planner off (models.planner null), or governor: stop all'],
+      },
     ],
   },
   {
@@ -1074,12 +1445,14 @@ export const API_GROUPS: ApiGroup[] = [
     title: 'Runner API',
     intro: 'The runner daemon (`bb runner`) on a paired machine. Machine token.',
     endpoints: [
-      { method: 'GET', path: '/api/runner/stream', auth: 'machine', summary: 'The command stream: SSE command events (job, stop, message, verify, gate, ping). One connection per machine.', returns: 'SSE.' },
+      { method: 'GET', path: '/api/runner/stream', auth: 'machine', summary: 'The command stream: SSE command events (job, stop, message, verify, gate, line, hc, ping). One connection per machine.', returns: 'SSE.' },
       { method: 'POST', path: '/api/runner/heartbeat', auth: 'machine', summary: 'Runner state: version, allowed roots, concurrency, running jobs.', body: [f('version · hostname · platform · allowedRoots · concurrency · claudeVersion · running', '')], returns: OK },
       { method: 'POST', path: '/api/runner/agents', auth: 'machine', summary: 'Claude Code background agents seen on the machine.', body: [f('agents', 'Array.')], returns: '{ ok, upserted }.' },
       { method: 'POST', path: '/api/runner/jobs/:id/events', auth: 'machine', summary: 'A job\'s status, output lines and verify results.', body: [f('events', '[{ type: status | output | verify, … }].')], returns: OK },
       { method: 'POST', path: '/api/runner/terminals', auth: 'machine', summary: 'The machine\'s herdr terminals (replaces the previous list; closed terminals end their sessions).', body: [f('terminals', '[{ address, name, agent, cwd, state, status, turn, where }].'), f('takenAt', 'Runner clock when hc ls ran.')], returns: '{ ok, count }.' },
-      { method: 'POST', path: '/api/runner/gates/:id', auth: 'machine', summary: 'A gate run\'s report: running, done (verdict, summary, findings, shots) or error. Only the run\'s machine.', body: [f('status · verdict · summary · details · findings · shots · exitCode · error · log', '')], returns: 'Gate run.' },
+      { method: 'POST', path: '/api/runner/gates/:id', auth: 'machine', summary: 'A gate or step run\'s report: running, done (verdict, summary, findings, shots) or error. Only the run\'s machine. A prepare report carries the resolved line, kept on the project.', body: [f('status · verdict · summary · details · findings · shots · exitCode · error · log', ''), f('line · lineError', 'The resolved line, or why the line file does not resolve.')], returns: 'Gate run.' },
+      { method: 'POST', path: '/api/runner/hc/:id', auth: 'machine', summary: 'The outcome of a checked hc send or hc kill on a factory terminal (bb-…, label owner=buildyboy). Only the command\'s machine; the first report wins.', body: [f('status', 'done or error.'), f('error', 'Why it was refused or failed.'), f('result', 'send: { sent, inbox? }; kill: { killed }.')], returns: '{ id, op, name, status, result, error, … }.', errors: ['404 unknown hc command'] },
+      { method: 'POST', path: '/api/runner/lines', auth: 'machine', summary: 'A project\'s resolved line, read from its main checkout (the answer to { type: line }). Only the project\'s machine.', body: [f('project', 'The project key.'), f('line', 'The resolved line, or null.'), f('error', 'Why the line file does not resolve.')], returns: OK, errors: ['404 unknown project, or not this machine\'s'] },
     ],
   },
 ];
@@ -1103,10 +1476,12 @@ function startGuide(site: RefSite): string {
   return `# Buildyboy for agents
 
 Buildyboy is a self-hosted control tower around Claude Code (${u}). It records every Claude Code session on every paired
-machine, lets its owner approve and steer them from a phone, and runs an autonomous **software factory**: a
-*coordinator* agent takes packages from a backlog, starts *workers* for them, runs *gates* (checks) and integrates what
-passes. Buildyboy holds the factory's memory: the backlog, subscription usage and the governor, gate results and
-findings, the human's decisions, stop/revert requests and the daily digest.
+machine, lets its owner approve and steer them from a phone, and runs an autonomous **software factory**: each repo on
+it is a *project* with a *line* (\`factory.json\`); packages from its backlog get a worktree, acceptance tests written
+first, a *worker*, *gates* (checks) and integration. With *autopilot* on, the server's conductor drives that by itself;
+otherwise a coordinator agent (or the owner) does, with the same tools. Buildyboy holds the factory's memory: projects
+and backlog, subscription usage and the governor, gate results and findings, the owner's decisions, stop/revert
+requests and the daily digest.
 
 ## Connect
 
@@ -1140,44 +1515,76 @@ curl -X POST ${u}/api/agent/tasks_list -H "Authorization: Bearer bba_…" -H "Co
 
 ## Concepts
 
-- **Package (task)**: one unit of work in the backlog, with an id (P3), acceptance criteria, dependencies, a repo and a
-  status. Statuses are Romanian: ${TASK_STATUSES.map((s) => `\`${s}\` (${STATUS_LABEL[s]})`).join(', ')}.
-- **Ready**: status \`gata\` and every dependency \`integrata\`. Only ready packages can be claimed.
-- **Claim**: \`tasks_claim\` moves a ready package to \`in_lucru\` and allocates its **resources** from the repo's
-  factory config: a port, a database name and a block of migration numbers, kept until it is integrated.
-- **Gates**: ${GATES.map((g) => `${g} ${GATE_LABEL[g]}`).join('; ')}. A gate result is pass, fail or skip, with a
-  summary, optional screenshots and **findings** (blocker, major, minor).
+- **Project**: a repo on the factory (\`projects_list\`, \`projects_get\`). It owns its packages for life, says where
+  its line runs (a paired machine, the trusted main checkout, the line file), may give its package ids a prefix
+  (\`ED-\`: P1 is stored as ED-P1; \`localId\` is P1), and can be paused (nothing new starts) or archived. Pass
+  \`project\` to \`tasks_list\`, \`tasks_create\` and \`tasks_claim\` to work in one project.
+- **Package (task)**: one unit of work, with an id, a spec, acceptance criteria, dependencies and a status. Statuses
+  are Romanian: ${TASK_STATUSES.map((s) => `\`${s}\` (${STATUS_LABEL[s]})`).join(', ')}. **Ready**: \`gata\` and
+  every dependency \`integrata\`. **Archive**: integrated packages leave the lists a day later (\`tasks_list
+  {archived: true}\` shows them); \`tasks_get\` and dependencies are unaffected.
+- **The line**: the repo's \`factory.json\` in the main checkout: its commands (setup, verify, acceptance, shots, app,
+  cleanup), paths (packages, acceptance tests, screenshots, protected files), resources, models and limits. The
+  runner reads it; a worker can never change its own gates.
+- **Steps and the kit**: the runner's built-in work, run with \`steps_run\` (\`prepare\`: worktree, branch, env file,
+  \`.factory/\`, setup; \`qa\`: acceptance tests written before the code; \`cleanup\`; \`revert\`) and \`gates_run\`
+  (${GATES.map((g) => `${g} ${GATE_LABEL[g]}`).join('; ')}). Poll both with \`gates_status\`. A gate result is pass,
+  fail or skip with a summary and **findings** (blocker, major, minor); an error has no verdict and uses no round.
+- **Claim and resources**: \`tasks_claim\` moves a ready package to \`in_lucru\` and allocates a port, a database name
+  and a block of migration numbers, kept until it is integrated.
 - **Rounds**: every move into \`la_porti\` starts a gate round. A failing gate in the last allowed round (3 by
-  default) blocks the package (\`blocata\`) and asks the human whether to allow another round.
-- **Governor**: from the subscription's 5-hour and 7-day windows, says whether a new worker may start
-  (\`canStart\`) or the factory must stop (\`stopAll\`).
-- **Launching**: an agent token the owner allowed to launch can start workers (\`tasks_launch\`) and, if allowed,
-  coordinators (\`coordinator_launch\`) on a paired machine's runner. Refused while the governor says no; may wait
-  for the owner's approval first.
-- **Decisions**: questions for the human, answered on the phone. **Controls**: the human's requests to stop a
-  package or revert its integration. **Digest**: a daily summary pushed to the phone.
-- **Roles and cost**: sessions started with the env vars \`BB_TASK=<id>\` and \`BB_ROLE\` (lucrator = worker, qa,
-  poarta = gates, coordonator) are linked to the package; its cost is their measured sum.
+  default) blocks the package and asks the owner whether to allow another one.
+- **Autopilot**: per project. When it is on, the server's **conductor** moves the packages along the line by itself
+  (claim → prepare → qa → build → G1…G5 → cleanup), with no LLM, and calls a **foreman** (\`claude -p\`) only for a
+  worker's question or a stuck package. The **planner** turns a goal into a plan of packages the owner approves.
+- **Status line**: a worker ends every final message with \`FACTORY-STATUS: done\`, \`FACTORY-STATUS: question
+  <text>\` or \`FACTORY-STATUS: blocked <text>\`.
+- **Governor**: from the subscription's 5-hour and 7-day windows, whether new work may start (\`canStart\`) or the
+  factory must stop (\`stopAll\`).
+- **Decisions**: questions for the owner, answered on the phone. **Controls**: the owner's requests to stop a package
+  or revert its integration. **Digest**: a daily summary pushed to the phone. An **operator** token may act for the
+  owner (\`docs_get {topic: "operator"}\`).
+- **Launching**: a token the owner allowed to launch can start workers (\`tasks_launch\`) and coordinators
+  (\`coordinator_launch\`) on a paired machine's runner; refused while the governor says no; may wait for approval.
+- **Roles and cost**: sessions started with \`BB_TASK=<id>\` and \`BB_ROLE\` (lucrator = worker, qa, poarta = gates,
+  coordonator) are linked to the package; its cost is their measured sum.
 
-## The coordinator loop
+## When autopilot is on: watch, do not coordinate
 
-1. \`governor_get\`. If \`stopAll\`, send \`digest_post\` with a note and stop. If not \`canStart\`, start nothing new;
-   wait until \`waitUntil\` (keep supervising running workers).
-2. \`control_get\`. For each request: \`stop\` → stop that package's worker, \`tasks_update\` it with a note;
-   \`revert\` → revert its integration in git yourself. Then \`control_get {ack: true}\`.
-3. \`tasks_list {ready: true}\` and \`tasks_claim\` (optionally \`{id}\`). Read the package with \`tasks_get\`.
-4. Write the worker prompt: \`prompts_render\` with the harness slots (Goal, Done when, Scope, Limit, Subagents,
-   Branch, PR, Unattended) and the package's acceptance criteria; fix what \`warnings\` says; \`prompts_save {taskId}\`.
-5. Start the worker in a worktree with \`BB_TASK\` and \`BB_ROLE=lucrator\` set, and record it:
-   \`tasks_update {id, branch, terminal or sessionId}\`. Or, when your token may launch, let a runner start it:
-   \`machines_list\`, then \`tasks_launch {taskId, machineId, cwd}\` (it records the terminal or session itself).
-6. When it is done: \`tasks_update {status: "la_porti"}\`. Run each gate: \`gates_run\` then \`gates_status\` until
-   \`done\`/\`error\` for recipe gates, or run a check yourself and \`gates_record\` it. On a fail, hand the open
-   blockers and majors (\`findings_list {taskId, status: "open"}\`) back to the worker, move it to \`in_lucru\`, repeat.
-7. All gates pass: merge, \`tasks_update {status: "integrata", migrationsUsed}\`, run the returned \`cleanup\`
-   lines, and pass any \`warnings\` on to the packages they name.
-8. Only the human can decide something? \`decision_ask\` (with options and context), keep working on other packages,
-   and check \`decision_get\` on later loops.
+\`projects_get {key}\` says whether a project's autopilot is on. If it is, the conductor already claims, prepares,
+launches, gates, integrates and cleans up: **do not** call \`tasks_claim\`, \`steps_run\`, \`gates_run\` or
+\`tasks_update\` for its packages. Watch with \`factory_status\` (one compact call: alerts, the line, what waits on the
+owner), come back every 10–15 minutes, and tell the owner what waits for them. Moving a package by hand while
+autopilot is on is allowed (the conductor picks it up from its new status), but only when the owner asked.
+
+## The coordinator loop (autopilot off: by hand)
+
+1. \`governor_get\`. If \`stopAll\`, tell running workers to commit, push and wait, send \`digest_post\` with a note
+   and stop. If not \`canStart\`, start nothing new; keep supervising what runs.
+2. \`control_get\`. \`stop\` → tell the worker to commit, push and stop, then \`tasks_update {status: "blocata", note}\`;
+   \`revert\` → \`steps_run {taskId, step: "revert"}\`, then \`tasks_update {status: "gata", note}\`. Then
+   \`control_get {ack: true}\`.
+3. Fewer packages in flight than the line's \`limits.workers\`: \`tasks_claim {project}\` (\`task: null\` is not an
+   error: read \`reason\`), then \`steps_run {taskId, step: "prepare"}\` and \`gates_status\` until \`done\`. When the
+   line has QA: \`steps_run {taskId, step: "qa"}\` the same way.
+4. Write the worker prompt (\`prompts_render\`, harness slots, the package's criteria, the rules: never touch the
+   acceptance tests or the line file, push to its branch, never merge, end with the status line), \`prompts_save
+   {taskId}\`. Start the worker in the worktree: \`tasks_launch {taskId, machineId, cwd}\` when your token may launch,
+   or yourself with \`BB_TASK\` and \`BB_ROLE=lucrator\` set, then \`tasks_update {id, branch, terminal or sessionId}\`.
+5. Its status line says \`done\`: \`tasks_update {status: "la_porti"}\`, then each enabled gate in order: \`gates_run
+   {taskId, gate}\` and \`gates_status\` until \`done\`/\`error\`. On a fail, hand the open blockers and majors
+   (\`findings_list {taskId, status: "open"}\`) back to the worker, move it to \`in_lucru\`, repeat. \`question\`:
+   answer it if the spec settles it, else \`decision_ask\`. \`blocked\`: fix the cause or ask the owner.
+6. G5 integrates (merge of the base, G1 and G2 again, fast-forward, push). Ask the owner first when the line's
+   \`integrate.approval\` says so; \`needs approval: <paths>\` means protected paths changed: only with their yes,
+   run it again with \`args: ["--allow-protected"]\`. Then \`tasks_update {status: "integrata", migrationsUsed}\`, pass
+   any \`warnings\` on, and \`steps_run {taskId, step: "cleanup"}\`.
+7. Only the owner can decide something (scope, a criterion, a recorded decision, production, money)? \`decision_ask\`
+   (with options and context), keep working on what does not depend on it, check \`decision_get\` on later loops.
+   Never write product code, change acceptance tests or the line file, or answer for the owner.
+
+A project whose line file is a §11.7 recipe (argv steps, no \`commands\`) has no kit steps: skip \`prepare\` and
+\`qa\`, prepare the worktree yourself, and run its gates with \`gates_run\` as before.
 
 ## Conventions
 
@@ -1196,9 +1603,129 @@ curl -X POST ${u}/api/agent/tasks_list -H "Authorization: Bearer bba_…" -H "Co
 
 ## More
 
+- \`docs_get {topic: "operator"}\`: for an agent the owner made an **operator** (their deputy, e.g. a bot on their
+  phone): the status in one call, answering decisions, stop/revert, projects and autopilot, the Inbox.
 - \`docs_get {topic: "tools"}\`: every tool with its arguments, result, errors and an example.
 - \`docs_get {topic: "api"}\`: every HTTP endpoint.
 - The same as one file: ${u}/docs/agents.md · the manual: ${u}/docs/agents
+`;
+}
+
+/** docs_get {topic: 'operator'}: the owner's deputy (§12.7), written for an agent with a small context. */
+function operatorGuide(site: RefSite): string {
+  const u = site.url;
+  return `# Buildyboy: the operator's guide
+
+You are the owner's **deputy**: an agent (often a bot on their phone) whose Buildyboy agent token the owner made an
+**operator**. While they are away you watch the software factory, answer what waits for them when you can judge it,
+and leave the rest to them. Every action you take is recorded as \`agent:<your token name>\` and listed in the daily
+digest under "Answered by operators".
+
+## What you may do, and what you may not
+
+- **Operator** switch (Settings → Factory → Agent tokens): \`decision_answer\`, \`decision_cancel\`,
+  \`control_request\` (stop or revert a package), \`projects_save\`, \`projects_set\` (autopilot, pause, archive),
+  \`plan_request\` (the planner turns a goal into packages), \`tasks_update {archived}\`.
+- **Inbox** switch (separate): \`inbox_list\`, \`inbox_answer\`: the permissions, questions, plans and end-of-turn
+  replies of Claude Code sessions in walk mode.
+- Without the switch, those calls answer 403 and name the switch to ask the owner for. Reads work for every token:
+  \`factory_status\`, \`decisions_list\`, \`tasks_get\`, \`projects_get\`, \`decision_get\`, \`governor_get\`…
+- **Never**: answer a decision your own token asked (403); answer a **launch approval** (only the owner does; they can
+  turn off "Ask me before each launch" for a token instead); launch workers or coordinators unless your token was
+  also allowed to launch; change \`machineId\`, \`checkout\` or \`lineFile\` of a project unless the owner told you
+  the exact values (they decide what runs on their machines).
+
+## The conductor
+
+With autopilot on (and the project \`active\`), the conductor in the server moves each package along the line:
+claim → prepare → QA → the worker → G1…G5 → integrated → cleanup. \`factory_status\` shows each package's
+\`stage\` and what it \`waits\` for. It holds a project (an alert "autopilot held: <key> (<why>)") while it is paused,
+its runner is offline or older than 0.2.0, its line is unknown or invalid, or the line is a §11.7 recipe without
+built-in steps; while the governor says canStart: false it starts nothing new, and under stopAll it also runs no
+step that spends tokens and tells the workers to wait. Stop and revert requests (\`control_request\`) are carried out
+by the conductor on such projects. It only asks when it must: the decisions below.
+
+## The loop
+
+1. \`factory_status\` (or \`{project}\` for one). Read \`alerts\` first, then \`waiting\`.
+2. For each decision in \`waiting.decisions\` with \`mayAnswer: true\`: read it whole if needed
+   (\`decisions_list {status: "pending"}\` has the context; \`tasks_get {id}\` has the package), then answer with
+   \`decision_answer {id, answer}\` (one of its options, when it has some), or leave it.
+3. Adjust only when there is a reason: \`control_request\` to stop a runaway package, \`projects_set\` to pause a project
+   or switch its autopilot, as the owner asked.
+4. With an Inbox token: \`inbox_list\`, then \`inbox_answer\` for what is clearly inside the session's task.
+5. Come back later: every 10–15 minutes while packages are on the line or decisions wait, every hour or two when
+   nothing moves (\`line\` and \`waiting\` empty), and stop when the owner is back. Never poll in a tight loop.
+   Tell the owner what you did when they return (or \`digest_post {note}\`).
+
+## The decisions you will see (\`kind\`)
+
+- **round_limit** (asked by \`factory:rounds\`): a package failed a gate in its last allowed round and is blocked.
+  "Încă o rundă" = one more round of gates (the worker fixes the findings); "Încă o rundă, doar pentru G<n>" = one more
+  round for that gate only (the next round runs that gate and G5); "Oprește pachetul" = stop the package. With
+  autopilot on the conductor acts on the answer at once; without, a coordinator does. Allow another round when the findings
+  (\`findings_list {taskId, status: "open"}\`) look fixable and few; stop when it keeps failing the same way.
+- **line** (asked by \`factory:line\`, the conductor of a project with autopilot on). The conductor matches the answer
+  to the options exactly (case and surrounding spaces aside), so answer with one of them word for word:
+  - *Needs attention* ("<id> needs attention: …": a step errored twice, prepare or QA failed, the worker stopped twice
+    without finishing, it is past \`worker.limitHours\`, the foreman could not answer). Options: \`Retry\` (the step
+    runs again, a new worker starts from PROGRESS.md, the worker gets another stint, or it is asked again for its
+    status line), \`Ask the foreman\` (only when the project's foreman is on), \`Stop the package\` (the worker commits,
+    pushes and stops, its terminal is closed, the package becomes blocata), \`I'll take it from here\` (the conductor
+    leaves the package alone until its status is changed by hand). Any other text is passed to the worker as the
+    owner's instruction.
+  - *Integration approval* ("Integrate <id> into <base>?", before G5 when \`integrate.approval\` is \`always\`, or
+    \`sensitive\` and the package is sensitive): \`Integrate\`, \`Stop the package\`, \`I'll take it from here\`. Leave
+    these to the owner unless they told you otherwise.
+  - *Protected paths* ("<id> changes protected paths: …. Integrate anyway?", when G5 refused because the branch
+    changes the line file, acceptance tests or \`paths.protected\`): \`Integrate with these changes\` (G5 runs again
+    with --allow-protected), \`Undo them first\` (back to the worker), \`Stop the package\`, \`I'll take it from here\`.
+    Never answer the first one on your own judgment.
+  - *A worker's question* ("<id>: the worker asks: …", when the foreman is off or could not answer; no options) and
+    *the foreman's escalation* ("<id>: <question>", with the foreman's options): your answer goes to the worker as
+    written. Answer only what the package's spec settles.
+- **plan** (asked by \`factory:plan\`): "Plan for <project>: <goal>: N packages. Approve?" with \`Approve\` (the plan's
+  backlog packages become gata; with autopilot on they start) and \`Discard\` (its packages still untouched in backlog
+  are deleted; edited ones stay). "The plan for <project> failed: …" has no options: your answer is what the planner
+  needs to know, and it runs again with it. Approve or discard only when the owner told you to.
+- **question** (asked by an agent: a coordinator or the foreman): a technical or scope question about a package.
+  Answer only what the context and the package's spec settle. A question that changes scope, an acceptance
+  criterion, a recorded decision, or touches production goes to the owner.
+- **launch_approval**: never yours (403). Mention it to the owner if it has waited long.
+
+## When to leave it to the owner
+
+- Anything you cannot judge from the context you were given, or that you were not told about.
+- Scope changes, new or dropped acceptance criteria, anything touching production, money, security or data.
+- Reverting an integration (\`control_request {kind: "revert"}\`): only when the owner asked.
+- Answering is not urgent: a decision can wait; the workers go on with what does not depend on it.
+
+## Examples
+
+Over HTTP (the same bearer token as MCP; the answer is \`{ "result": … }\`, a refusal a 4xx with \`{ "error" }\`):
+
+\`\`\`
+curl -X POST ${u}/api/agent/factory_status -H "Authorization: Bearer bba_…" -H "Content-Type: application/json" -d '{}'
+curl -X POST ${u}/api/agent/decision_answer -H "Authorization: Bearer bba_…" -H "Content-Type: application/json" \\
+     -H "idempotency-key: answer-3c0d-1" -d '{"id":"3c0d…","answer":"Încă o rundă"}'
+curl -X POST ${u}/api/agent/control_request -H "Authorization: Bearer bba_…" -H "Content-Type: application/json" \\
+     -d '{"taskId":"P3","kind":"stop","note":"the owner asked to pause it"}'
+\`\`\`
+
+As MCP tool calls (\`${u}/mcp\`, or \`bb mcp\`):
+
+\`\`\`json
+{ "name": "factory_status", "arguments": { "project": "shop" } }
+{ "name": "decision_answer", "arguments": { "id": "3c0d…", "answer": "Oprește pachetul" } }
+{ "name": "projects_set", "arguments": { "key": "shop", "autopilot": false } }
+{ "name": "inbox_answer", "arguments": { "id": "9b1e…", "type": "deny", "message": "Not on production" } }
+\`\`\`
+
+An idempotency-key header (HTTP) makes a retried write safe: the same key returns the first answer and changes nothing.
+
+## More
+
+\`docs_get {tool: "<name>"}\` gives one tool's arguments, result and errors; \`docs_get {topic: "start"}\` the concepts.
 `;
 }
 
@@ -1263,6 +1790,7 @@ export function agentGuide(site: RefSite, topic: DocsTopic = 'all', tool?: strin
   if (!DOCS_TOPICS.includes(topic)) topic = 'all';
   const parts: string[] = [];
   if (topic === 'start' || topic === 'all') parts.push(startGuide(site));
+  if (topic === 'operator' || topic === 'all') parts.push(operatorGuide(site));
   if (topic === 'tools' || topic === 'all') parts.push(toolsMarkdown());
   if (topic === 'api' || topic === 'all') parts.push(apiMarkdown(site));
   return parts.join('\n\n');
@@ -1280,6 +1808,7 @@ Agents connect to the MCP server at ${u}/mcp (Streamable HTTP) with "Authorizati
 
 - [Agent guide (Markdown, everything)](${u}/docs/agents.md): concepts, connecting, the coordinator loop, every MCP tool and every HTTP endpoint
 - [Getting started for agents](${u}/docs/agents.md?topic=start)
+- [The operator's guide: acting for the owner](${u}/docs/agents.md?topic=operator)
 - [MCP tool reference](${u}/docs/agents.md?topic=tools)
 - [HTTP API reference](${u}/docs/agents.md?topic=api)
 - [Human manual](${u}/docs)

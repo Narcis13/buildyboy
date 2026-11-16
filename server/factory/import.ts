@@ -1,13 +1,16 @@
 // GitHub issues → backlog (SPEC §11.2), through the same token and client as the PR poller. Re-importing updates
-// the title and body of tasks already imported (matched by `owner/repo#number`); their status is kept.
+// the title and body of tasks already imported (matched by `owner/repo#number`); their status is kept. They go into
+// the given project, else the project of `owner/repo` (§12.1).
 import type { Ctx } from '../context.ts';
 import { gh } from '../github/poller.ts';
 import { createTask, FactoryError } from './tasks.ts';
+import { requireProject } from './projects.ts';
 import { acceptanceSection } from '../../shared/tasks-md.ts';
 
 interface Issue { number: number; title: string; body: string | null; html_url: string; pull_request?: unknown; labels: ({ name?: string } | string)[] }
 
-export async function importGithubIssues(ctx: Ctx, owner: string, repo: string, label?: string): Promise<{ imported: string[] }> {
+export async function importGithubIssues(ctx: Ctx, owner: string, repo: string, label?: string, project?: string): Promise<{ imported: string[] }> {
+  if (project) requireProject(ctx, project); // before asking GitHub
   const token = ctx.db.getSetting<string | null>('github_token', null);
   if (!token) throw new FactoryError(400, 'set a GitHub token in Settings first');
   const q = new URLSearchParams({ state: 'open', per_page: '100' });
@@ -18,7 +21,7 @@ export async function importGithubIssues(ctx: Ctx, owner: string, repo: string, 
     const body = `${i.body ?? ''}\n\n<${i.html_url}>`.trim();
     const t = createTask(
       ctx,
-      { title: i.title.slice(0, 200), body, acceptance: acceptanceSection(i.body ?? ''), repo: `${owner}/${repo}`, extRef: `${owner}/${repo}#${i.number}`, upsert: true, source: 'github' },
+      { title: i.title.slice(0, 200), body, acceptance: acceptanceSection(i.body ?? ''), repo: `${owner}/${repo}`, extRef: `${owner}/${repo}#${i.number}`, upsert: true, source: 'github', project },
       'web',
     );
     imported.push(t.id);

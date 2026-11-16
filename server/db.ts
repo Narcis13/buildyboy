@@ -12,11 +12,12 @@ export class DB {
   readonly raw: DatabaseSync;
   private cache = new Map<string, ReturnType<DatabaseSync['prepare']>>();
 
-  constructor(path: string) {
+  /** `stopBefore` (tests only): leave the migrations whose file name sorts at or after it for a later migrate(). */
+  constructor(path: string, opts: { stopBefore?: string } = {}) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.raw = new DatabaseSync(path);
     this.raw.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA synchronous = NORMAL;');
-    this.migrate();
+    this.migrate(opts.stopBefore);
   }
 
   private stmt(sql: string) {
@@ -71,11 +72,13 @@ export class DB {
     this.run('INSERT INTO audit_log (ts, actor, action, target, detail) VALUES (?, ?, ?, ?, ?)', Date.now(), actor, action, target ?? null, detail === undefined ? null : JSON.stringify(detail));
   }
 
-  private migrate() {
+  /** Runs the migrations not applied yet, in file name order (each in its own transaction). */
+  migrate(stopBefore?: string) {
     this.raw.exec('CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)');
     const done = new Set(this.all<{ name: string }>('SELECT name FROM schema_migrations').map((r) => r.name));
     const files = readdirSync(MIGRATIONS_DIR).filter((f) => /^\d+.*\.sql$/.test(f)).sort();
     for (const f of files) {
+      if (stopBefore !== undefined && f >= stopBefore) break;
       if (done.has(f)) continue;
       const sql = readFileSync(join(MIGRATIONS_DIR, f), 'utf8');
       this.tx(() => {

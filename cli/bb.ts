@@ -9,7 +9,8 @@
 //   bb backup [--out <file>]       online SQLite backup
 //   bb doctor                      check config, server reachability, spool and what the factory still needs
 //   bb mcp                         MCP server (stdio) for a coordinator; needs BUILDYBOY_AGENT_TOKEN
-//   bb tasks import <path>         Markdown task files into the backlog; needs BUILDYBOY_AGENT_TOKEN
+//   bb tasks import <path> [--project <key>]  Markdown task files into the backlog (a project); needs BUILDYBOY_AGENT_TOKEN
+//   bb line check [dir]            validate a repo's factory.json and print the resolved line (exit 1 on errors)
 //   bb agent-token <name>          create an agent token and print it (server host only)
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -118,7 +119,12 @@ switch (cmd) {
     console.log(JSON.stringify({ id: t.id, token: t.token }));
     break;
   }
+  case 'line': {
+    const { lineCli } = await import('./line.ts');
+    process.exitCode = await lineCli(rest);
+    break;
+  }
   default:
-    console.error(`unknown command: ${cmd}\nusage: bb server | runner | pair | set-password | token | agent-token | import | backup | doctor | mcp | tasks`);
+    console.error(`unknown command: ${cmd}\nusage: bb server | runner | pair | set-password | token | agent-token | import | backup | doctor | mcp | tasks | line`);
     process.exit(1);
 }

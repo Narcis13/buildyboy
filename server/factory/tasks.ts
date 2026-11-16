@@ -1,16 +1,22 @@
 // The backlog (SPEC §11.2): packages with states, dependencies, acceptance criteria and a history of every change,
-// plus their gate results and Narcis's control requests. Used by the web routes and the agent API alike.
+// plus their gate results and Narcis's control requests. Used by the web routes and the agent API alike. Packages
+// belong to a project (§12.1), which gives them their id prefix, their resources and where their gates run; archived
+// packages (§12.2) leave the lists unless asked for.
 import type { Ctx } from '../context.ts';
 import { json } from '../db.ts';
 import { governor } from './governor.ts';
 import { askDecision, listDecisions } from './decisions.ts';
-import { factoryConfig, fill, repoConfig } from './config.ts';
+import { fill, maxRounds as globalMaxRounds } from './config.ts';
 import { syncTaskSessions, taskCosts } from './cost.ts';
 import { applyGateFindings, findingsBrief, listFindings, openFindingCounts, updateFindings } from './findings.ts';
 import { listGateRuns } from './gateruns.ts';
 import {
-  GATES, SHOT_MAX_BYTES, TASK_STATUSES, type ControlRequest, type Gate, type GateResult, type GovernorVerdict, type RepoFactoryConfig, type TaskDetail,
-  type TaskEvent, type TaskResources, type TaskStatus, type TaskSummary, type ToolArgs, type Verdict,
+  lineResources, localIdOf, nextProjectTaskId, projectBlocks, projectConfig, projectForNewTask, projectMaxRounds, projectRow, projectTaskId, requireProject, resolveDeps,
+  type ProjectRow,
+} from './projects.ts';
+import {
+  GATES, SHOT_MAX_BYTES, TASK_STATUSES, type ControlRequest, type Gate, type GateResult, type GovernorVerdict, type TaskDetail,
+  type TaskEvent, type TaskResources, type TaskStatus, type TaskSummary, type TaskVars, type ToolArgs, type Verdict,
 } from '../../shared/factory.ts';
 
 export class FactoryError extends Error {
@@ -21,13 +27,14 @@ export class FactoryError extends Error {
   }
 }
 
-interface TaskRow {
+export interface TaskRow {
   id: string; title: string; body: string; acceptance_json: string; status: TaskStatus; repo: string | null; branch: string | null; priority: number;
   cost_usd: number | null; prompt_id: number | null; prompt_version: number | null; sensitive: number; note: string | null; claimed_by: string | null;
   claimed_at: number | null; job_id: string | null; terminal: string | null; session_id: string | null; source: string; ext_ref: string | null;
   created_at: number; updated_at: number; integrated_at: number | null;
   round: number; extra_rounds: number; res_port: number | null; res_db: string | null; res_mig_from: number | null; res_mig_to: number | null;
   migrations_used_json: string | null;
+  project: string | null; archived_at: number | null; stage: string | null; line_json: string | null; plan_id: string | null;
 }
 
 const resourcesOf = (r: TaskRow): TaskResources | null =>
@@ -35,22 +42,33 @@ const resourcesOf = (r: TaskRow): TaskResources | null =>
     ? null
     : { port: r.res_port, db: r.res_db, migrations: r.res_mig_from != null && r.res_mig_to != null ? { from: r.res_mig_from, to: r.res_mig_to } : null };
 const migrationsOf = (r: TaskRow): number[] => json<number[]>(r.migrations_used_json, []) ?? [];
-const maxRoundsOf = (ctx: Ctx, r: TaskRow) => factoryConfig(ctx).maxRounds + r.extra_rounds;
+/** gate_max_rounds, or the project's own limit (§12.3 `limits.rounds`: the owner's override, then the line), plus approved extra rounds */
+const maxRoundsOf = (ctx: Ctx, r: TaskRow) => (projectMaxRounds(projectRow(ctx, r.project)) ?? globalMaxRounds(ctx)) + r.extra_rounds;
 
-/** The placeholders of the repo config's templates (worktree, cleanup) and of the gate recipe. */
-export function taskVars(r: TaskRow, cfg: RepoFactoryConfig | null): Record<'id' | 'idLower' | 'worktree' | 'round' | 'port' | 'db', string> {
-  const base = { id: r.id, idLower: r.id.toLowerCase(), round: String(Math.max(1, r.round)), port: r.res_port != null ? String(r.res_port) : '', db: r.res_db ?? '' };
-  return { ...base, worktree: cfg?.worktree ? fill(cfg.worktree, base) : '' };
+/**
+ * The placeholders of every template filled for a package (§12.2): the project's worktree and cleanup templates, the
+ * gate recipe (the runner fills the first six of §11.7 there today), the line file.
+ */
+export function taskVars(r: TaskRow, p: ProjectRow | null): TaskVars {
+  const local = localIdOf(r.id, p?.id_prefix ?? '');
+  const base = {
+    id: r.id, idLower: r.id.toLowerCase(), localId: local, localIdLower: local.toLowerCase(), project: p?.key ?? '', round: String(Math.max(1, r.round)),
+    port: r.res_port != null ? String(r.res_port) : '', db: r.res_db ?? '', branch: r.branch ?? '',
+  };
+  const worktree = p ? projectConfig(p).legacy?.worktree : '';
+  return { ...base, worktree: worktree ? fill(worktree, base) : '' };
 }
 
 const publish = (ctx: Ctx, id: string) => ctx.bus.publish('tasks', 'changed', { id });
 
-function event(ctx: Ctx, taskId: string, actor: string, kind: string, from: string | null, to: string | null, detail?: unknown) {
+/** One row of a package's history. */
+export function taskEvent(ctx: Ctx, taskId: string, actor: string, kind: string, from: string | null, to: string | null, detail?: unknown) {
   ctx.db.run(
     'INSERT INTO task_events (task_id, ts, actor, kind, from_status, to_status, detail_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
     taskId, Date.now(), actor, kind, from, to, detail === undefined ? null : JSON.stringify(detail),
   );
 }
+const event = taskEvent;
 
 function summaries(ctx: Ctx, rows: TaskRow[]): TaskSummary[] {
   if (!rows.length) return [];
@@ -59,7 +77,13 @@ function summaries(ctx: Ctx, rows: TaskRow[]): TaskSummary[] {
   syncTaskSessions(ctx);
   const costs = taskCosts(ctx, ids);
   const findings = openFindingCounts(ctx, ids);
-  const maxRounds = factoryConfig(ctx).maxRounds;
+  const global = globalMaxRounds(ctx);
+  const projectRounds = new Map<string, number>();
+  for (const key of new Set(rows.map((r) => r.project).filter((k): k is string => !!k))) {
+    const n = projectMaxRounds(projectRow(ctx, key));
+    if (n != null) projectRounds.set(key, n);
+  }
+  const prefixes =new Map(db.all<{ key: string; id_prefix: string }>("SELECT key, id_prefix FROM factory_projects WHERE id_prefix != ''").map((p) => [p.key, p.id_prefix]));
   const marks = ids.map(() => '?').join(',');
   const deps = db.all<{ task_id: string; depends_on: string; status: string }>(
     `SELECT d.task_id, d.depends_on, t.status FROM task_deps d JOIN tasks t ON t.id = d.depends_on WHERE d.task_id IN (${marks}) ORDER BY d.depends_on`, ...ids,
@@ -72,10 +96,17 @@ function summaries(ctx: Ctx, rows: TaskRow[]): TaskSummary[] {
   return rows.map((r) => {
     const mine = deps.filter((d) => d.task_id === r.id);
     const waitingOn = mine.filter((d) => d.status !== 'integrata').map((d) => d.depends_on);
+    const line = json<{ waiting?: unknown; since?: unknown }>(r.line_json, null);
     return {
       id: r.id,
+      localId: localIdOf(r.id, (r.project && prefixes.get(r.project)) || ''),
+      project: r.project,
       title: r.title,
       status: r.status,
+      stage: r.stage,
+      lineWait: line && typeof line.waiting === 'string' && typeof line.since === 'number' ? { text: line.waiting, since: line.since } : null,
+      planId: r.plan_id,
+      archivedAt: r.archived_at,
       ready: r.status === 'gata' && waitingOn.length === 0,
       dependsOn: mine.map((d) => d.depends_on),
       waitingOn,
@@ -87,7 +118,7 @@ function summaries(ctx: Ctx, rows: TaskRow[]): TaskSummary[] {
       costByRole: costs.get(r.id)?.byRole ?? null,
       linkedSessions: costs.get(r.id)?.sessions ?? 0,
       round: r.round,
-      maxRounds: maxRounds + r.extra_rounds,
+      maxRounds: ((r.project && projectRounds.get(r.project)) || global) + r.extra_rounds,
       resources: resourcesOf(r),
       migrationsUsed: migrationsOf(r),
       openFindings: findings.get(r.id)!,
@@ -113,9 +144,21 @@ function summaries(ctx: Ctx, rows: TaskRow[]): TaskSummary[] {
 
 const ORDER = 'ORDER BY priority DESC, created_at ASC, id ASC';
 
-export function listTasks(ctx: Ctx, f: { status?: TaskStatus[]; ready?: boolean; q?: string; limit?: number } = {}): TaskSummary[] {
+/**
+ * The backlog, best first. `project` narrows it to one project (404 for an unknown one). Archived packages are left
+ * out; `archived: true` lists only them, `'all'` both.
+ */
+export function listTasks(
+  ctx: Ctx, f: { status?: TaskStatus[]; ready?: boolean; q?: string; limit?: number; project?: string; archived?: boolean | 'all' } = {},
+): TaskSummary[] {
   const where: string[] = [];
   const args: string[] = [];
+  if (f.project) {
+    requireProject(ctx, f.project);
+    where.push('project = ?');
+    args.push(f.project);
+  }
+  if (f.archived !== 'all') where.push(f.archived ? 'archived_at IS NOT NULL' : 'archived_at IS NULL');
   if (f.status?.length) {
     where.push(`status IN (${f.status.map(() => '?').join(',')})`);
     args.push(...f.status);
@@ -185,13 +228,26 @@ function nextId(ctx: Ctx): string {
 
 export type NewTask = ToolArgs<'tasks_create'> & { source?: string };
 
+/**
+ * A new package, or with upsert an existing one updated. Its project is the given one, else the one of its repo
+ * (§12.1). In a project with an id prefix, a given id gets the prefix, a missing one is `<prefix><n>`, and dependencies
+ * given as local ids resolve inside the project first (§12.2). A package never moves to another project; one without a
+ * project joins the project an upsert names.
+ */
 export function createTask(ctx: Ctx, t: NewTask, actor: string): TaskSummary {
   const { db } = ctx;
-  const id = t.id?.trim() || (t.extRef && db.get<{ id: string }>('SELECT id FROM tasks WHERE ext_ref = ?', t.extRef)?.id) || nextId(ctx);
-  if (!/^[\w.-]{1,64}$/.test(id)) throw new FactoryError(400, 'task ids use letters, digits, ".", "_" and "-"');
+  let proj = projectForNewTask(ctx, t.project, t.repo);
+  const given = t.id?.trim();
+  const id = (given && projectTaskId(proj, given)) || (t.extRef && db.get<{ id: string }>('SELECT id FROM tasks WHERE ext_ref = ?', t.extRef)?.id) || nextProjectTaskId(ctx, proj) || nextId(ctx);
+  if (!/^[\w.-]{1,64}$/.test(id)) throw new FactoryError(400, 'task ids use letters, digits, ".", "_" and "-", at most 64 with the project prefix');
   const existing = db.get<TaskRow>('SELECT * FROM tasks WHERE id = ?', id);
   if (existing && !t.upsert) throw new FactoryError(409, `task ${id} already exists`);
+  if (existing?.project && existing.project !== proj?.key) {
+    if (t.project) throw new FactoryError(409, `task ${id} belongs to project ${existing.project}`);
+    proj = projectRow(ctx, existing.project); // no project named, only a repo: a package keeps its project
+  }
   if (t.extRef && db.get('SELECT 1 FROM tasks WHERE ext_ref = ? AND id != ?', t.extRef, id)) throw new FactoryError(409, `${t.extRef} already belongs to another task`);
+  if (t.dependsOn?.length) t = { ...t, dependsOn: resolveDeps(ctx, proj, t.dependsOn) };
   if (t.fromFindings?.length) {
     // the chosen findings make the package: its body section and one acceptance criterion each
     const brief = findingsBrief(ctx, t.fromFindings);
@@ -205,18 +261,18 @@ export function createTask(ctx: Ctx, t: NewTask, actor: string): TaskSummary {
     if (existing) {
       // an upsert (re-import) never moves a package that work has started on
       const status = existing.status === 'backlog' || existing.status === 'gata' ? t.status : undefined;
-      updateTask(ctx, { ...t, id, status }, actor, { title: t.title, body: t.body, repo: t.repo, priority: t.priority, sensitive: t.sensitive });
+      updateTask(ctx, { ...t, id, status }, actor, { title: t.title, body: t.body, repo: t.repo, priority: t.priority, sensitive: t.sensitive, project: proj?.key });
       return;
     }
     const status = t.status ?? 'backlog';
     db.run(
-      `INSERT INTO tasks (id, title, body, acceptance_json, status, repo, branch, priority, sensitive, source, ext_ref, created_at, updated_at, integrated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id, t.title, t.body ?? '', JSON.stringify(t.acceptance ?? []), status, t.repo ?? null, t.branch ?? null, t.priority ?? 0, t.sensitive ? 1 : 0,
-      t.source ?? actor.split(':')[0], t.extRef ?? null, now, now, status === 'integrata' ? now : null,
+      `INSERT INTO tasks (id, title, body, acceptance_json, status, repo, branch, priority, sensitive, source, ext_ref, created_at, updated_at, integrated_at, project)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, t.title, t.body ?? '', JSON.stringify(t.acceptance ?? []), status, t.repo ?? proj?.repo ?? null, t.branch ?? null, t.priority ?? 0, t.sensitive ? 1 : 0,
+      t.source ?? actor.split(':')[0], t.extRef ?? null, now, now, status === 'integrata' ? now : null, proj?.key ?? null,
     );
     if (t.dependsOn?.length) setDeps(ctx, id, t.dependsOn);
-    event(ctx, id, actor, 'created', null, status, { title: t.title, ...(t.fromFindings?.length ? { fromFindings: t.fromFindings } : {}) });
+    event(ctx, id, actor, 'created', null, status, { title: t.title, ...(proj ? { project: proj.key } : {}), ...(t.fromFindings?.length ? { fromFindings: t.fromFindings } : {}) });
   });
   db.audit(actor, existing ? 'task_upsert' : 'task_create', id);
   publish(ctx, id);
@@ -224,12 +280,21 @@ export function createTask(ctx: Ctx, t: NewTask, actor: string): TaskSummary {
 }
 
 export type TaskPatch = ToolArgs<'tasks_update'>;
-/** Fields only the web (and an upsert) may change, on top of what the agent tool allows. */
-export interface TaskExtra { title?: string; body?: string; repo?: string; priority?: number; sensitive?: boolean; jobId?: string; claimedBy?: string | null }
+/**
+ * Fields only the web (and an upsert) may change, on top of what the agent tool allows. `project` only gives a project
+ * to a package that has none: a package belongs to one project for life.
+ */
+export interface TaskExtra { title?: string; body?: string; repo?: string; priority?: number; sensitive?: boolean; jobId?: string; claimedBy?: string | null; project?: string }
 
 export function updateTask(ctx: Ctx, p: TaskPatch, actor: string, extra: TaskExtra = {}): TaskSummary & { cleanup?: string[]; warnings?: string[] } {
   const { db } = ctx;
   const cur = row(ctx, p.id);
+  if (extra.project !== undefined && cur.project && extra.project !== cur.project) throw new FactoryError(409, `task ${cur.id} belongs to project ${cur.project}`);
+  const proj = projectRow(ctx, extra.project ?? cur.project);
+  if (p.archived === false && cur.archived_at != null && proj?.state === 'archived') {
+    throw new FactoryError(409, `project ${proj.key} is archived: unarchive the project first`);
+  }
+  if (p.dependsOn) p = { ...p, dependsOn: resolveDeps(ctx, proj, p.dependsOn) };
   const sets: string[] = [];
   const args: (string | number | null)[] = [];
   const changed: Record<string, unknown> = {};
@@ -247,6 +312,7 @@ export function updateTask(ctx: Ctx, p: TaskPatch, actor: string, extra: TaskExt
   set('sensitive', 'sensitive', extra.sensitive === undefined ? undefined : extra.sensitive ? 1 : 0);
   set('job_id', 'jobId', extra.jobId);
   set('claimed_by', 'claimedBy', extra.claimedBy);
+  set('project', 'project', extra.project);
   set('branch', 'branch', p.branch);
   set('cost_usd', 'costUsd', p.costUsd);
   set('prompt_id', 'promptId', p.promptId);
@@ -267,6 +333,12 @@ export function updateTask(ctx: Ctx, p: TaskPatch, actor: string, extra: TaskExt
   }
   const extraRound = statusChange === 'in_lucru' && cur.status === 'blocata' && (!!p.note?.trim() || actor === 'web');
   if (extraRound) sets.push('extra_rounds = extra_rounds + 1');
+  // the archive (§12.2): its own history event, not an `update`
+  const archive = p.archived === undefined || p.archived === (cur.archived_at != null) ? null : p.archived;
+  if (archive !== null) {
+    sets.push('archived_at = ?');
+    args.push(archive ? Date.now() : null);
+  }
   let after: { cleanup?: string[]; warnings?: string[] } = {};
   db.tx(() => {
     if (p.dependsOn) {
@@ -292,6 +364,7 @@ export function updateTask(ctx: Ctx, p: TaskPatch, actor: string, extra: TaskExt
     const { status: _s, note, ...rest } = changed as Record<string, unknown> & { status?: unknown; note?: unknown };
     if (Object.keys(rest).length) event(ctx, p.id, actor, 'update', null, null, rest);
     if (note !== undefined && !statusChange) event(ctx, p.id, actor, 'note', null, null, { note });
+    if (archive !== null) event(ctx, p.id, actor, archive ? 'archived' : 'unarchived', null, null);
     if (extraRound) {
       // the extra round settles the round-limit question, if Narcis has not answered it yet
       for (const d of listDecisions(ctx, { taskId: p.id, status: 'pending' }).filter((x) => x.askedBy === ROUNDS_ACTOR)) {
@@ -308,17 +381,19 @@ export function updateTask(ctx: Ctx, p: TaskPatch, actor: string, extra: TaskExt
 const ROUNDS_ACTOR = 'factory:rounds';
 
 /**
- * Integration: the cleanup list from the repo config, and a warning for every other active package whose migration
- * range holds numbers this one used (it has to renumber). The warnings go to those packages' history and the digest.
+ * Integration: the cleanup list from the project's config, and a warning for every other active package of the
+ * project whose migration range holds numbers this one used (it has to renumber). The warnings go to those packages'
+ * history and the digest.
  */
 function onIntegrated(ctx: Ctx, t: TaskRow, actor: string): { cleanup?: string[]; warnings?: string[] } {
-  const cfg = repoConfig(ctx, t.repo);
+  const p = projectRow(ctx, t.project);
+  const cleanup = p ? (projectConfig(p).legacy?.cleanup ?? []) : [];
   const out: { cleanup?: string[]; warnings?: string[] } = {};
-  if (cfg?.cleanup.length) out.cleanup = cfg.cleanup.map((c) => fill(c, taskVars(t, cfg)));
+  if (cleanup.length) out.cleanup = cleanup.map((c) => fill(c, taskVars(t, p)));
   const used = migrationsOf(t);
-  if (!used.length || !t.repo) return out;
+  if (!used.length || !p) return out;
   const others = ctx.db.all<TaskRow>(
-    "SELECT * FROM tasks WHERE id != ? AND lower(repo) = lower(?) AND status != 'integrata' AND res_mig_from IS NOT NULL AND res_mig_to IS NOT NULL ORDER BY id", t.id, t.repo,
+    "SELECT * FROM tasks WHERE id != ? AND project = ? AND status != 'integrata' AND res_mig_from IS NOT NULL AND res_mig_to IS NOT NULL ORDER BY id", t.id, p.key,
   );
   const warnings: string[] = [];
   for (const o of others) {
@@ -344,19 +419,23 @@ export interface ClaimResult {
   task: TaskSummary | null;
   governor: GovernorVerdict;
   reason?: string;
-  /** the package's port, database and migration range (null when its repo has no factory config) */
+  /** the package's port, database and migration range (null when its project has no resource config) */
   resources?: TaskResources | null;
 }
 
 /**
- * Port, database and migration range for a package, from its repo's config. Ports are the lowest free in the range among
- * the repo's packages that are not integrated; migration ranges never go back: the next block starts after every range
- * and every used number recorded for the repo. A package keeps what it already has.
+ * Port, database and migration range for a package, from its project's line (`resources`), else its config (the legacy
+ * fields of §11.7). Ports are
+ * the lowest free in the range among the project's packages that are not integrated; migration ranges never go back:
+ * the next block starts after every range and every used number recorded for the project. A package keeps what it
+ * already has.
  */
 function allocateResources(ctx: Ctx, t: TaskRow): TaskResources | null {
-  const cfg = repoConfig(ctx, t.repo);
-  if (!cfg || !t.repo) return resourcesOf(t);
-  const repoRows = ctx.db.all<TaskRow>('SELECT * FROM tasks WHERE lower(repo) = lower(?) AND id != ?', t.repo, t.id);
+  const p = projectRow(ctx, t.project);
+  // the line's `resources` (§12.3) when the runner reported one; §11.7's per-repo fields remain the fallback
+  const cfg = (p && lineResources(p)) || (p ? projectConfig(p).legacy : undefined);
+  if (!cfg || !p) return resourcesOf(t);
+  const repoRows = ctx.db.all<TaskRow>('SELECT * FROM tasks WHERE project = ? AND id != ?', p.key, t.id);
   let port = t.res_port;
   if (port == null && cfg.portFrom != null) {
     const taken = new Set(repoRows.filter((r) => r.status !== 'integrata' && r.res_port != null).map((r) => r.res_port));
@@ -379,19 +458,33 @@ function allocateResources(ctx: Ctx, t: TaskRow): TaskResources | null {
   return resourcesOf(row(ctx, t.id));
 }
 
-/** Claims a ready task (the given one, or the best by priority) atomically, unless the governor objects. */
+/**
+ * Claims a ready task (the given one, or the best by priority) atomically, unless the governor objects. Only in
+ * `project` when given, else across the active projects (and packages without a project); never in a paused or
+ * archived project, never an archived package.
+ */
 export function claimTask(ctx: Ctx, a: ToolArgs<'tasks_claim'>, actor: string): ClaimResult {
   const g = governor(ctx);
   if (!g.canStart && !a.force) return { task: null, governor: g, reason: `governor: ${g.reason}` };
   return ctx.db.tx(() => {
-    const ready = listTasks(ctx, { status: ['gata'], ready: true });
+    if (a.project) {
+      const why = projectBlocks(requireProject(ctx, a.project));
+      if (why) return { task: null, governor: g, reason: why };
+    }
+    const active = new Set(ctx.db.all<{ key: string }>("SELECT key FROM factory_projects WHERE state = 'active'").map((p) => p.key));
+    const ready = listTasks(ctx, { status: ['gata'], ready: true, project: a.project }).filter((t) => !t.project || active.has(t.project));
     const pick = a.id ? ready.find((t) => t.id === a.id) : ready[0];
     if (!pick) {
       if (a.id) {
         const t = taskSummary(ctx, a.id);
-        return { task: null, governor: g, reason: t.status !== 'gata' ? `task ${a.id} is ${t.status}, not gata` : `task ${a.id} waits on ${t.waitingOn.join(', ')}` };
+        const why =
+          (a.project && t.project !== a.project && `task ${a.id} is not in project ${a.project}`) ||
+          (t.archivedAt != null && `task ${a.id} is archived`) ||
+          projectBlocks(projectRow(ctx, t.project)) ||
+          (t.status !== 'gata' ? `task ${a.id} is ${t.status}, not gata` : `task ${a.id} waits on ${t.waitingOn.join(', ')}`);
+        return { task: null, governor: g, reason: why };
       }
-      return { task: null, governor: g, reason: 'no task is ready to start' };
+      return { task: null, governor: g, reason: a.project ? `no task of project ${a.project} is ready to start` : 'no task is ready to start' };
     }
     const who = a.agent?.trim() || actor;
     ctx.db.run("UPDATE tasks SET status = 'in_lucru', claimed_by = ?, claimed_at = ?, updated_at = ? WHERE id = ?", who, Date.now(), Date.now(), pick.id);

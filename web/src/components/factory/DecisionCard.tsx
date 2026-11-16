@@ -17,6 +17,9 @@ export function DecisionCard({ d, highlighted, showTask = true }: { d: DecisionV
     qc.invalidateQueries({ queryKey: ['decisions'] });
     qc.invalidateQueries({ queryKey: ['attention'] });
     qc.invalidateQueries({ queryKey: ['tasks'] });
+    // a project's Line tab lists its pending decisions
+    qc.invalidateQueries({ queryKey: ['factory-project'] });
+    qc.invalidateQueries({ queryKey: ['factory-projects'] });
     if (d.taskId) qc.invalidateQueries({ queryKey: ['task', d.taskId] });
   };
   const answer = useMutation({
@@ -100,6 +103,12 @@ export function DecisionCard({ d, highlighted, showTask = true }: { d: DecisionV
             <span className="text-sm text-muted">
               {' '}
               · <RelTime ts={d.answeredAt} />
+            </span>
+          )}
+          {d.answeredBy && d.answeredBy !== 'web' && (
+            <span className="text-sm text-muted [overflow-wrap:anywhere]" data-testid="decision-answered-by">
+              {' '}
+              · {d.status === 'cancelled' ? 'cancelled' : 'answered'} by {d.answeredBy.replace(/^agent:/, '')}
             </span>
           )}
         </div>

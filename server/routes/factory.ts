@@ -5,7 +5,7 @@ import type { Ctx } from '../context.ts';
 import { requireMachine, requireWeb, webUser } from '../auth.ts';
 import { FINDING_SEVERITIES, FINDING_STATUSES, LAUNCH_SCOPES, TASK_STATUSES, TOOLS, type GateReport, type TaskStatus } from '../../shared/factory.ts';
 import { parseTaskFile, orderByDeps, TaskFileError, taskFileToCreate } from '../../shared/tasks-md.ts';
-import { agentFromToken, callTool, createAgentToken, listAgentTokens, requireAgent, revokeAgentToken, setTokenLaunch } from '../factory/agent.ts';
+import { agentFromToken, callerOf, callTool, createAgentToken, listAgentTokens, requireAgent, revokeAgentToken, setTokenLaunch, type AgentIdentity } from '../factory/agent.ts';
 import { governor, readUsage } from '../factory/governor.ts';
 import { createTask, deleteTask, FactoryError, gateShot, getTask, listTasks, requestControl, updateTask } from '../factory/tasks.ts';
 import { answerDecision, listDecisions } from '../factory/decisions.ts';
@@ -14,6 +14,9 @@ import { importGithubIssues } from '../factory/import.ts';
 import { factoryConfig, factoryConfigSchema, saveFactoryConfig } from '../factory/config.ts';
 import { listFindings, updateFindings } from '../factory/findings.ts';
 import { applyGateReport, gateRunLog } from '../factory/gateruns.ts';
+import { applyHcReport } from '../factory/hc.ts';
+import { projectRow, storeProjectLine } from '../factory/projects.ts';
+import { lastSegment } from './projects.ts';
 
 function fail(c: Context, e: unknown) {
   if (e instanceof FactoryError) return c.json({ error: e.message }, e.status as 400);
@@ -31,7 +34,12 @@ const gateReportSchema = z.object({
   exitCode: z.number().int().nullable().optional(),
   error: z.string().max(100_000).optional(),
   log: z.string().optional(),
+  line: z.record(z.string(), z.unknown()).optional(),
+  lineError: z.string().max(4000).optional(),
 });
+
+const hcReportSchema = z.object({ status: z.enum(['done', 'error']), error: z.string().max(4000).optional(), result: z.record(z.string(), z.unknown()).optional() });
+const lineReportSchema = z.object({ id: z.string().max(64).optional(), project: z.string().max(64), line: z.record(z.string(), z.unknown()).nullable(), error: z.string().max(4000).nullish() });
 
 const webTaskSchema = TOOLS.tasks_create.input.omit({ upsert: true, extRef: true });
 const webPatchSchema = TOOLS.tasks_update.input.omit({ id: true }).extend({
@@ -43,7 +51,7 @@ const webPatchSchema = TOOLS.tasks_update.input.omit({ id: true }).extend({
 });
 
 export function factoryRoutes(ctx: Ctx) {
-  const app = new Hono<{ Variables: { agent: { id: string; name: string } } }>();
+  const app = new Hono<{ Variables: { agent: AgentIdentity } }>();
   const web = requireWeb(ctx);
   const agentAuth = requireAgent(ctx);
   const { db } = ctx;
@@ -55,7 +63,7 @@ export function factoryRoutes(ctx: Ctx) {
     const key = c.req.header('idempotency-key')?.trim().slice(0, 200) || null;
     try {
       const agent = c.get('agent');
-      const out = callTool(ctx, c.req.param('tool'), (await c.req.json().catch(() => ({}))) ?? {}, `agent:${agent.name}`, key, { tokenId: agent.id });
+      const out = callTool(ctx, c.req.param('tool'), (await c.req.json().catch(() => ({}))) ?? {}, `agent:${agent.name}`, key, callerOf(agent));
       return c.json(out);
     } catch (e) {
       return fail(c, e);
@@ -71,6 +79,27 @@ export function factoryRoutes(ctx: Ctx) {
     } catch (e) {
       return fail(c, e);
     }
+  });
+
+  // the outcome of a checked hc send / kill (§12.4)
+  app.post('/api/runner/hc/:id', requireMachine(ctx), async (c) => {
+    const b = hcReportSchema.safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: 'invalid report: { status: done | error, error?, result? }' }, 400);
+    try {
+      return c.json(applyHcReport(ctx, c.get('machineId' as never) as string, c.req.param('id'), b.data));
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  // the resolved line of a project, from its own runner (§12.3, `{type: 'line'}`)
+  app.post('/api/runner/lines', requireMachine(ctx), async (c) => {
+    const b = lineReportSchema.safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: 'invalid report: { project, line | null, error? }' }, 400);
+    const p = projectRow(ctx, b.data.project);
+    if (!p || p.machine_id !== (c.get('machineId' as never) as string)) return c.json({ error: 'unknown project' }, 404);
+    storeProjectLine(ctx, p.key, b.data.line, b.data.line ? null : (b.data.error ?? 'the runner reported no line'));
+    return c.json({ ok: true });
   });
 
   app.get('/api/gate-runs/:id/log', web, (c) => {
@@ -99,14 +128,18 @@ export function factoryRoutes(ctx: Ctx) {
     }
   });
 
-  // ---------- factory config: gate rounds and per-repo resources and recipe ----------
+  // ---------- factory config: gate rounds and §11.7's per-repo config, kept on the projects (§12.1) ----------
   app.get('/api/factory/config', web, (c) => c.json(factoryConfig(ctx)));
   app.put('/api/factory/config', web, async (c) => {
     const b = factoryConfigSchema.safeParse(await c.req.json().catch(() => null));
     if (!b.success) return c.json({ error: `invalid config: ${b.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}` }, 400);
     const names = b.data.repos.map((r) => r.repo.toLowerCase());
     if (new Set(names).size !== names.length) return c.json({ error: 'each repo can be configured once' }, 400);
-    saveFactoryConfig(ctx, b.data);
+    try {
+      saveFactoryConfig(ctx, b.data, 'web');
+    } catch (e) {
+      return fail(c, e);
+    }
     db.audit('web', 'factory_config', null, { repos: names });
     return c.json(factoryConfig(ctx));
   });
@@ -122,7 +155,15 @@ export function factoryRoutes(ctx: Ctx) {
   // ---------- backlog ----------
   app.get('/api/tasks', web, (c) => {
     const status = (c.req.query('status') ?? '').split(',').filter((s): s is TaskStatus => TASK_STATUSES.includes(s as TaskStatus));
-    return c.json(listTasks(ctx, { status, ready: c.req.query('ready') === '1', q: c.req.query('q') }));
+    const archived = c.req.query('archived');
+    try {
+      return c.json(listTasks(ctx, {
+        status, ready: c.req.query('ready') === '1', q: c.req.query('q'), project: c.req.query('project') || undefined,
+        archived: archived === 'all' ? 'all' : archived === '1' || archived === 'true',
+      }));
+    } catch (e) {
+      return fail(c, e);
+    }
   });
 
   app.post('/api/tasks', web, async (c) => {
@@ -136,12 +177,14 @@ export function factoryRoutes(ctx: Ctx) {
   });
 
   app.post('/api/tasks/import/markdown', web, async (c) => {
-    const b = z.object({ files: z.array(z.object({ name: z.string().max(300), text: z.string().max(500_000) })).min(1).max(200) }).safeParse(await c.req.json().catch(() => null));
-    if (!b.success) return c.json({ error: 'files: [{ name, text }] required' }, 400);
+    const b = z
+      .object({ files: z.array(z.object({ name: z.string().max(300), text: z.string().max(500_000) })).min(1).max(200), project: TOOLS.tasks_create.input.shape.project })
+      .safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: 'files: [{ name, text }] required; project: a project key' }, 400);
     try {
       const parsed = orderByDeps(b.data.files.map((f) => ({ ...parseTaskFile(f.text, f.name), ref: f.name })));
       const args = parsed.map((t) => {
-        const p = TOOLS.tasks_create.input.safeParse(taskFileToCreate(t, t.ref));
+        const p = TOOLS.tasks_create.input.safeParse(taskFileToCreate(t, t.ref, b.data.project));
         if (!p.success) throw new TaskFileError(`${t.ref}: ${p.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`);
         return p.data;
       });
@@ -153,10 +196,12 @@ export function factoryRoutes(ctx: Ctx) {
   });
 
   app.post('/api/tasks/import/github', web, async (c) => {
-    const b = z.object({ owner: z.string().regex(/^[\w.-]{1,100}$/), repo: z.string().regex(/^[\w.-]{1,100}$/), label: z.string().max(100).optional() }).safeParse(await c.req.json().catch(() => null));
+    const b = z
+      .object({ owner: z.string().regex(/^[\w.-]{1,100}$/), repo: z.string().regex(/^[\w.-]{1,100}$/), label: z.string().max(100).optional(), project: TOOLS.tasks_create.input.shape.project })
+      .safeParse(await c.req.json().catch(() => null));
     if (!b.success) return c.json({ error: 'owner and repo required' }, 400);
     try {
-      return c.json(await importGithubIssues(ctx, b.data.owner, b.data.repo, b.data.label));
+      return c.json(await importGithubIssues(ctx, b.data.owner, b.data.repo, b.data.label, b.data.project));
     } catch (e) {
       if (e instanceof FactoryError) return fail(c, e);
       return c.json({ error: (e as Error).message }, 502);
@@ -186,6 +231,17 @@ export function factoryRoutes(ctx: Ctx) {
     try {
       deleteTask(ctx, c.req.param('id'), 'web');
       return c.json({ ok: true });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  /** The archive (§12.2): the same as PUT /api/tasks/:id { archived }. */
+  app.post('/api/tasks/:id/:action{archive|unarchive}', web, (c) => {
+    const action = lastSegment(c); // not the parameter: Hono's trie router matches it as a prefix
+    if (action !== 'archive' && action !== 'unarchive') return c.json({ error: 'not found' }, 404);
+    try {
+      return c.json(updateTask(ctx, { id: c.req.param('id'), archived: action === 'archive' }, 'web'));
     } catch (e) {
       return fail(c, e);
     }
@@ -238,11 +294,15 @@ export function factoryRoutes(ctx: Ctx) {
   });
 
   app.put('/api/agent-tokens/:id', web, async (c) => {
-    const b = z.object({ launch: z.enum(LAUNCH_SCOPES).optional(), launchApproval: z.boolean().optional() }).safeParse(await c.req.json().catch(() => null));
-    if (!b.success) return c.json({ error: 'launch must be off, workers or all; launchApproval true or false' }, 400);
+    const b = z
+      .object({ launch: z.enum(LAUNCH_SCOPES).optional(), launchApproval: z.boolean().optional(), operator: z.boolean().optional(), inbox: z.boolean().optional() })
+      .safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: 'launch must be off, workers or all; launchApproval, operator and inbox true or false' }, 400);
     const t = setTokenLaunch(ctx, c.req.param('id'), b.data);
     if (!t) return c.json({ error: 'not found or revoked' }, 404);
-    db.audit('web', 'agent_token_launch', t.id, b.data);
+    const { operator, inbox, ...launch } = b.data;
+    if (Object.keys(launch).length) db.audit('web', 'agent_token_launch', t.id, launch);
+    if (operator !== undefined || inbox !== undefined) db.audit('web', 'agent_token_scopes', t.id, { operator, inbox }); // §12.7
     return c.json(t);
   });
 

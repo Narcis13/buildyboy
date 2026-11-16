@@ -544,3 +544,167 @@ What the coordinator kept by hand during P1–P7 is kept by Buildyboy. Every exi
 - **Resources.** `tasks_claim` returns `resources {port, db, migrations: {from, to}}`: the lowest port of the range not held by another package of the repo that is not integrated, `<dbPrefix><id lower case>`, and the next migration block after every range and used number recorded for the repo. A package keeps them until `integrata`. `tasks_update` takes `migrationsUsed`. Integrating a package whose used numbers fall in another active package's range adds a `warning` event to that package (renumber) and a line to the digest; the move to `integrata` returns the cleanup list filled in.
 - **Findings.** `gates_record` takes `findings: [{severity: blocker|major|minor, title, file?, line?, detail?, fix?}]`, stored as **findings** with status `open`. A later pass of the same gate marks that gate's open blockers and majors `fixed`; minors stay open. `findings_list {taskId?, status?, severity?}`, `findings_update {ids, status, note?}` (`open`, `fixed`, `deferred`, `for_architect`, `wontfix`), and `tasks_create {fromFindings}` builds the body section and one acceptance criterion per finding and marks them `deferred` to the new package (refused past 100 criteria or a 100 000-character body). The package page lists them; the backlog filters open minors across packages.
 - **Digest** lists pending decisions with their age, and the warnings of the last 24 h.
+
+---
+
+## 12. Projects and the line (decided 2026-11-16)
+
+§11 was built for one project (arond): its coordinator instructions, gate scripts, reviewer prompts and conventions live in that repo, the backlog is one global board, and an LLM coordinator session does the bookkeeping. §12 makes the same way of working available to **any repo**, with less of the owner's attention and no coordinator tokens on the happy path:
+
+- a **project** is a first-class thing that owns its packages, its config and its history (§12.1, §12.2);
+- a repo describes its **line** in one small file, `factory.json`; the gates, QA, review, visual check, integration and cleanup come built in (**the kit**, §12.3, §12.4);
+- a deterministic **conductor** in the server moves packages along the line; an LLM **foreman** is called only when judgment is needed (§12.5, §12.6);
+- an **operator** agent (the owner's deputy, e.g. a phone bot) can do over MCP what the owner does in the PWA (§12.7);
+- the plugin ships the **skills** that put a repo on the factory and plan its work (§12.8).
+
+```
+ owner / operator bot ──► projects · plan · decisions · autopilot            (PWA, MCP, HTTP)
+                              │
+ server: CONDUCTOR  claim → prepare → qa → build → G1 → G2 → G3 → G4 → G5 → cleanup     (no LLM)
+                              │ step commands, job launches, hc send          ▲ reports, hook events
+ runner: KIT steps (git worktree, commands from factory.json, claude -p verifiers) · workers in herdr terminals
+                              └── FOREMAN (claude -p, structured answer) only for questions and stuck packages
+```
+
+Rules that hold everywhere: the server still never runs commands or reads repositories; the runner runs only what the trusted main checkout's `factory.json` says, plus the kit; everything in §11 keeps working (§12.10).
+
+### 12.1 Projects
+
+- **factory_projects**: `key` (primary key, `^[a-z][a-z0-9-]{1,23}$`, never changes), `name`, `repo` (`owner/name`, optional), `id_prefix` (`''` or `^[A-Z][A-Z0-9]{0,7}-$`, e.g. `ED-`), `machine_id` and `checkout` (where its line runs: the trusted main checkout on a paired machine), `line_file` (path relative to the checkout, default `factory.json`), `config_json` (operator overrides and, for projects that came from §11.7's repo config, the legacy fields), `line_json` / `line_seen_at` / `line_error` (the resolved line as the runner last reported it), `state` (`active`, `paused`, `archived`), `autopilot` (0/1), `created_at`, `updated_at`, `archived_at`.
+- `tasks.project` references a project (null = no project: old data and one-off tasks). A package belongs to one project for life.
+- **States.** `active`: normal. `paused`: nothing new starts (no claim, no launch, the conductor skips it); work in flight continues. `archived`: hidden from default lists, its packages are archived (§12.2), nothing can be claimed or launched; it can be unarchived.
+- **Migration 009** turns every entry of the `factory_repos` setting into a project (key from the repo name, `id_prefix ''`, `line_file` = the old recipe path, `config_json` = the old fields), makes a project for every other distinct `tasks.repo`, and assigns existing tasks by repo. `factory_repos` is no longer read. Packages already `integrata` are stamped archived, so the board starts clean.
+- **Who may change what.** `machine_id`, `checkout` and `line_file` decide what the runner executes, so only the owner (web) or an operator token (§12.7) may set them. Any agent token may read projects.
+- **Web API**: `GET /api/factory/projects[?state=active|paused|archived|all]`, `POST /api/factory/projects`, `GET /api/factory/projects/:key`, `PUT /api/factory/projects/:key`, `POST /api/factory/projects/:key/{pause|resume|archive|unarchive|refresh|autopilot}`, `DELETE /api/factory/projects/:key` (only while it has no packages). The checkout-level `/api/projects` of §5 stays as it is; a factory project links to those checkouts through its repo (`gh_owner/gh_repo`).
+- **ProjectView** (list and detail): the columns above plus `machineName`, `counts` per status over non-archived packages, `archived` (count), `integrated` (total ever), `costUsd` (sum over its packages), `openDecisions`, `attention` (packages waiting on the owner: blocked, or with a pending decision), `lastActivityAt`, `checkoutIds` (matching §5 projects). The detail adds `line` (packages in `in_lucru`/`la_porti`, with their stage) and `next` (ready packages).
+- **Tools**: `projects_list {state?}`, `projects_get {key}` (read). `tasks_list`, `tasks_create`, `tasks_claim` take `project`; `tasks_claim` without it picks across active projects. `tasks_create` without `project` uses the project whose `repo` matches the given repo, else none.
+
+### 12.2 Package ids and the archive
+
+- Ids stay globally unique strings (`^[\w.-]{1,64}$`), so nothing that keys on a task id changes. A project with an `id_prefix` owns the ids that start with it: a package created in it with id `P1` is stored as `ED-P1`; one created without an id gets `ED-<n>` (n = the highest number it has used + 1). An id that already starts with the prefix is kept. `localId` is the id without the prefix. Dependencies given as local ids resolve inside the project first.
+- **Placeholders** everywhere a template is filled (factory.json, cleanup): `{id}`, `{idLower}`, `{localId}`, `{localIdLower}`, `{project}`, `{round}`, `{port}`, `{db}`, `{worktree}`, `{branch}`.
+- **Archive.** `tasks.archived_at`. Set by the owner or an operator (package page, "Archive done" on a project, `tasks_update {archived}`), by archiving the project, and by a background sweep that archives packages integrated more than `archive_done_after_hours` ago (setting, default 24; 0 turns the sweep off). Lists leave archived packages out unless asked (`GET /api/tasks?archived=1`, `tasks_list {archived: true}` return only archived ones); `tasks_get` and dependency checks are unaffected. Unarchive clears it.
+
+### 12.3 `factory.json`: a repo's line
+
+One JSON file in the main checkout, read and validated by the runner (`shared/line.ts`, one zod schema for the runner, the server and `bb line check`). Everything is optional; a repo with only `{"commands": {"verify": "npm test"}}` has a working line. The §11.7 recipe is a valid `factory.json` (its `gates.<G>.steps` replace the built-in step of that gate).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `base` | `main` | the branch packages are integrated into |
+| `branch` | `pkg/{id}` | the package's branch |
+| `worktree` | `../<checkout folder>-wt/{id}` | the package's worktree (relative to the checkout, or absolute); must be inside the runner's allowed roots |
+| `shell` | platform shell | argv prefix that runs a command line, e.g. `["C:/Program Files/Git/bin/bash.exe", "-c"]` |
+| `commands.setup` | none | after the worktree exists: install, create a database… |
+| `commands.verify` | none | G1: typecheck, lint, tests. Without it G1 is off |
+| `commands.acceptance` | none | G2: the package's acceptance tests. Without it G2 and QA are off |
+| `commands.shots` | none | G4: writes screenshots to `paths.shots`. Without it G4 is off |
+| `commands.app` | none | G4: starts the app for the visual judge (`app.url`, `app.readyPath`, `app.readyTimeoutSec` 180) |
+| `commands.cleanup` | none | after integration: drop the database… |
+| `paths.packages` | `factory/packages` | package specs (Markdown with frontmatter, §11.2) |
+| `paths.acceptance` | `tests/acceptance/{localId}` | where QA writes; protected from the worker |
+| `paths.shots` | `test-results/shots/{localId}` | screenshots for G4 (at most 12 are attached) |
+| `paths.protected` | `[]` | more paths a worker may not change (`factory.json` and `paths.acceptance` always are) |
+| `env`, `envFile` | `{}`, `.env.factory` | variables for every step and the worker, also written to this file in the worktree (kept out of git) |
+| `resources` | none | `ports: [from, to]`, `dbPrefix`, `migrations: {from, block}`: what `tasks_claim` allocates (replaces the per-repo fields of §11.7; those remain the fallback) |
+| `gates.G1…G5` | on when their command exists; G3 and G5 always | `enabled`, `timeoutSec`, `steps` (argv override); `G2.qa` (true), `G3.security` (`sensitive`, `always`, `never`), `G4.chrome` (false), `G5.push` (true) |
+| `steps.prepare`, `.qa`, `.cleanup`, `.revert` | built in | `steps` (argv override), `timeoutSec` |
+| `models` | worker, qa, review, foreman, planner: `opus`; visual: `sonnet` | the model per role |
+| `worker` | `launcher: hc`, `permissionMode: auto`, `limitHours: 10`, `subagents: 4`, `chrome: false` | how a worker starts |
+| `limits` | `workers: 2` | parallel packages of this project; `rounds` overrides `gate_max_rounds` |
+| `integrate.approval` | `sensitive` | ask the owner before G5: `never`, `sensitive` (packages flagged sensitive), `always` |
+| `context` | `["CLAUDE.md"]` | files every role reads first |
+
+- Command lines run through the shell, in the worktree, with placeholders filled from validated values only (ids `[\w.-]`, numbers, paths the runner computed). They come from the main checkout, never from a worktree: a worker cannot change its own gates.
+- A package that must change `factory.json` or another protected path asks first (the guard of §12.8 blocks the write; the worker raises it with its `question` status line), and such a change passes G5 only with the owner's approval (§12.5).
+- The server keeps the resolved line the runner reports (`line_json`): with every `prepare`, and on demand (`{type: 'line'}` → `POST /api/runner/lines`, behind "Check setup" and `refresh`). Operator overrides in `config_json` (`limits.workers`, `limits.rounds`, `models.*`, `integrate.approval`) win over the file.
+
+### 12.4 Steps: the kit in the runner
+
+- A **step** is what a gate run already is (§11.7): the server stores a run and sends it to the project's runner; the runner executes and reports `running`, then one `done` (verdict, summary, details, findings, shots) or `error`. Runs of `prepare`, `qa`, `cleanup` and `revert` live in `gate_runs` too, but only G1–G5 make gate results and count in rounds. `steps_run {taskId, step, args?}` starts one; `gates_status` reports any run.
+- For each run the runner reads the line file from the checkout and executes, in this order of preference: the line's argv `steps` for that gate or step (§11.7 contract, unchanged); else the **built-in** (`runner/kit/`); else an error. Commands carry what a built-in needs and the repo does not hold: the package (`id`, `localId`, title, body, acceptance criteria, sensitive, branch), its resources, and `files` to write under `<worktree>/.factory/` (never elsewhere).
+- Built-ins (each returns the step contract; all stop leftover processes of the worktree and of the package's port before and after, because an orphaned dev server gives false failures):
+  - **prepare**: fetch; create the worktree and branch from `origin/<base>` (reuse them when they exist); write `envFile` and `.factory/` (`package.md`, `brief.md`, `guard.json`) and keep them out of git (`.git/info/exclude`); run `commands.setup`. Reports the resolved line.
+  - **qa** (when G2 is on and `G2.qa`): `claude -p` in the worktree with `BB_ROLE=qa`, the kit's QA instructions and `factory/qa.md` if the repo has one: black-box acceptance tests in `paths.acceptance`, one per criterion, written before the code; then commit and the local tag `bb-acceptance/<id>`. Fails when no test file was added.
+  - **G1**: `commands.verify`. Summary: the last result lines and the first error lines.
+  - **G2**: fail when `paths.acceptance` differs from the tag or the branch touched other packages' acceptance tests; then `commands.acceptance`. A `MANUAL.md` there is named in the summary for the owner.
+  - **G3**: `claude -p` in the worktree, read-only (`Read`, `Grep`, `Glob`, `git diff|log|show`), `--json-schema`, the kit's review prompt plus `factory/review.md`; a second pass with a security focus when `G3.security` asks for it; retried once without `structured_output`. From round 2 the prompt lists the earlier open findings, so the reviewer checks the fixes first. Findings: blocker, major, minor; fail on any blocker or major.
+  - **G4**: `commands.shots`, start `commands.app`, wait for `app.readyPath`, then a `claude -p` judge (`--chrome` when `G4.chrome`) with the kit's visual prompt plus `factory/visual.md`; stop the app; attach up to 12 screenshots. `skip` when the package produced no screenshots.
+  - **G5**: in the worktree merge `origin/<base>` (a conflict is a `fail` with the files, and the merge is aborted); G1 and G2 again on the result; then in the checkout fast-forward `<base>` to the branch and push both (`G5.push`). The summary holds `<old>..<new>`. Refuses (error `needs approval: …`) when protected paths changed and the run lacks `--allow-protected`.
+  - **cleanup**: only when the branch is in `origin/<base>`: end the package's herdr terminal (`bb-<id>`, label `owner=buildyboy`), remove the worktree and the local branch, run `commands.cleanup`.
+  - **revert**: `git revert` of the G5 range on `<base>`, G1, push.
+- Verifier sessions run with `BB_TASK` and `BB_ROLE` (`qa`, `poarta`), an explicit `--permission-mode`, a turn limit and a budget; their cost lands on the package (§11.7).
+- **herdr.** The runner gains two checked `hc` commands, for terminals it started only (name `bb-…`, label `owner=buildyboy`): `send` (a short line; long text is written to `.factory/inbox/<n>.md` first and the line points at it) and `kill`. `{type: 'hc', id, op, name, text?, files?}` → `POST /api/runner/hc/:id`.
+- The runner reports `version`; the server refuses built-in steps on a runner older than 0.2.0 with a message that says to restart `bb runner`.
+
+### 12.5 The conductor (autopilot)
+
+`server/factory/line.ts`. For each project with `autopilot` on and state `active`, on every relevant event (package, run, job, session or decision changed; runner connected) and every 20 s, it advances that project's packages. It only reads the database and sends commands; every transition is a `task_events` row (`line`), so the package page shows what happened and why. State survives restarts: `tasks.stage` and `tasks.line_json` (`{waiting, runId?, jobId?, attempts, since, note?}`).
+
+| Stage | Status | What the conductor does |
+|---|---|---|
+| (ready) | `gata` | Governor `canStart`, runner online, fewer than `limits.workers` packages of the project in flight: `tasks_claim` it (resources allocated) → `prepare` |
+| `prepare` | `in_lucru` | step `prepare`, with the package and the worker brief as files → `qa` or `build` |
+| `qa` | `in_lucru` | step `qa` → `build` |
+| `build` | `in_lucru` | launch the worker (§11.4: `hc` terminal `bb-<id>` or `claude -p`), then wait for its turn to end and read the **status line** |
+| `G1`…`G4` | `la_porti` | each enabled gate in order; pass or skip → next; fail → open blockers and majors back to the worker → `build`; after the last one → `G5` |
+| `G5` | `la_porti` | ask the owner first when `integrate.approval` says so or protected paths changed; pass → `integrata` → `cleanup`; fail → findings to the worker → `build` |
+| `cleanup` | `integrata` | step `cleanup`; the package leaves the line |
+
+- **The worker's status line.** The brief asks the worker to end every final message with one line: `FACTORY-STATUS: done`, `FACTORY-STATUS: question <text>` or `FACTORY-STATUS: blocked <text>`. The conductor reads it from the Stop event's `last_assistant_message` (or the job's result). `done` → `la_porti` (a new round, §11.7) and the gates. `question` → the foreman (§12.6). `blocked` → the foreman. No status line → one nudge asking for it, then the foreman. A worker whose session or terminal ended without `done` is started again once ("resume from PROGRESS.md"); the second time the package needs attention.
+- **Telling a worker something** (findings, answers, stop): a live herdr terminal gets `hc send`; a headless worker gets a new job that resumes its session. Findings travel as a file in `.factory/inbox/`.
+- **The brief** is composed by the server: the harness template (§5.4) with Goal, Done when (the line's commands), Scope (the worktree; protected paths read-only), Limit, Subagents, Branch `current`, PR and Unattended from the line; then the package (body, criteria, resources); then the kit's worker rules (who you are, read `context` and `factory/worker.md`, never touch acceptance tests or the line file, commit small and push the branch, never merge, the status line). It is saved in the prompt library (§11.1 `prompts_save` semantics) and written to `.factory/brief.md`; the launch line only says to read it.
+- **Errors.** A step that ends in `error` (no verdict) is retried once after a minute; a second error needs attention. So does a worker past `worker.limitHours`.
+- **Needs attention** = one decision tied to the package (`asked_by factory:line`) with what happened and the options that apply: Retry, Ask the foreman, Stop the package, I'll take it from here (the conductor leaves the package alone until its status changes by hand). The conductor acts on the answer; it also acts on the round-limit decision of §11.7 (one more round → back to `build` with the findings; stop → stop).
+- **Controls** (§11.5). `stop`: tell the worker to commit, push and stop; then `hc kill`; `blocata`; ack. `revert`: step `revert`; back to `backlog` (not `gata`: with autopilot on it would be built again at once; the owner decides); ack.
+- **Governor.** `canStart: false`: nothing new is claimed and no worker is launched; packages in flight go on. `stopAll`: also no step that spends tokens (`qa`, G3, G4, foreman) and each active worker is told once to commit, push, update PROGRESS.md and wait; when it clears they are told to resume.
+- **By hand.** With autopilot off nothing here runs: a coordinator session (§11) or the owner drives the same tools (`tasks_claim`, `steps_run`, `tasks_launch`, `gates_run`, `tasks_update`). A package moved by hand while autopilot is on is picked up from its new status.
+
+### 12.6 The foreman and the planner
+
+Both are `claude -p` jobs on the project's runner, in the main checkout, read-only, with a structured answer (`outputSchema`), a turn limit and a budget. Their sessions count as role `coordonator`.
+
+- **Foreman** (`models.foreman`; `null` turns it off, and everything goes to the owner). Input: the package, what the worker asked or why it is stuck, the last gate summaries. Answer: `{action: 'answer' | 'retry' | 'escalate' | 'block', message, question?, options?}`. `answer`: the message goes to the worker. `retry`: the failed step runs again. `escalate`: a decision for the owner with its question and options; the worker is told to go on with what does not depend on it. `block`: `blocata` with the reason. It answers what is technical and inside the package's spec; anything that changes scope, a recorded decision, an acceptance criterion or touches production is escalated.
+- **Planner.** `plan_request {project, goal, notes?}` (owner or operator) starts it with the goal; it reads the repo and answers `{summary, packages: [{localId, title, body, acceptance[], dependsOn[], sensitive, priority}], questions[]}`. The packages are created in `backlog` as one **plan** (`tasks.plan_id`), and one decision asks: Approve (all become `gata`), Discard (deleted), or edit them first in the PWA. With autopilot on, an approved plan starts by itself.
+
+### 12.7 Operators
+
+An agent token may be made an **operator** (Settings → Factory → Agent tokens, off by default, like launching in §11.1): it acts for the owner. Each such action is audited as `agent:<name>` and listed in the digest ("answered by operators").
+
+- `agent_tokens.operator` (0/1): may answer decisions, ask for stop or revert, create and change projects (including `checkout`, `line_file`, autopilot, pause, archive), archive packages, request plans.
+- `agent_tokens.inbox` (0/1, separate): may answer the Inbox's pending actions (permissions, questions, plans, turn-end replies) of sessions in walk mode.
+- A token can never answer a decision it asked itself, and no agent can answer a launch approval (§11.1): the owner removes the need for it per token instead.
+- **Tools** (reads for every token; writes need the scope):
+  - `factory_status {project?}`: one compact answer made for small contexts: governor, alerts (runner offline, usage data stale, autopilot held), per active project its autopilot state, counts, packages on the line (`id`, title, stage, round, what it waits for, since when), ready packages, and everything waiting on the owner (pending decisions with id, question, options, age; open controls; inbox count).
+  - `decisions_list {status?, project?, limit?}`, `decision_answer {id, answer}`, `decision_cancel {id}`.
+  - `control_request {taskId, kind: stop | revert, note?}`.
+  - `projects_save {key, …}` (create or change), `projects_set {key, autopilot?, state?}`.
+  - `plan_request` (§12.6); `tasks_update {archived}` (§12.2).
+  - `inbox_list`, `inbox_answer {id, …}` (scope `inbox`).
+- `docs_get {topic: 'operator'}`: the operator's guide: the loop (`factory_status` → answer what waits → plan or adjust → come back later), what each answer does, and what an operator must leave to the owner.
+
+### 12.8 The plugin: skills and the guard
+
+- **Skills** (`plugin/skills/<name>/SKILL.md`, invoked as `/buildyboy:<name>`):
+  - `factory-init`: put this repo on the factory. Reads the repo (scripts, tests, stack), proposes `factory.json`, checks it with `bb line check`, scaffolds `factory/packages/` with a spec template, and registers the project (`projects_save`, or a link to the PWA form with the fields filled when the token is not an operator).
+  - `factory-plan`: turn a goal or a spec into package files under `paths.packages` (scope, sources, deliverables, acceptance criteria that a black-box test can check, dependencies), then import them (`bb tasks import --project`).
+  - `factory-foreman`: drive a project by hand as its coordinator with the kit (`tasks_claim`, `steps_run`, `tasks_launch`, `gates_run`…): for autopilot-off projects and for supervising.
+  - `factory-status`: what the factory is doing and what waits on the owner (`factory_status`).
+- **Guard** (`plugin/hooks/bb-guard.mjs`, PreToolUse on `Write|Edit|MultiEdit|NotebookEdit`): in a session with `BB_TASK` whose worktree has `.factory/guard.json`, a write to a protected path is denied with the reason, unless `BB_ROLE` is `qa` and the path is the acceptance folder. It fails open and is defence in depth: G2 and G5 are what decide.
+- `bb line check [dir]` validates a `factory.json` and prints the resolved line; `bb tasks import --project <key>` imports into a project.
+
+### 12.9 PWA
+
+- **Projects** (`/projects`): factory projects first (active, then paused; archived behind a toggle), each card with its autopilot state, a progress bar (integrated of all), what is in flight, what waits on the owner, cost and last activity; then the repositories seen by telemetry that have no factory project, each with **Put on the factory**.
+- **Project page** (`/projects/:key`): header with the autopilot switch, Pause, Archive and Plan new work; tabs **Line** (packages in flight with a stage stepper, the worker's lamp and what each waits for; pending decisions; next ready packages), **Backlog** (this project's board), **Done** (the archive: integrated packages with date, rounds, cost and duration, and "Archive done"), **Activity** (the sessions, pull requests, commits and cost of its checkouts, as §5 shows them today), **Setup** (machine, checkout, line file, the resolved line with "Check setup", overrides).
+- **Backlog** (`/backlog`): a project switcher on top (all active projects, or one); only non-archived packages, so the Integrată column holds what landed in the last day; a link to each project's archive.
+- The package page shows the stage and the line's history; Settings → Factory keeps the global values (gate rounds, archive delay, agent tokens with their launch, operator and inbox switches).
+
+### 12.10 Compatibility
+
+- Every §11 tool keeps its arguments and result shape; new fields are additive. A project migrated from `factory_repos` keeps running its recipe gates exactly as before, with autopilot off, until it adds `commands` to its line file.
+- arond: project `arond`, `id_prefix ''`, ids unchanged (`P8a`), `line_file fabrica/porti/porti.json`.
+
+### 12.11 Build order
+
+1. Projects, ids and the archive on the server (§12.1, §12.2). 2. In parallel: the PWA (§12.9); the line file, the kit and the runner (§12.3, §12.4); operators (§12.7). 3. The conductor, the foreman and the planner (§12.5, §12.6). 4. The plugin's skills and guard, the manual, the agent docs (§12.8).

@@ -39,7 +39,7 @@ if (bad.length) {
 const sessionId = val('--session-id') ?? val('--resume');
 const fill = (s) => s.replaceAll('{{SESSION_ID}}', sessionId).replaceAll('{{CWD}}', JSON.stringify(process.cwd()).slice(1, -1));
 const fixture = readFileSync(join(here, 'stream-json', 'basic.jsonl'), 'utf8').split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(fill(l)));
-const init = { ...fixture[0], fake_argv: argv, fake_job_id: process.env.BUILDYBOY_JOB_ID ?? null };
+const init = { ...fixture[0], fake_argv: argv, fake_job_id: process.env.BUILDYBOY_JOB_ID ?? null, fake_bb: { BB_TASK: process.env.BB_TASK ?? null, BB_ROLE: process.env.BB_ROLE ?? null } };
 
 // with --json-schema, results carry a canned structured_output (Spec-ify)
 const structured = argv.includes('--json-schema') ? { structured_output: { goal: 'Fake goal', doneWhen: ['`npm test` passes'], scope: 'src/', spec: '# Draft spec' } } : {};

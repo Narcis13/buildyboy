@@ -1,0 +1,276 @@
+layout "layout.faqir"
+
+block content
+  p
+    | With
+    strong autopilot
+    | on, a project runs by itself. A
+    strong conductor
+    | inside the Buildyboy server moves each package along the
+    a(href="/docs/line") line
+    | , one stage after the other, by sending work to the project's
+    a(href="/docs/runner") runner
+    | : no coordinator session, no tokens spent on bookkeeping. It calls an LLM, the
+    strong foreman
+    | , only when judgment is needed, and asks you on the phone only what only you can answer.
+  h2#turn-on Turning it on
+  ul
+    li
+      | Open the project (
+      strong Projects
+      | → the project) and switch
+      strong Autopilot
+      | on. An
+      a(href="/docs/operators") operator
+      | can do the same with
+      code projects_set {key, autopilot: true}
+      | .
+    li
+      | It needs a project that is active, a line with
+      code commands
+      | (a legacy recipe has no kit steps: keep it by hand), a runner online on the project's machine with version 0.2.0 or later, and packages that are
+      strong ready
+      | : status Gata with every dependency integrated. An approved
+      a(href="/docs/planning#approval") plan
+      | makes its packages ready.
+    li
+      | It works on events (a package, a run, a job, a session or a decision changed, a runner connected) and every 20 seconds. It survives a server restart: each package keeps its stage, and every transition is written to the package's history with the reason, so the package page shows what happened and why.
+  h2#stages The stages
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") Stage (status)
+          th(data-part="th" scope="col") What the conductor does
+      tbody(data-part="tbody")
+        tr(data-part="tr")
+          td(data-part="td")
+            | ready (Gata)
+          td(data-part="td")
+            | When the
+            a(href="/docs/coordinator#governor") governor
+            | allows new work, the runner is online and fewer than
+            code limits.workers
+            | packages of the project are in flight: it claims the package (port, database and migration numbers are allocated) and moves on to prepare.
+        tr(data-part="tr")
+          td(data-part="td")
+            | prepare (În lucru)
+          td(data-part="td")
+            | Runs the
+            code prepare
+            | step: the worktree and branch from
+            code origin/<base>
+            | , the env file,
+            code .factory/
+            | with the package, the worker's brief and the guard file, then
+            code commands.setup
+            | .
+        tr(data-part="tr")
+          td(data-part="td")
+            | qa (În lucru)
+          td(data-part="td")
+            | When the line has QA: a
+            code claude -p
+            | session writes the acceptance tests from the criteria, before any code, and commits them.
+        tr(data-part="tr")
+          td(data-part="td")
+            | build (În lucru)
+          td(data-part="td")
+            | Starts the worker (a herdr terminal
+            code bb-<id>
+            | , or a
+            code claude -p
+            | job, as
+            code worker.launcher
+            | says), then waits for its turn to end and reads its
+            strong status line
+            | .
+        tr(data-part="tr")
+          td(data-part="td")
+            | G1 … G4 (La porți)
+          td(data-part="td")
+            | Each gate the line turns on, in order. Pass or skip: the next one. Fail: the open blockers and majors go back to the worker, and the package returns to build.
+        tr(data-part="tr")
+          td(data-part="td")
+            | G5 (La porți)
+          td(data-part="td")
+            | Asks you first when
+            code integrate.approval
+            | says so or protected paths changed. Pass: Integrată. Fail (a merge conflict, tests failing after the merge): the findings go back to the worker.
+        tr(data-part="tr")
+          td(data-part="td")
+            | cleanup (Integrată)
+          td(data-part="td")
+            | Runs the
+            code cleanup
+            | step (the worker's terminal, the worktree, the branch,
+            code commands.cleanup
+            | ); the package leaves the line.
+  p
+    | Every move into La porți starts a new gate round, as before: a fail in the last allowed round blocks the package and asks you whether to allow another one.
+  h2#status-line The worker's status line
+  p
+    | The worker reads its brief from
+    code .factory/brief.md
+    | : the harness prompt with the line's checks, the package with its criteria and resources, and the factory's rules (never touch the acceptance tests or the line file, push to its own branch, never merge). The brief asks it to end
+    strong every
+    | final message with one line:
+  dl
+    dt
+      code FACTORY-STATUS: done
+    dd
+      | The package is finished and the checks pass. The conductor moves it to La porți and runs the gates.
+    dt
+      code FACTORY-STATUS: question <text>
+    dd
+      | It needs an answer the spec does not give. The question goes to the
+      a(href="#foreman") foreman
+      | ; the worker has already done what does not depend on it.
+    dt
+      code FACTORY-STATUS: blocked <text>
+    dd
+      | It cannot go on. The foreman decides what happens.
+  p
+    | No status line: the worker is asked once for it, then the foreman decides. A worker whose session or terminal ended without
+    code done
+    | is started again once, told to resume from its
+    code PROGRESS.md
+    | ; the second time the package needs your attention. So does a worker still busy after
+    code worker.limitHours
+    | .
+  h2#telling Telling a worker something
+  p
+    | Findings from a failed gate, an answer, a request to stop: a live herdr terminal gets a short line typed into it by the runner (
+    code hc send
+    | ); a long text is written to
+    code .factory/inbox/<n>.md
+    | in the worktree and the line points at it. A headless worker gets a new job that resumes its session. The runner only ever writes to terminals it started itself (
+    a(href="/docs/coordinator#herdr") herdr
+    | ).
+  h2#decisions What it asks you, and what to answer
+  p
+    | Questions arrive in
+    strong Decisions
+    | and on your phone, tied to the package. Each one says what happened; these are the kinds and what each choice does:
+  dl
+    dt
+      | Needs attention
+    dd
+      | A step ended in an error twice (it is retried once by itself after a minute), a worker stopped twice without finishing, or a worker ran past its time limit.
+      strong Retry
+      | runs the failed step or restarts the worker.
+      strong Ask the foreman
+      | hands it to the foreman.
+      strong Stop the package
+      | stops the worker and blocks the package.
+      strong I'll take it from here
+      | makes the conductor leave the package alone until you change its status by hand: answer this when you want to look at the worktree yourself.
+    dt
+      | Integration approval
+    dd
+      | Before G5, for a package flagged sensitive (with the default
+      code integrate.approval
+      | ), for every package with
+      code always
+      | , or when the branch changed
+      code factory.json
+      | , acceptance tests of other packages or
+      code paths.protected
+      | . Approving lets G5 merge it into the base branch; read the package page (its gates, findings and the protected paths named) first. Without your yes nothing is merged.
+    dt
+      | The round limit
+    dd
+      | A gate failed in the last allowed round. Another round sends the findings back to the worker; another round for one gate only allows just that gate again; stopping blocks the package. Allow another round when the open findings look few and fixable; stop when it keeps failing the same way.
+    dt
+      | A question escalated by the foreman
+    dd
+      | The foreman judged that only you can answer: it changes the scope or a criterion, contradicts a recorded decision, is a question of your domain, touches production or costs money. It offers two to four options, its recommendation first. Your answer goes to the worker, which meanwhile works on what does not depend on it.
+    dt
+      | A plan to approve
+    dd
+      | From the planner: see
+      a(href="/docs/planning#approval") Planning
+      | .
+  p
+    | An
+    a(href="/docs/operators") operator
+    | may answer some of these for you; launch approvals stay yours.
+  h2#foreman The foreman
+  p
+    | The foreman is a short, read-only
+    code claude -p
+    | session on the project's runner, in the main checkout, with a turn limit and a budget; its cost counts on the package as the coordinator role. It gets the package, what the worker asked or why it is stuck, and the last gate summaries, and answers in a fixed form with one of four actions:
+  dl
+    dt
+      | Answer
+    dd
+      | It can settle the question itself: it is technical and inside the package's spec and the project's recorded decisions. Its message goes to the worker.
+    dt
+      | Retry
+    dd
+      | The failure was an accident of the environment (a flaky run, a leftover process, a timeout): the failed step runs again.
+    dt
+      | Escalate
+    dd
+      | Only you can decide: a decision with its question and options reaches you, and the worker is told to go on with the rest.
+    dt
+      | Block
+    dd
+      | The package cannot go on: it becomes Blocată, with the reason.
+  p
+    | It never loosens an acceptance criterion and never approves a change to protected files.
+    code "models": {"foreman": null}
+    | in the line turns it off: every question then comes to you.
+  h2#stops What stops it
+  dl
+    dt
+      | The governor
+    dd
+      | When it says no new work may start (the 5-hour window is nearly used up, or usage data is stale), nothing new is claimed and no worker is launched; packages in flight go on. When it says stop everything (the 7-day window), no step that spends tokens runs either (QA, G3, G4, the foreman), and each active worker is told once to commit, push, update
+      code PROGRESS.md
+      | and wait; they are told to resume when it clears.
+    dt
+      | The runner
+    dd
+      | Offline: nothing new starts and steps wait for it.
+    dt
+      | Pausing or archiving the project
+    dd
+      | Nothing new starts; work in flight finishes.
+      strong factory_status
+      | and the project page say that autopilot is held, and why.
+    dt
+      | Stop and revert
+    dd
+      strong Oprește pachetul
+      | on a package page: the worker is told to commit, push and stop, its terminal is ended, the package becomes Blocată.
+      strong Cere revenirea integrării
+      | : the
+      code revert
+      | step undoes its integration on the base branch, runs G1 and pushes, and the package goes back to Gata.
+    dt
+      | You
+    dd
+      | Switching autopilot off stops everything at the next step: nothing runs until you or a coordinator move the packages.
+      strong I'll take it from here
+      | does the same for one package.
+  h2#by-hand Without autopilot
+  p
+    | With autopilot off, nothing on this page runs. A coordinator session, the
+    code /buildyboy:factory-foreman
+    a(href="/docs/skills#factory-foreman") skill
+    | , or you drive the same tools (
+    code tasks_claim
+    | ,
+    code steps_run
+    | ,
+    code tasks_launch
+    | ,
+    code gates_run
+    | ,
+    code tasks_update
+    | ): see
+    a(href="/docs/coordinator") Coordinating by hand
+    | . A package you move by hand while autopilot is on is picked up from its new status. To watch rather than drive, use
+    code /buildyboy:factory-status
+    | or the project page.

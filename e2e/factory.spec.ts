@@ -268,35 +268,32 @@ test.describe('gate rounds, resources and findings', () => {
     }
   });
 
-  test('saves the factory config from Settings', async ({ loggedIn: page }, info) => {
+  // the per-repo allocation moved from Settings to the project's Setup tab (§12.9)
+  test("saves a migrated project's allocation fields on its Setup tab", async ({ loggedIn: page }) => {
     const errors = trackConsoleErrors(page);
-    const repo = `e2e-cfg-${info.project.name}`;
     const headers = { 'x-bb-csrf': await csrf(page) };
-    const before = (await (await page.request.get('/api/factory/config')).json()) as { maxRounds: number; repos: unknown[] };
+    const before = (await (await page.request.get('/api/factory/projects/billing')).json()) as { config: { legacy: Record<string, unknown> } };
     try {
-      await page.goto('/settings');
-      const card = page.getByTestId('settings-factory-config');
-      await expect(card).toBeVisible();
-      await card.getByTestId('fc-add').click();
-      const r = card.getByTestId('fc-repo-block').last();
-      await r.getByTestId('fc-repo').fill(repo);
-      await r.getByTestId('fc-dbPrefix').fill('bad prefix!');
-      await r.getByTestId('fc-cleanup').fill('drop db {db}\n\nrm -rf {worktree}');
-      await r.locator('input[id$="-portFrom"]').fill('4400');
-      await r.locator('input[id$="-portTo"]').fill('4410');
+      await page.goto('/projects/billing?tab=setup');
+      const legacy = page.getByTestId('setup-legacy');
+      await expect(legacy).toBeVisible();
+      await legacy.getByTestId('ps-db').fill('bad prefix!');
+      await legacy.getByTestId('ps-cleanup').fill('drop db {db}\n\nrm -rf {worktree}');
+      await page.locator('#ps-port-from').fill('4400');
+      await page.locator('#ps-port-to').fill('4410');
       await noHorizontalScroll(page);
-      await card.getByTestId('fc-save').click();
-      await expect(card.getByRole('alert')).toContainText('dbPrefix');
-      await r.getByTestId('fc-dbPrefix').fill('e2e_');
-      await card.getByTestId('fc-save').click();
-      await expect(card.getByRole('status')).toHaveText('Saved');
-      const saved = (await (await page.request.get('/api/factory/config')).json()) as { repos: { repo: string; portFrom: number; cleanup: string[] }[] };
-      expect(saved.repos.find((x) => x.repo === repo)).toMatchObject({ portFrom: 4400, cleanup: ['drop db {db}', 'rm -rf {worktree}'] });
+      await page.getByTestId('ps-save').click();
+      await expect(page.getByTestId('project-setup').getByRole('alert')).toContainText('dbPrefix');
+      await legacy.getByTestId('ps-db').fill('e2e_');
+      await page.getByTestId('ps-save').click();
+      await expect(page.getByTestId('project-setup').getByRole('status').filter({ hasText: 'Saved' })).toBeVisible();
+      const saved = (await (await page.request.get('/api/factory/config')).json()) as { repos: { repo: string; portFrom: number; dbPrefix: string; cleanup: string[] }[] };
+      expect(saved.repos.find((x) => x.repo === 'example/billing')).toMatchObject({ portFrom: 4400, dbPrefix: 'e2e_', cleanup: ['drop db {db}', 'rm -rf {worktree}'] });
       await page.reload();
-      await expect(page.getByTestId('settings-factory-config').locator(`input[value="${repo}"]`)).toHaveCount(1);
+      await expect(page.getByTestId('ps-db')).toHaveValue('e2e_');
       expect(errors.filter((e) => !/400/.test(e))).toEqual([]);
     } finally {
-      await page.request.put('/api/factory/config', { headers, data: before });
+      await page.request.put('/api/factory/projects/billing', { headers, data: { config: { legacy: before.config.legacy } } });
     }
   });
 });
@@ -346,6 +343,28 @@ test.describe('decisions', () => {
     expect(errors).toEqual([]);
   });
 
+  test('shows which operator answered', async ({ loggedIn: page }, info) => {
+    const errors = trackConsoleErrors(page);
+    const q = `Answered by a deputy (${info.project.name} ${Date.now()})`;
+    const id = await askDecision(page, `e2e-asker-${info.project.name}`, { question: q, options: ['Yes', 'No'] });
+    // another token, made an operator by the owner, answers it
+    const headers = { 'x-bb-csrf': await csrf(page) };
+    const deputy = `e2e-deputy-${info.project.name}`;
+    const created = (await (await page.request.post('/api/agent-tokens', { data: { name: deputy }, headers })).json()) as { id: string; token: string };
+    expect((await page.request.put(`/api/agent-tokens/${created.id}`, { data: { operator: true }, headers })).ok()).toBe(true);
+    const res = await page.request.post('/api/agent/decision_answer', { data: { id, answer: 'No' }, headers: { authorization: `Bearer ${created.token}` } });
+    expect(res.ok()).toBe(true);
+    await page.goto('/decisions');
+    const card = page.getByTestId('decisions-history').getByTestId('decision-card').filter({ hasText: q });
+    await expect(card.getByTestId('decision-answer')).toContainText('No');
+    await expect(card.getByTestId('decision-answered-by')).toContainText(`answered by ${deputy}`);
+    await expect(card.getByTestId('decision-answered-by')).not.toContainText('agent:');
+    // the owner's own answers carry no such line
+    await expect(page.getByTestId('decisions-history').getByTestId('decision-card').filter({ hasText: 'legacy customer export' }).getByTestId('decision-answered-by')).toHaveCount(0);
+    await noHorizontalScroll(page);
+    expect(errors).toEqual([]);
+  });
+
   test('cancels a question', async ({ loggedIn: page }, info) => {
     const q = `Cancel me (${info.project.name} ${Date.now()})`;
     await askDecision(page, `e2e-cancel-${info.project.name}`, { question: q });
@@ -388,10 +407,27 @@ test.describe('settings and layout', () => {
     await expect(ask).toHaveAttribute('aria-checked', 'true');
     await ask.click();
     await expect(ask).toHaveAttribute('aria-checked', 'false');
+    // operator and inbox (§12.7): off by default, each with what it allows
+    const operator = row.getByTestId('agent-token-operator');
+    const inbox = row.getByTestId('agent-token-inbox');
+    await expect(operator.getByRole('switch', { name: 'Operator' })).toHaveAttribute('aria-checked', 'false');
+    await expect(operator).toContainText('answers decisions');
+    await expect(inbox.getByRole('switch', { name: 'Inbox' })).toHaveAttribute('aria-checked', 'false');
+    await expect(inbox).toContainText('permissions, questions, plans');
+    await operator.getByRole('switch').click();
+    await expect(operator.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+    await inbox.getByRole('switch').click();
+    await expect(inbox.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
     await noHorizontalScroll(page);
     await page.reload();
     await expect(row.getByTestId('agent-token-launch')).toHaveValue('all');
     await expect(row.getByTestId('agent-token-approval').getByRole('switch')).toHaveAttribute('aria-checked', 'false');
+    await expect(row.getByTestId('agent-token-operator').getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+    await expect(row.getByTestId('agent-token-inbox').getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+    await row.getByTestId('agent-token-inbox').getByRole('switch').click();
+    await expect(row.getByTestId('agent-token-inbox').getByRole('switch')).toHaveAttribute('aria-checked', 'false');
+    const saved = ((await (await page.request.get('/api/agent-tokens')).json()) as { name: string; operator: boolean; inbox: boolean }[]).find((t) => t.name === name);
+    expect(saved).toMatchObject({ operator: true, inbox: false });
     await row.getByTestId('agent-token-revoke').click();
     await row.getByTestId('agent-token-revoke-confirm').click();
     await expect(row).toHaveAttribute('data-revoked', 'true');

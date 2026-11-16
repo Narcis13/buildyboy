@@ -1,0 +1,133 @@
+layout "layout.faqir"
+
+block content
+  p
+    | An
+    strong operator
+    | is an agent that acts for you while you are away: typically a bot you talk to on your phone, connected to Buildyboy with its own agent token. It reads what the factory is doing in one call, answers the decisions you would have answered, stops a runaway package, pauses a project or switches its autopilot, and leaves the rest for you. Everything it does is in the audit log under its name and in the daily digest, under "Answered by operators".
+  h2#switches The two switches
+  p
+    | Both are per agent token, in
+    strong Settings → Factory → Agent tokens
+    | , and off by default, like
+    strong May launch
+    | :
+  dl
+    dt
+      | Operator
+    dd
+      | The token may answer and cancel decisions, ask for a package to be stopped or its integration reverted, create and change projects (including machine, checkout, line file, autopilot, pause and archive), archive packages and request plans.
+    dt
+      | Inbox
+    dd
+      | Separate: the token may answer the Inbox for you (permissions, questions, plans and end-of-turn replies of Claude Code sessions in
+      a(href="/docs/walk-mode") walk mode
+      | ).
+  p
+    | Without a switch, those calls are refused with a message that names the switch. Reading works for every agent token.
+  h2#can What it can do
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") Tool
+          th(data-part="th" scope="col") What it does
+      tbody(data-part="tbody")
+        tr(data-part="tr")
+          td(data-part="td")
+            code factory_status
+          td(data-part="td")
+            | Everything in one compact answer: the governor, alerts (runner offline, usage data stale, autopilot held), per project its autopilot, counts, packages on the line and what each waits for, ready packages, and everything waiting on you. Any agent token may call it.
+        tr(data-part="tr")
+          td(data-part="td")
+            code decisions_list
+            | ,
+            code decision_answer
+            | ,
+            code decision_cancel
+          td(data-part="td")
+            | Read decisions with their context; answer one with one of its options; withdraw one nobody needs any more. Needs the Operator switch.
+        tr(data-part="tr")
+          td(data-part="td")
+            code control_request
+          td(data-part="td")
+            | Stop a package, or ask for its integration to be reverted, like the buttons on a package page. Needs the Operator switch.
+        tr(data-part="tr")
+          td(data-part="td")
+            code projects_save
+            | ,
+            code projects_set
+          td(data-part="td")
+            | Create or change a project; switch autopilot, pause, resume, archive or unarchive. Needs the Operator switch.
+        tr(data-part="tr")
+          td(data-part="td")
+            code plan_request
+          td(data-part="td")
+            | Ask the
+            a(href="/docs/planning#planner") planner
+            | for a plan from a goal. Needs the Operator switch.
+        tr(data-part="tr")
+          td(data-part="td")
+            code tasks_update {archived}
+          td(data-part="td")
+            | Archive or unarchive a package. Needs the Operator switch.
+        tr(data-part="tr")
+          td(data-part="td")
+            code inbox_list
+            | ,
+            code inbox_answer
+          td(data-part="td")
+            | See and answer what sessions in walk mode wait for. Needs the Inbox switch.
+  h2#cannot What it cannot do
+  ul
+    li
+      | Answer a decision its own token asked.
+    li
+      | Answer a
+      strong launch approval
+      | : only you do. If you are tired of approving launches for a token, turn off
+      strong Ask me before each launch
+      | for it instead.
+    li
+      | Start workers or coordinators, unless that token was also allowed to launch.
+    li
+      | Anything a machine token or the web session does: it reaches only the agent tools.
+  p
+    | What it should not do, even when it may (its guide tells it so): change a project's machine, checkout or line file unless you gave it the exact values, because they decide what runs on your machines; revert an integration you did not ask to revert; and answer anything that changes a package's scope or criteria, touches production, money, security or personal data, or that it cannot judge from what it was told. Those wait for you; the workers go on with what does not depend on them.
+  h2#connect Connecting a bot
+  ol
+    li
+      | Create an agent token for it in
+      strong Settings → Factory → Agent tokens
+      | (for example
+      code phone-bot
+      | ), copy the key, and turn on
+      strong Operator
+      | (and
+      strong Inbox
+      | if it should answer sessions too).
+    li
+      | Give the bot the MCP endpoint
+      code {{ site.url }}/mcp
+      | with the header
+      code Authorization: Bearer bba_…
+      | , or let it call the same tools over plain HTTP:
+      code POST {{ site.url }}/api/agent/<tool>
+      | with the arguments as JSON (
+      a(href="/docs/agents") Connecting agents
+      | ).
+    li
+      | Point it at its guide: the
+      code docs_get
+      | tool with
+      code {"topic": "operator"}
+      | , or
+      code {{ site.url }}/docs/agents.md?topic=operator
+      | . It explains the loop (
+      code factory_status
+      | , answer what waits, adjust, come back later), what each answer does, and what to leave to you.
+  pre
+    code
+      | curl -X POST {{ site.url }}/api/agent/factory_status -H "Authorization: Bearer bba_…" -H "Content-Type: application/json" -d '{}'
+  p
+    | Revoke the token in Settings when you no longer want the bot to act: it stops working at once.

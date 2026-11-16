@@ -4,8 +4,8 @@ block content
   p
     | The
     strong Settings
-    | page holds everything that applies to your whole Buildyboy: notifications, limits and warnings, GitHub, telemetry,
-    | secret masking, your password and your logged-in devices. Each section has its own
+    | page holds everything that applies to your whole Buildyboy: notifications, limits and warnings, GitHub, the
+    | factory's global values, telemetry, secret masking, your password and your logged-in devices. Each section has its own
     strong Save
     | button, which shows
     code Saving…
@@ -97,6 +97,83 @@ block content
     strong Remove token
     | to stop. Only sessions active in the last 7 days, on repositories hosted on github.com, are followed, and only pull
     | requests opened from a branch of the same repository.
+
+  h2#factory Factory
+  p
+    | The cards under
+    strong Factory
+    | keep the values that apply to the whole factory. What belongs to one repository (the machine it runs on, its main
+    | checkout, the line file, limits, models, ports, database prefix and migration numbers) is no longer here: it lives
+    | on each project's
+    strong Setup
+    | tab (see
+    a(href="/docs/projects#page") The project page
+    | ) and in its line file (see
+    a(href="/docs/line") The line
+    | ).
+  h3#agent-tokens Agent tokens
+  p
+    | A token lets an agent use the factory's tools: a coordinator, Claude Desktop, a bot on your phone. Type a name and
+    | press
+    strong Create token
+    | . The key is shown once, with the
+    code claude mcp add
+    | lines to register it (see
+    a(href="/docs/coordinator#register") Step 2
+    | ). Each token shows when it was created and last used, and
+    strong Revoke…
+    | cuts it off at once. Each live token has these switches:
+  dl
+    dt
+      strong May launch
+    dd
+      | Nothing (the default),
+      strong Workers
+      | or
+      strong Workers and coordinators
+      | : whether the token may start agents on your machines.
+      a(href="/docs/coordinator#launch") More
+    dt
+      strong Ask me before each launch
+    dd Shown once launching is allowed. On by default: every launch waits for your answer in Decisions.
+    dt
+      strong Operator
+    dd
+      | Off by default. The token acts for you: answers decisions (never its own, and never a launch approval), asks to stop
+      | or revert packages, and changes projects and autopilot.
+      a(href="/docs/operators#switches") More
+    dt
+      strong Inbox
+    dd
+      | Off by default, and separate from Operator. The token may answer the
+      a(href="/docs/inbox") Inbox
+      | for you: permissions, questions, plans and replies of sessions in walk mode.
+      a(href="/docs/operators#switches") More
+  h3#governor-settings Consumption governor
+  p
+    | The 5-hour limit (default 85%), the 7-day limit (default 80%) and how old the usage data may be before the
+    | governor refuses to start anything (default 30 minutes). Empty uses the default. See
+    a(href="/docs/coordinator#governor") The consumption governor
+    | .
+  h3#digest-settings Daily digest
+  p
+    | Switch the digest on or off, set the time (the server's time, 08:00 by default) and press
+    strong Send digest now
+    | to get one at once. The last five are listed below.
+    a(href="/docs/backlog#digest") More
+  h3#gates-archive Gates and archive
+  dl
+    dt
+      strong Max gate rounds
+    dd
+      | How many times a package may go through the gates before it is blocked and you are asked (3 by default). A
+      | project's line file or Setup tab can set its own.
+    dt
+      strong Archive done after (hours)
+    dd
+      | Integrated packages leave the board for their project's Done tab after this long. Default 24. 0 turns it off, and
+      | packages stay on the board until you archive them.
+      a(href="/docs/projects#archive") More
 
   h2#telemetry Telemetry and statusline
   p

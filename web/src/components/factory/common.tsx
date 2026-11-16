@@ -79,13 +79,18 @@ export function TaskFlags({ t }: { t: Pick<TaskSummary, 'ready' | 'sensitive' | 
   );
 }
 
-/** One package on the board. The whole card is a link to its page. */
-export function TaskCard({ t }: { t: TaskSummary }) {
+/** One package on the board. The whole card is a link to its page. `showProject`: when the board mixes projects. */
+export function TaskCard({ t, showProject }: { t: TaskSummary; showProject?: boolean }) {
   return (
     <Link to={`/backlog/${encodeURIComponent(t.id)}`} data-testid="task-card" data-task={t.id} className="block min-w-0">
       <Card className="flex min-h-[44px] flex-col gap-1.5 p-3 hover:border-accent">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="font-mono text-sm font-semibold text-accent">{t.id}</span>
+          {showProject && t.project && (
+            <span className="rounded bg-panel-2 px-1.5 font-mono text-xs leading-5 text-muted" data-testid="task-card-project">
+              {t.project}
+            </span>
+          )}
           <TaskFlags t={t} />
         </div>
         <div className="text-[15px] font-medium leading-snug [overflow-wrap:anywhere]">{t.title}</div>
@@ -125,5 +130,83 @@ export function Section({ title, count, children, right, testId }: { title: stri
       </div>
       {children}
     </section>
+  );
+}
+
+// ---------- the line (SPEC §12.5) ----------
+
+/** The stages of the line, in order, as the conductor writes them in `stage` (gates upper-case, the rest lower-case). */
+export const STAGES = ['prepare', 'qa', 'build', 'G1', 'G2', 'G3', 'G4', 'G5', 'cleanup'] as const;
+export type Stage = (typeof STAGES)[number];
+export const STAGE_LABEL: Record<Stage, string> = {
+  prepare: 'Prepare', qa: 'QA', build: 'Build', G1: 'G1', G2: 'G2', G3: 'G3', G4: 'G4', G5: 'G5', cleanup: 'Cleanup',
+};
+const STAGE_SHORT: Record<Stage, string> = { ...STAGE_LABEL, prepare: 'Prep', cleanup: 'Clean' };
+
+/**
+ * The stages this project's line has, from the resolved line the runner reported (shared/line.ts `ResolvedLine`):
+ * Prepare, QA (only when the line has it), Build, the enabled gates in order, Cleanup. Null when the line is not known
+ * or does not look like one: the stepper then shows every stage.
+ */
+export function lineStages(resolvedLine: unknown): Stage[] | null {
+  if (!resolvedLine || typeof resolvedLine !== 'object' || Array.isArray(resolvedLine)) return null;
+  const l = resolvedLine as { enabled?: unknown; qa?: unknown };
+  if (!l.enabled || typeof l.enabled !== 'object' || Array.isArray(l.enabled)) return null;
+  const enabled = l.enabled as Record<string, unknown>;
+  if (!GATES.every((g) => typeof enabled[g] === 'boolean')) return null;
+  return ['prepare', ...(l.qa === true ? (['qa'] as const) : []), 'build', ...GATES.filter((g) => enabled[g] === true), 'cleanup'];
+}
+
+/**
+ * Where a package is on the line: the conductor's `stage` when it set one; until then a position derived from the
+ * status and the gate verdicts (in_lucru → Build; la_porti → the first gate without a pass or skip). Null off the line:
+ * a stage the stepper does not know (`revert`) counts as off it. With `stages` (the project's line), a derived gate the
+ * line does not run moves on to the next stage it does.
+ */
+export function stageOf(t: Pick<TaskSummary, 'stage' | 'status' | 'gates'>, stages?: readonly Stage[] | null): { stage: Stage; derived: boolean } | null {
+  if (t.stage) {
+    const s = STAGES.find((x) => x.toLowerCase() === t.stage!.toLowerCase());
+    return s ? { stage: s, derived: false } : null;
+  }
+  let stage: Stage | null = null;
+  if (t.status === 'in_lucru') stage = 'build';
+  else if (t.status === 'la_porti') stage = GATES.find((g) => t.gates[g] !== 'pass' && t.gates[g] !== 'skip') ?? 'G5';
+  if (!stage) return null;
+  if (stages && !stages.includes(stage)) stage = STAGES.slice(STAGES.indexOf(stage)).find((x) => stages.includes(x)) ?? null;
+  return stage ? { stage, derived: true } : null;
+}
+
+/** Prepare · QA · Build · G1…G5 · Cleanup (only `stages` when given): done steps filled, the current one marked; a gate step takes its verdict's colour. */
+export function StageStepper({ t, stages }: { t: Pick<TaskSummary, 'stage' | 'status' | 'gates'>; stages?: readonly Stage[] | null }) {
+  const shown = stages?.length ? STAGES.filter((s) => stages.includes(s)) : STAGES;
+  const at = stageOf(t, stages);
+  const cur = at ? shown.indexOf(at.stage) : -1;
+  return (
+    <ol
+      className="grid gap-0.5"
+      style={{ gridTemplateColumns: `repeat(${shown.length}, minmax(0, 1fr))` }}
+      aria-label={at && cur >= 0 ? `Stage: ${STAGE_LABEL[at.stage]}${at.derived ? ' (estimated)' : ''}` : 'Not on the line'}
+      data-testid="stage-stepper"
+      data-stage={cur >= 0 ? at!.stage : ''}
+      data-stages={shown.join(',')}
+    >
+      {shown.map((s, i) => {
+        const verdict = (GATES as readonly string[]).includes(s) ? t.gates[s as Gate] : undefined;
+        const state = i < cur ? 'done' : i === cur ? 'current' : 'todo';
+        const color =
+          state === 'current'
+            ? verdict === 'fail' ? 'var(--bb-error)' : 'var(--bb-accent)'
+            : verdict ? VERDICT_COLOR[verdict] : state === 'done' ? 'var(--bb-working)' : 'var(--bb-line)';
+        return (
+          <li key={s} data-step={s} data-state={state} aria-current={state === 'current' ? 'step' : undefined} className="min-w-0" title={`${STAGE_LABEL[s]}${verdict ? `: ${verdict}` : ''}`}>
+            <span className={`block rounded-full ${state === 'current' ? 'h-2' : 'h-1.5'}`} style={{ background: color }} />
+            <span className={`mt-1 block truncate text-center text-[11px] leading-4 sm:text-xs ${state === 'current' ? 'font-semibold text-ink' : 'text-muted'}`}>
+              <span className="sm:hidden">{STAGE_SHORT[s]}</span>
+              <span className="hidden sm:inline">{STAGE_LABEL[s]}</span>
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }

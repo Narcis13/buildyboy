@@ -13,13 +13,27 @@ export interface StoredJobOptions extends JobOptions {
   taskId?: string;
   /** what the started agent is: a coordinator gets its own terminal name (bb-coord-…) and a bb.role label */
   role?: (typeof JOB_ROLES)[number];
+  /** the package the job's cost counts on (BB_TASK) without linking the job to it (the foreman, §12.6) */
+  bbTask?: string;
+}
+
+/**
+ * BB_TASK and BB_ROLE for the started claude (SPEC §11.7, §12.8): a job for a package runs with the package's id and its
+ * role (default lucrator), so the hook links its sessions and the plugin's guard knows it is a worker.
+ */
+export function jobEnv(o: Pick<StoredJobOptions, 'taskId' | 'bbTask' | 'role'>): Record<string, string> {
+  const task = o.taskId ?? o.bbTask;
+  return task && TASK_RE.test(task) ? { BB_TASK: task, BB_ROLE: o.role ?? 'lucrator' } : {};
 }
 
 export const LAUNCHERS = ['claude', 'hc'] as const;
 /** The BB_ROLE values a launch can name (shared/factory.ts ROLES). */
 export const JOB_ROLES = ['lucrator', 'coordonator'] as const;
 
-/** Structured-output schemas jobs may ask for, by id. `specify` turns a rough idea into harness slots + a draft spec. */
+/**
+ * Structured-output schemas jobs may ask for, by id. `specify` turns a rough idea into harness slots + a draft spec;
+ * `foreman` and `plan` are the conductor's foreman and planner (SPEC §12.6).
+ */
 export const OUTPUT_SCHEMAS = {
   specify: {
     type: 'object',
@@ -30,6 +44,42 @@ export const OUTPUT_SCHEMAS = {
       spec: { type: 'string', description: 'a draft spec in Markdown' },
     },
     required: ['goal', 'doneWhen', 'scope', 'spec'],
+  },
+  /** the foreman (SPEC §12.6): what the conductor does about a worker's question or a stuck package */
+  foreman: {
+    type: 'object',
+    properties: {
+      action: { type: 'string', enum: ['answer', 'retry', 'escalate', 'block'], description: 'answer: you settle it; retry: run the failed step again; escalate: only the owner can decide; block: it cannot go on' },
+      message: { type: 'string', description: 'answer: what the worker reads; retry: why; escalate: what the worker does meanwhile; block: why and what would have to change' },
+      question: { type: 'string', description: 'escalate: one sentence the owner can answer from a phone' },
+      options: { type: 'array', items: { type: 'string' }, description: 'escalate: two to four short choices, your recommendation first' },
+    },
+    required: ['action', 'message'],
+  },
+  /** the planner (SPEC §12.6): a goal cut into packages */
+  plan: {
+    type: 'object',
+    properties: {
+      summary: { type: 'string', description: 'two or three sentences the owner reads on a phone before approving' },
+      packages: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            localId: { type: 'string', description: 'short id in the style of the existing ones, e.g. P4' },
+            title: { type: 'string' },
+            body: { type: 'string', description: 'the specification in Markdown: Scope, Sources, What it delivers, Pages for the visual check' },
+            acceptance: { type: 'array', items: { type: 'string' }, description: 'observable results a black-box test can check, one sentence each' },
+            dependsOn: { type: 'array', items: { type: 'string' }, description: 'local ids of packages it needs' },
+            sensitive: { type: 'boolean' },
+            priority: { type: 'integer' },
+          },
+          required: ['localId', 'title', 'body', 'acceptance', 'dependsOn', 'sensitive', 'priority'],
+        },
+      },
+      questions: { type: 'array', items: { type: 'string' }, description: 'what you need to know (no packages), or what you assumed' },
+    },
+    required: ['summary', 'packages', 'questions'],
   },
 } as const;
 
@@ -99,6 +149,7 @@ export function checkOptions(o: unknown): StoredJobOptions {
     launcher: (r.launcher || undefined) as StoredJobOptions['launcher'],
     taskId: str(r.taskId, 'taskId', TASK_RE),
     role: (r.role || undefined) as StoredJobOptions['role'],
+    bbTask: str(r.bbTask, 'bbTask', TASK_RE),
   };
   for (const k of Object.keys(out) as (keyof StoredJobOptions)[]) if (out[k] === undefined) delete out[k];
   return out;
@@ -165,6 +216,9 @@ export function buildHcRunArgs(raw: unknown, a: { jobId: string; cwd: string; ti
   args.push('--label', `bb.job=${a.jobId}`, '--no-parent', ...(a.program?.length ? a.program : ['claude']));
   if (o.model) args.push('--model', o.model);
   if (o.permissionMode) args.push('--permission-mode', o.permissionMode);
+  // hc has no env option and its terminal may not inherit ours: claude's settings env reaches the session and its hooks
+  const env = jobEnv(o);
+  if (Object.keys(env).length) args.push('--settings', JSON.stringify({ env }));
   for (const d of a.pluginDirs ?? []) args.push('--plugin-dir', d);
   args.push('-n', cleanTitle(a.title));
   // the prompt is a positional argument: a leading dash must not read as a flag

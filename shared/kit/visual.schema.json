@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "summary", "findings"],
+  "properties": {
+    "verdict": { "type": "string", "enum": ["pass", "fail"] },
+    "summary": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["shot", "rule", "severity", "description", "fix"],
+        "properties": {
+          "shot": { "type": "string", "description": "The screenshot's file name, or the address of the page seen in Chrome." },
+          "rule": { "type": "integer", "minimum": 1, "maximum": 6 },
+          "severity": { "type": "string", "enum": ["blocker", "minor"] },
+          "description": { "type": "string", "description": "What is seen." },
+          "fix": { "type": "string", "description": "What must change." }
+        }
+      }
+    }
+  }
+}

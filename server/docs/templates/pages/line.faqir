@@ -1,0 +1,557 @@
+layout "layout.faqir"
+
+block content
+  p
+    | A repository describes its
+    strong line
+    | in one small file,
+    code factory.json
+    | , at the top of its main checkout. The line says how to set the repository up, which commands check a package, where the acceptance tests and screenshots go, and which files a worker may not touch. Everything else (worktrees, QA, the review, the visual check, integration and cleanup) is built into the factory: the
+    strong kit
+    | , which the
+    a(href="/docs/runner") runner
+    | carries.
+  h2#file The file
+  ul
+    li
+      | Everything is optional.
+      code { "commands": { "verify": "npm test" } }
+      | is a working line: G1 runs the tests, G3 reviews the change, G5 integrates it.
+    li
+      | The runner reads the file in the project's
+      strong main checkout
+      | , never in a worker's worktree, so a worker cannot change its own gates. A package that changes the line file does so only through G5 and only with your approval.
+    li
+      | Command lines run through the shell (the platform's by default:
+      code cmd.exe
+      | on Windows,
+      code /bin/sh
+      | elsewhere), in the package's worktree, with
+      a(href="#placeholders") placeholders
+      | filled from checked values only.
+      code commands.cleanup
+      | runs in the main checkout.
+    li
+      | Keys starting with
+      code $
+      | or
+      code //
+      | are comments. The runner reports the resolved line to Buildyboy on every
+      code prepare
+      | and when you press
+      strong Check setup
+      | ; the project's Setup tab shows it, or the error.
+    li
+      | A project's overrides (Setup tab, or an operator's
+      code projects_save
+      | ) win over the file for
+      code limits.workers
+      | ,
+      code limits.rounds
+      | ,
+      code models.*
+      | and
+      code integrate.approval
+      | .
+  h2#keys Every key
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") Key
+          th(data-part="th" scope="col") What it does, and its default
+      tbody(data-part="tbody")
+        tr(data-part="tr")
+          td(data-part="td")
+            code base
+          td(data-part="td")
+            | The branch packages are integrated into. Default:
+            code main
+            | .
+        tr(data-part="tr")
+          td(data-part="td")
+            code branch
+          td(data-part="td")
+            | The package's branch. Must contain an id placeholder. Default:
+            code pkg/{id}
+            | .
+        tr(data-part="tr")
+          td(data-part="td")
+            code worktree
+          td(data-part="td")
+            | The package's worktree, relative to the checkout or absolute. It must be inside the runner's allowed folders. Default:
+            code ../<checkout folder>-wt/{id}
+            | .
+        tr(data-part="tr")
+          td(data-part="td")
+            code shell
+          td(data-part="td")
+            | The argv that runs a command line, for example
+            code ["C:/Program Files/Git/bin/bash.exe", "-c"]
+            | for POSIX commands on Windows. Default: the platform's shell.
+        tr(data-part="tr")
+          td(data-part="td")
+            code commands.setup
+          td(data-part="td")
+            | Runs once the worktree exists: install dependencies, create a database. Default: none.
+        tr(data-part="tr")
+          td(data-part="td")
+            code commands.verify
+          td(data-part="td")
+            | G1: typecheck, lint, tests. Without it G1 is off. Default: none.
+        tr(data-part="tr")
+          td(data-part="td")
+            code commands.acceptance
+          td(data-part="td")
+            | G2: the package's acceptance tests. Without it G2 and QA are off. Default: none.
+        tr(data-part="tr")
+          td(data-part="td")
+            code commands.shots
+          td(data-part="td")
+            | G4: writes screenshots of the package's pages to
+            code paths.shots
+            | . Without it G4 is off. Default: none.
+        tr(data-part="tr")
+          td(data-part="td")
+            code commands.app
+          td(data-part="td")
+            | G4: starts the app for the visual judge, at
+            code app.url
+            | (default
+            code http://localhost:{port}
+            | ); it waits for
+            code app.readyPath
+            | (
+            code /
+            | ) for up to
+            code app.readyTimeoutSec
+            | (180) seconds. Default: none.
+        tr(data-part="tr")
+          td(data-part="td")
+            code commands.cleanup
+          td(data-part="td")
+            | After integration, in the main checkout: drop the package's database. Default: none.
+        tr(data-part="tr")
+          td(data-part="td")
+            code paths.packages
+          td(data-part="td")
+            | The package specs: Markdown with frontmatter (
+            a(href="/docs/planning#spec") Planning
+            | ). Default:
+            code factory/packages
+            | .
+        tr(data-part="tr")
+          td(data-part="td")
+            code paths.acceptance
+          td(data-part="td")
+            | Where QA writes the package's acceptance tests. A worker may not change them. Default:
+            code tests/acceptance/{localId}
+            | .
+        tr(data-part="tr")
+          td(data-part="td")
+            code paths.shots
+          td(data-part="td")
+            | Screenshots for G4; at most 12 are attached to the gate. Default:
+            code test-results/shots/{localId}
+            | .
+        tr(data-part="tr")
+          td(data-part="td")
+            code paths.protected
+          td(data-part="td")
+            | More paths a worker may not change (
+            a(href="#protected") below
+            | ). Default:
+            code []
+            | .
+        tr(data-part="tr")
+          td(data-part="td")
+            code env
+            | ,
+            code envFile
+          td(data-part="td")
+            | Variables for every step and the worker, also written to this file in the worktree and kept out of git. Default:
+            code {}
+            | ,
+            code .env.factory
+            | .
+        tr(data-part="tr")
+          td(data-part="td")
+            code resources
+          td(data-part="td")
+            code ports: [from, to]
+            | ,
+            code dbPrefix
+            | ,
+            code migrations: {from, block}
+            | : what a claim hands each package. Without it, a project migrated from the old per-repo settings keeps those. Default: none.
+        tr(data-part="tr")
+          td(data-part="td")
+            code gates.G1
+            | …
+            code gates.G5
+          td(data-part="td")
+            code enabled
+            | ,
+            code timeoutSec
+            | ,
+            code steps
+            | (argv steps that replace the built-in gate);
+            code G2.qa
+            | (true),
+            code G3.security
+            | (
+            code sensitive
+            | ,
+            code always
+            | or
+            code never
+            | ),
+            code G4.chrome
+            | (false),
+            code G5.push
+            | (true). Default: on when their command exists; G3 and G5 always.
+        tr(data-part="tr")
+          td(data-part="td")
+            code steps.prepare
+            | ,
+            code .qa
+            | ,
+            code .cleanup
+            | ,
+            code .revert
+          td(data-part="td")
+            code steps
+            | (argv steps that replace the built-in step),
+            code timeoutSec
+            | . Default: built in.
+        tr(data-part="tr")
+          td(data-part="td")
+            code models
+          td(data-part="td")
+            | The model per role.
+            code foreman: null
+            | turns the foreman off: every question goes to you. Default:
+            code opus
+            | for worker, qa, review, foreman and planner;
+            code sonnet
+            | for visual.
+        tr(data-part="tr")
+          td(data-part="td")
+            code worker
+          td(data-part="td")
+            | How a worker starts: in a herdr terminal (
+            code hc
+            | ) or as a headless
+            code claude -p
+            | job (
+            code claude
+            | ). Default:
+            code launcher: hc
+            | ,
+            code permissionMode: auto
+            | ,
+            code limitHours: 10
+            | ,
+            code subagents: 4
+            | ,
+            code chrome: false
+            | .
+        tr(data-part="tr")
+          td(data-part="td")
+            code limits
+          td(data-part="td")
+            | How many packages of this project are in flight at once;
+            code rounds
+            | overrides the gate round limit. Default:
+            code workers: 2
+            | .
+        tr(data-part="tr")
+          td(data-part="td")
+            code integrate.approval
+          td(data-part="td")
+            | When to ask you before G5:
+            code never
+            | ,
+            code sensitive
+            | (packages flagged sensitive) or
+            code always
+            | . Default:
+            code sensitive
+            | .
+        tr(data-part="tr")
+          td(data-part="td")
+            code context
+          td(data-part="td")
+            | Files every role reads first. Default:
+            code ["CLAUDE.md"]
+            | .
+        tr(data-part="tr")
+          td(data-part="td")
+            code timeoutSec
+          td(data-part="td")
+            | The default timeout of every argv step (a §11.7 recipe's key). Default: none.
+  h2#gates Which gates run
+  dl
+    dt
+      | G1 · build and tests
+    dd
+      | Runs
+      code commands.verify
+      | . The summary keeps the last result lines and the first error lines.
+    dt
+      | G2 · acceptance
+    dd
+      | Fails if the package's acceptance folder differs from what QA committed, or if the branch touched other packages' acceptance tests; then runs
+      code commands.acceptance
+      | . A
+      code MANUAL.md
+      | there is named in the summary: checks for you to do by hand.
+    dt
+      | QA, before the build
+    dd
+      | When G2 is on and
+      code G2.qa
+      | is true, a
+      code claude -p
+      | session writes one black-box test per acceptance criterion in
+      code paths.acceptance
+      | , before any code exists, commits them and tags the commit. It follows
+      code factory/qa.md
+      | if the repository has one.
+    dt
+      | G3 · review
+    dd
+      | Always on. A read-only
+      code claude -p
+      | reviewer judges the diff against the package's spec, the context files and
+      code factory/review.md
+      | ; a second pass looks only at security when
+      code G3.security
+      | asks for it (by default for packages flagged sensitive). Any blocker or major fails it. From round 2 it checks the earlier findings first.
+    dt
+      | G4 · visual
+    dd
+      | Runs
+      code commands.shots
+      | , starts
+      code commands.app
+      | , and a
+      code claude -p
+      | judge reads the screenshots (and the live app in Chrome when
+      code G4.chrome
+      | is true) against
+      code factory/visual.md
+      | . Skipped when the package produced no screenshots.
+    dt
+      | G5 · integration
+    dd
+      | Always on. Merges
+      code origin/<base>
+      | into the branch (a conflict fails with the files), runs G1 and G2 again on the result, then fast-forwards
+      code <base>
+      | in the main checkout and pushes. It stops for your approval when protected paths changed, or when
+      code integrate.approval
+      | says so.
+  p
+    | Set
+    code "enabled": false
+    | on a gate to turn it off;
+    code "enabled": true
+    | without its command is an error. A gate's argv
+    code steps
+    | replace the built-in, with the contract of the old recipes (
+    a(href="#legacy") below
+    | ).
+  h2#protected What a worker may not change
+  p
+    code factory.json
+    | itself and every package's acceptance folder are always protected.
+    code paths.protected
+    | adds more: a folder (
+    code .github/workflows/
+    | ), a file (
+    code deploy/prod.env.example
+    | ) or a pattern (
+    code db/migrations/0*.sql
+    | , where
+    code *
+    | matches within one folder and
+    code **
+    | across folders). Three things enforce it:
+  ul
+    li
+      | the worker's brief tells it so;
+    li
+      | the plugin's
+      a(href="/docs/skills#guard") guard
+      | refuses a worker's edits to those paths while it works;
+    li
+      | G2 fails when acceptance tests changed, and G5 stops with
+      strong needs approval
+      | when the branch changed a protected path: it integrates only once you agree.
+  h2#placeholders Placeholders
+  p
+    | Commands, paths,
+    code env
+    | values, the branch and the worktree may use these. Values that are not plain are quoted for the line's shell.
+  div(data-ui="table")
+    table(data-part="table")
+      thead(data-part="thead")
+        tr(data-part="tr")
+          th(data-part="th" scope="col") Placeholder
+          th(data-part="th" scope="col") Value for package SH-P1 of project shop-api
+      tbody(data-part="tbody")
+        tr(data-part="tr")
+          td(data-part="td")
+            code {id}
+            | ,
+            code {idLower}
+          td(data-part="td")
+            code SH-P1
+            | ,
+            code sh-p1
+        tr(data-part="tr")
+          td(data-part="td")
+            code {localId}
+            | ,
+            code {localIdLower}
+          td(data-part="td")
+            code P1
+            | ,
+            code p1
+            | : the id without the project's prefix
+        tr(data-part="tr")
+          td(data-part="td")
+            code {project}
+          td(data-part="td")
+            code shop-api
+        tr(data-part="tr")
+          td(data-part="td")
+            code {round}
+          td(data-part="td")
+            | the current gate round,
+            code 1
+            | ,
+            code 2
+            | …
+        tr(data-part="tr")
+          td(data-part="td")
+            code {port}
+            | ,
+            code {db}
+          td(data-part="td")
+            | the port and database name the claim allocated (empty without
+            code resources
+            | )
+        tr(data-part="tr")
+          td(data-part="td")
+            code {worktree}
+            | ,
+            code {branch}
+          td(data-part="td")
+            | the worktree's absolute path and the branch
+  h2#examples Three examples
+  h3#library A library with only tests
+  pre
+    code
+      | {
+      |   "commands": {
+      |     "setup": "npm ci",
+      |     "verify": "npm run typecheck && npm test"
+      |   }
+      | }
+  p
+    | G1 runs the tests, G3 reviews every change, G5 merges into
+    code main
+    | and pushes. There are no acceptance tests (G2 and QA are off) and no screenshots (G4 is off). Adding
+    code commands.acceptance
+    | later switches on QA and G2, the factory's strongest check: tests written from the criteria before the code, that the worker cannot change.
+  h3#web-app A web app with acceptance tests and screenshots
+  pre
+    code
+      | {
+      |   "commands": {
+      |     "setup": "pnpm install --frozen-lockfile && pnpm db:create {db}",
+      |     "verify": "pnpm typecheck && pnpm lint && pnpm test",
+      |     "acceptance": "pnpm exec playwright test tests/acceptance/{localId}",
+      |     "shots": "pnpm shots {localId}",
+      |     "app": "pnpm dev --port {port}",
+      |     "cleanup": "pnpm db:drop {db}"
+      |   },
+      |   "app": { "url": "http://localhost:{port}", "readyPath": "/health" },
+      |   "env": { "PORT": "{port}", "DATABASE_URL": "postgres://localhost:5432/{db}" },
+      |   "resources": { "ports": [4100, 4199], "dbPrefix": "shop_", "migrations": { "from": 100, "block": 10 } },
+      |   "paths": { "protected": [".github/workflows/", "db/migrations/0*.sql"] },
+      |   "gates": { "G4": { "chrome": true } },
+      |   "integrate": { "approval": "always" },
+      |   "limits": { "workers": 3 },
+      |   "context": ["CLAUDE.md", "docs/architecture.md"]
+      | }
+  p
+    | Every gate runs. Each package gets its own port from 4100–4199, its own database
+    code shop_<id>
+    | and ten migration numbers, so three packages build side by side without stepping on each other.
+    code pnpm shots P1
+    | must write the package's pages to
+    code test-results/shots/P1
+    | (the default
+    code paths.shots
+    | ). The visual judge also opens the running app in Chrome. Nothing is integrated without your yes.
+  h3#legacy A legacy recipe
+  pre
+    code
+      | {
+      |   "timeoutSec": 1800,
+      |   "gates": {
+      |     "G1": { "steps": [{ "name": "verify", "argv": ["bash", "{recipeDir}/scripts/g1.sh", "{id}", "{round}"] }] },
+      |     "G2": { "steps": [{ "name": "acceptance", "argv": ["bash", "{recipeDir}/scripts/g2.sh", "{id}", "{port}"] }] },
+      |     "G3": { "steps": [{ "name": "review", "argv": ["bash", "{recipeDir}/scripts/g3.sh", "{id}", "{args}"] }] }
+      |   }
+      | }
+  p
+    | A file with argv
+    code steps
+    | and no
+    code commands
+    | is a recipe of the earlier factory: a project migrated from the old per-repo settings points at one (for example
+    code fabrica/porti/porti.json
+    | ). It runs exactly as before: only its argv steps, in the main checkout, without a shell; a gate without steps answers "recipe has no G4"; the kit's
+    code prepare
+    | ,
+    code qa
+    | and
+    code cleanup
+    | are off, so a coordinator prepares worktrees itself: keep the autopilot off for such a project. Each step exits 0 for pass (or skip), 1 for fail, anything else for an error, and prints a last line of JSON:
+    code {"verdict", "summary", "details", "findings", "shots"}
+    | . The placeholders
+    code {recipeDir}
+    | and
+    code {args}
+    | exist only here. Add
+    code commands
+    | to move such a repository onto the kit; argv
+    code steps
+    | can stay to override single gates.
+  h2#check Checking a line
+  ul
+    li
+      | On any machine with a Buildyboy checkout:
+      code node cli/bb.ts line check <repo>
+      | (
+      code --file
+      | for another line file,
+      code --id
+      | for a sample package id,
+      code --json
+      | for the whole resolved line). It reads only and runs nothing: it prints the gates that run, every command filled in for a sample package, the worktree and the paths, or every error with exit code 1.
+    li
+      code node cli/bb.ts doctor
+      | , run in the repository, says whether its
+      code factory.json
+      | is valid.
+    li
+      | On the project's
+      strong Setup
+      | tab,
+      strong Check setup
+      | asks the project's runner to read and validate the line where it really runs; the result, or the error, stays on the page.

@@ -15,9 +15,18 @@ runs from a prompt composer built on [`harness-prompt.md`](harness-prompt.md).
   paired machine through the runner.
 - **Insights**: cost and tokens over time, most-used tools, most-failed commands, wait time, job success rates, full-text
   search and `bb import` to backfill months of history.
-- **MCP for agents**: the factory's 25 tools (backlog, governor, gates, findings, decisions, digest, and, when you allow
-  it, launching workers and coordinators) for any MCP client, over Streamable HTTP at `https://<host>/mcp` or over stdio
-  with `bb mcp`, authenticated with a revocable agent token.
+- **The factory**: put any repo on it with one small file, `factory.json` (its **line**: how to set up, verify, run
+  acceptance tests and take screenshots). Each **project** owns its packages, ids and archive. The **kit** in the runner
+  does the rest: worktrees, QA that writes acceptance tests before the code, gates G1–G5 (tests, acceptance, review,
+  visual check, merge), integration and cleanup. With **autopilot** on, a deterministic conductor in the server moves
+  packages along the line and calls an LLM foreman only when judgment is needed; a **planner** turns a goal into packages
+  you approve from the phone.
+- **MCP for agents**: the factory's 38 tools (projects, backlog, governor, steps and gates, findings, decisions, digest,
+  planning, the status in one call, operator tools that act for you, and, when you allow it, launching workers and
+  coordinators) for any MCP client, over Streamable HTTP at `https://<host>/mcp` or over stdio with `bb mcp`,
+  authenticated with a revocable agent token.
+- **Plugin skills**: `/buildyboy:factory-init`, `factory-plan`, `factory-foreman` and `factory-status` in Claude Code,
+  and a guard that keeps factory workers out of their acceptance tests and protected files.
 
 **The user manual** is built in: open **Docs** in the app, or `/docs` on your server. It is rendered on the server
 with [Faqir UI](https://www.npmjs.com/package/@faqir-ui/template) from the templates in `server/docs/templates`; notes
@@ -94,10 +103,13 @@ blocked or changed, events spool to `~/.buildyboy/spool.jsonl` and are sent late
 server/   main.ts, app.ts, db.ts, migrations/, routes/, ingest/, control/, push/, github/, jobs/, watchers.ts,
           docs/ (the /docs manual: catalog.ts, engine.ts, templates/*.faqir, assets/)
 web/      Vite + React 19 + Tailwind v4 + TanStack Query + React Flow (src/pages, src/components/…)
-shared/   types.ts (events + API), harness.ts (template parser/renderer/linter), redact.ts, diff.ts
-plugin/   .claude-plugin/plugin.json, hooks/hooks.json, hooks/bb-hook.mjs, hooks/bb-cli.mjs, commands/, statusline/
-runner/   bb runner daemon (spawns claude -p in allow-listed directories)
-cli/      bb.ts — bb server | runner | pair | set-password | token | import | backup | doctor
+shared/   types.ts (events + API), harness.ts (template parser/renderer/linter), redact.ts, diff.ts,
+          factory.ts (the MCP tools), line.ts (factory.json), kit/ (the prompts of QA, review, visual, worker, foreman, planner)
+plugin/   .claude-plugin/plugin.json, hooks/hooks.json, hooks/bb-hook.mjs, hooks/bb-guard.mjs, hooks/bb-cli.mjs,
+          skills/<name>/SKILL.md (factory-init, factory-plan, factory-foreman, factory-status), commands/, statusline/
+runner/   bb runner daemon (spawns claude -p and herdr terminals in allow-listed directories), kit/ (the built-in steps:
+          prepare, qa, G1–G5, cleanup, revert)
+cli/      bb.ts — bb server | runner | pair | set-password | token | import | backup | doctor | mcp | tasks | line
 deploy/   deploy-wsl.sh, update.sh, backup.sh, systemd + Caddy templates, install.sh, install.ps1
 fixtures/ synthetic scenario, fake claude + stream-json (never copied from real sessions)
 scripts/  simulate.ts, smoke-claude.ts, dev.ts
@@ -208,6 +220,34 @@ manual's Connecting agents page; every tool is also `POST /api/agent/<tool>`.
 **Removing a machine.** Run the installer with `--uninstall` (`$env:BB_UNINSTALL='1'`), then revoke the machine on the
 Machines page.
 
+## Put a repo on the factory
+
+Once a machine is paired and its runner allows the repo's folder (and the folder next to it, where package worktrees go):
+
+1. In Claude Code, in the repo's main checkout, run **`/buildyboy:factory-init`**. It reads the repo (scripts, tests,
+   CI, how the app starts), proposes a `factory.json` with only what differs from the defaults, checks it with
+   `node <buildyboy>/cli/bb.ts line check`, scaffolds `factory/packages/` and a package template, and registers the
+   project (or gives you a prefilled link to **Projects → New project**). The smallest working line:
+
+   ```json
+   { "commands": { "setup": "npm ci", "verify": "npm test" } }
+   ```
+
+   Add `commands.acceptance` (QA writes black-box tests before the code, gate G2 runs them untouched),
+   `commands.shots` and `commands.app` (gate G4, a visual check), `resources` (a port, a database and a block of
+   migration numbers per package). Commit the file.
+2. Plan: **`/buildyboy:factory-plan <goal or spec>`** writes package files and imports them with
+   `bb tasks import factory/packages --project <key>`, or press **Plan new work** on the project page.
+3. Turn **Autopilot** on for the project. The conductor claims ready packages, prepares worktrees, runs QA, starts the
+   workers, runs the gates, integrates and cleans up; it asks you on the phone only when it must (an integration to
+   approve, a package that needs attention, a question the foreman cannot settle). Without autopilot,
+   `/buildyboy:factory-foreman <key>` drives the same steps from a Claude Code session.
+4. Optional: an **operator** bot. Make an agent token an operator (Settings → Factory → Agent tokens) and connect a bot
+   with it: it reads `factory_status`, answers the decisions you would answer, pauses projects or switches autopilot,
+   and every action is audited and listed in the digest. `/buildyboy:factory-status` gives the same picture in Claude Code.
+
+The manual's **The factory** section (`/docs/projects`, `/docs/line`, `/docs/autopilot`) has the details.
+
 ## Go for a walk in 10 minutes
 
 1. **Deploy** (2 min): in WSL, `deploy/deploy-wsl.sh --dry-run`, read it, then `deploy/deploy-wsl.sh`. Open the printed setup
@@ -239,8 +279,14 @@ the server is back.
 - Machines use their own bearer tokens (stored hashed), get them through single-use pairing codes, and can only ingest and
   answer their own sessions' hooks. Rotate or revoke them on the Machines page.
 - Agents use agent tokens (`bba_…`, stored hashed, revocable in Settings → Factory) that reach only the factory's tools
-  (`/mcp`, `/api/agent/*`) and the usage/governor reads.
+  (`/mcp`, `/api/agent/*`) and the usage/governor reads. Launching, acting as an **operator** (answering decisions,
+  stop/revert, changing projects) and answering the **Inbox** are separate switches per token, all off by default; operator
+  actions are audited as `agent:<name>` and listed in the digest. Only the owner or an operator may set a project's
+  machine, checkout and line file, because they decide what the runner executes.
 - Secrets are masked before anything is stored (API keys, GitHub tokens, AWS keys, JWTs, `Bearer …`, `password=…`, and the
   content of `.env*` files read by Claude). Add your own rules in Settings.
-- The server never runs Claude or shell commands. The runner only runs `claude` with a validated argument list inside its
-  allowed roots, plus a job's Done-when verify commands after you confirm them in the UI.
+- The server never runs Claude or shell commands and never reads your repositories. The runner only runs `claude` and
+  `hc` with validated argument lists inside its allowed roots, a job's Done-when verify commands after you confirm them in
+  the UI, and the commands of a project's `factory.json` read from its trusted main checkout (never from a worker's
+  worktree), plus the kit's built-in steps. The plugin's guard keeps workers out of acceptance tests and protected paths
+  as defence in depth; gates G2 and G5 are what decide.

@@ -4,12 +4,18 @@ import { STATUS_LABEL, type TaskStatus, type TaskSummary } from '../../../../sha
 import { api } from '../../lib/api.ts';
 import { Button, Card, Toggle } from '../ui.tsx';
 import { Field, inputClass } from '../settings/bits.tsx';
+import { ProjectPicker, useFactoryProjects } from './projects.tsx';
 
 const START_STATUSES: TaskStatus[] = ['backlog', 'gata'];
 
-/** Creates one package. Works on the phone: one column, 44px controls, dependencies picked from a filtered checklist. */
-export function NewTaskForm({ onDone }: { onDone: (id: string) => void }) {
+/**
+ * Creates one package, in `project` by default (the backlog's switcher). Works on the phone: one column, 44px
+ * controls, dependencies picked from a filtered checklist.
+ */
+export function NewTaskForm({ onDone, project: initialProject = '' }: { onDone: (id: string) => void; project?: string }) {
   const qc = useQueryClient();
+  const [project, setProject] = useState(initialProject);
+  const prefix = useFactoryProjects().data?.find((p) => p.key === project)?.idPrefix ?? '';
   const [title, setTitle] = useState('');
   const [id, setId] = useState('');
   const [body, setBody] = useState('');
@@ -24,6 +30,7 @@ export function NewTaskForm({ onDone }: { onDone: (id: string) => void }) {
   const create = useMutation({
     mutationFn: () =>
       api.post<TaskSummary>('/api/tasks', {
+        ...(project ? { project } : {}),
         ...(id.trim() ? { id: id.trim() } : {}),
         title: title.trim(),
         body: body.trim() || undefined,
@@ -57,7 +64,12 @@ export function NewTaskForm({ onDone }: { onDone: (id: string) => void }) {
           <Field label="Title" htmlFor="nt-title">
             <input id="nt-title" required value={title} onChange={(e) => setTitle(e.target.value)} className={inputClass} data-testid="nt-title" maxLength={200} />
           </Field>
-          <Field label="Id (optional)" htmlFor="nt-id" hint="Letters, digits, dot, dash. Empty picks the next T number.">
+          <ProjectPicker id="nt-project" value={project} onChange={setProject} />
+          <Field
+            label="Id (optional)"
+            htmlFor="nt-id"
+            hint={prefix ? `Letters, digits, dot, dash; it gets the prefix ${prefix}. Empty picks the next ${prefix} number.` : 'Letters, digits, dot, dash. Empty picks the next T number.'}
+          >
             <input id="nt-id" value={id} onChange={(e) => setId(e.target.value)} className={`${inputClass} font-mono`} data-testid="nt-id" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
           </Field>
           <Field label="Description" htmlFor="nt-body">

@@ -14,8 +14,13 @@ import { ackControls, claimTask, controls, createTask, FactoryError, getTask, li
 import { askDecision, getDecision } from './decisions.ts';
 import { sendDigest } from './digest.ts';
 import { listFindings, updateFindings } from './findings.ts';
-import { gateRunStatus, startGateRun } from './gateruns.ts';
+import { gateRunStatus, startGateRun, startStepRun } from './gateruns.ts';
 import { agentLaunch, listMachines } from './launch.ts';
+import { getProject, listProjects } from './projects.ts';
+import { requestPlan } from './plan.ts';
+import {
+  factoryStatus, hasScope, listOperatorDecisions, requireScope, operatorAnswer, operatorControl, operatorInbox, operatorInboxAnswer, operatorSaveProject, operatorSetProject,
+} from './operator.ts';
 
 export function createAgentToken(ctx: Ctx, name: string): { id: string; token: string } {
   const id = randomUUID();
@@ -26,43 +31,70 @@ export function createAgentToken(ctx: Ctx, name: string): { id: string; token: s
 
 export function listAgentTokens(ctx: Ctx): AgentTokenView[] {
   return ctx.db
-    .all<{ id: string; name: string; created_at: number; last_used_at: number | null; revoked_at: number | null; launch: string; launch_approval: number }>(
+    .all<{ id: string; name: string; created_at: number; last_used_at: number | null; revoked_at: number | null; launch: string; launch_approval: number; operator: number; inbox: number }>(
       'SELECT * FROM agent_tokens ORDER BY created_at DESC',
     )
     .map((r) => ({
       id: r.id, name: r.name, createdAt: r.created_at, lastUsedAt: r.last_used_at, revokedAt: r.revoked_at,
       launch: (LAUNCH_SCOPES as readonly string[]).includes(r.launch) ? (r.launch as LaunchScope) : 'off', launchApproval: r.launch_approval !== 0,
+      operator: r.operator === 1, inbox: r.inbox === 1,
     }));
 }
 
-/** Settings → Factory → Agent tokens: what a token may launch, and whether each launch waits for the owner's approval. */
-export function setTokenLaunch(ctx: Ctx, id: string, p: { launch?: LaunchScope; launchApproval?: boolean }): AgentTokenView | null {
+export interface TokenScopes {
+  launch?: LaunchScope;
+  launchApproval?: boolean;
+  operator?: boolean;
+  inbox?: boolean;
+}
+
+/**
+ * Settings → Factory → Agent tokens: what a token may launch, whether each launch waits for the owner's approval, and
+ * whether it acts for the owner (operator) or answers the Inbox (inbox), §12.7.
+ */
+export function setTokenLaunch(ctx: Ctx, id: string, p: TokenScopes): AgentTokenView | null {
   const sets: string[] = [];
   const args: (string | number)[] = [];
-  if (p.launch !== undefined) {
-    sets.push('launch = ?');
-    args.push(p.launch);
-  }
-  if (p.launchApproval !== undefined) {
-    sets.push('launch_approval = ?');
-    args.push(p.launchApproval ? 1 : 0);
-  }
+  const col = (name: string, v: string | number | undefined) => {
+    if (v === undefined) return;
+    sets.push(`${name} = ?`);
+    args.push(v);
+  };
+  const bit = (v: boolean | undefined) => (v === undefined ? undefined : v ? 1 : 0);
+  col('launch', p.launch);
+  col('launch_approval', bit(p.launchApproval));
+  col('operator', bit(p.operator));
+  col('inbox', bit(p.inbox));
   if (sets.length && !ctx.db.run(`UPDATE agent_tokens SET ${sets.join(', ')} WHERE id = ? AND revoked_at IS NULL`, ...args, id).changes) return null;
   return listAgentTokens(ctx).find((t) => t.id === id && !t.revokedAt) ?? null;
 }
+export const setTokenScopes = setTokenLaunch;
 
 export function revokeAgentToken(ctx: Ctx, id: string): boolean {
   return ctx.db.run('UPDATE agent_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL', Date.now(), id).changes > 0;
 }
 
-export function agentFromToken(ctx: Ctx, auth: string | undefined): { id: string; name: string } | null {
+export interface AgentIdentity {
+  id: string;
+  name: string;
+  /** §12.7 scopes, read with the token */
+  operator: boolean;
+  inbox: boolean;
+}
+
+export function agentFromToken(ctx: Ctx, auth: string | undefined): AgentIdentity | null {
   const m = /^Bearer\s+(bba_\S+)$/i.exec(auth ?? '');
   if (!m) return null;
-  const row = ctx.db.get<{ id: string; name: string; revoked_at: number | null; last_used_at: number | null }>('SELECT id, name, revoked_at, last_used_at FROM agent_tokens WHERE token_hash = ?', sha256(m[1]));
+  const row = ctx.db.get<{ id: string; name: string; revoked_at: number | null; last_used_at: number | null; operator: number; inbox: number }>(
+    'SELECT id, name, revoked_at, last_used_at, operator, inbox FROM agent_tokens WHERE token_hash = ?', sha256(m[1]),
+  );
   if (!row || row.revoked_at) return null;
   if (!row.last_used_at || Date.now() - row.last_used_at > 30_000) ctx.db.run('UPDATE agent_tokens SET last_used_at = ? WHERE id = ?', Date.now(), row.id);
-  return { id: row.id, name: row.name };
+  return { id: row.id, name: row.name, operator: row.operator === 1, inbox: row.inbox === 1 };
 }
+
+/** The Caller of an authenticated agent: what the handlers check (launch scope, operator, inbox, self-answers). */
+export const callerOf = (a: AgentIdentity): Caller => ({ tokenId: a.id, operator: a.operator, inbox: a.inbox });
 
 export function requireAgent(ctx: Ctx): MiddlewareHandler {
   return async (c, next) => {
@@ -73,9 +105,19 @@ export function requireAgent(ctx: Ctx): MiddlewareHandler {
   };
 }
 
-/** Who calls: the agent token's id (its launch permission lives there), null when there is none. */
+/**
+ * Who calls: the agent token's id (its launch permission lives there; it also tells a token's own decisions apart),
+ * null when there is none, and its §12.7 scopes. A caller built without the scopes has them read from the token.
+ */
 export interface Caller {
   tokenId: string | null;
+  operator?: boolean;
+  inbox?: boolean;
+}
+
+/** An operator token acts for the owner (§12.7, `agent_tokens.operator`, off by default). */
+export function isOperator(ctx: Ctx, tokenId: string | null): boolean {
+  return !!tokenId && !!ctx.db.get('SELECT 1 FROM agent_tokens WHERE id = ? AND operator = 1 AND revoked_at IS NULL', tokenId);
 }
 
 type Handler<T extends ToolName> = (ctx: Ctx, args: ToolArgs<T>, actor: string, caller: Caller) => unknown;
@@ -96,11 +138,19 @@ export const HANDLERS: { [K in ToolName]: Handler<K> } = {
     if (!s) throw new FactoryError(404, `unknown session ${a.id}`);
     return s;
   },
-  tasks_list: (ctx, a) => listTasks(ctx, { status: a.status, ready: a.ready, limit: a.limit }),
+  tasks_list: (ctx, a) => listTasks(ctx, { status: a.status, ready: a.ready, limit: a.limit, project: a.project, archived: a.archived }),
   tasks_get: (ctx, a) => getTask(ctx, a.id),
   tasks_create: (ctx, a, actor) => createTask(ctx, { ...a, source: 'agent' }, actor),
   tasks_claim: (ctx, a, actor) => claimTask(ctx, a, actor),
-  tasks_update: (ctx, a, actor) => updateTask(ctx, a, actor),
+  tasks_update: (ctx, a, actor, caller) => {
+    // archiving is the owner's, or an operator's (§12.2, §12.7)
+    if (a.archived !== undefined && !hasScope(ctx, caller, 'operator')) {
+      throw new FactoryError(403, 'only the owner or an operator token may archive packages: the owner turns on “Operator” for this token in Settings → Factory → Agent tokens');
+    }
+    return updateTask(ctx, a, actor);
+  },
+  projects_list: (ctx, a) => listProjects(ctx, { state: a.state }),
+  projects_get: (ctx, a) => getProject(ctx, a.key),
   prompts_render: (ctx, a) => {
     const { row, parsed } = templateFor(promptStore(ctx), a);
     return { templateId: row.id, template: row.name, rendered: renderTemplate(parsed, a.slots, a.extraMd), warnings: lintPrompt(parsed, a.slots) };
@@ -133,9 +183,13 @@ export const HANDLERS: { [K in ToolName]: Handler<K> } = {
     return { runId: id, status, round, machineId, sent, ...(sent ? {} : { note: 'the runner is not connected; the run starts when gates_status finds it back' }) };
   },
   gates_status: (ctx, a) => gateRunStatus(ctx, a.runId),
+  steps_run: (ctx, a, actor) => {
+    const { id, status, round, machineId, sent } = startStepRun(ctx, { taskId: a.taskId, step: a.step, args: a.args }, actor);
+    return { runId: id, step: a.step, status, round, machineId, sent, ...(sent ? {} : { note: 'the runner is not connected; the run starts when gates_status finds it back' }) };
+  },
   findings_list: (ctx, a) => listFindings(ctx, a),
   findings_update: (ctx, a, actor) => updateFindings(ctx, a.ids, a.status, a.note?.trim() || null, actor),
-  decision_ask: (ctx, a, actor) => askDecision(ctx, a, actor),
+  decision_ask: (ctx, a, actor, caller) => askDecision(ctx, a, actor, caller.tokenId),
   decision_get: (ctx, a) => {
     const d = getDecision(ctx, a.id);
     if (!d) throw new FactoryError(404, `unknown decision ${a.id}`);
@@ -152,6 +206,20 @@ export const HANDLERS: { [K in ToolName]: Handler<K> } = {
     const ids = new Set(open.map((r) => r.id));
     return { requests: controls(ctx, { taskId: a.taskId, all: true }).filter((r) => ids.has(r.id)), acked: true };
   },
+  // operators (§12.7, server/factory/operator.ts)
+  factory_status: (ctx, a, actor, caller) => factoryStatus(ctx, a, actor, caller),
+  decisions_list: (ctx, a, actor, caller) => listOperatorDecisions(ctx, a, actor, caller),
+  decision_answer: (ctx, a, actor, caller) => operatorAnswer(ctx, a.id, a.answer, actor, caller),
+  decision_cancel: (ctx, a, actor, caller) => operatorAnswer(ctx, a.id, null, actor, caller),
+  control_request: (ctx, a, actor, caller) => operatorControl(ctx, a, actor, caller),
+  projects_save: (ctx, a, actor, caller) => operatorSaveProject(ctx, a, actor, caller),
+  projects_set: (ctx, a, actor, caller) => operatorSetProject(ctx, a, actor, caller),
+  plan_request: (ctx, a, actor, caller) => {
+    requireScope(ctx, caller, 'operator', 'request plans');
+    return requestPlan(ctx, a, actor);
+  },
+  inbox_list: (ctx, a, _actor, caller) => operatorInbox(ctx, a, caller),
+  inbox_answer: (ctx, a, actor, caller) => operatorInboxAnswer(ctx, a, actor, caller),
   docs_get: (ctx, a) => {
     if (a.tool && !TOOL_NAMES.includes(a.tool as ToolName)) throw new FactoryError(400, `unknown tool ${a.tool}; the tools are ${TOOL_NAMES.join(', ')}`);
     return agentGuide({ url: ctx.config.publicUrl }, a.topic ?? 'start', a.tool);

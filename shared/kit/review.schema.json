@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "summary", "findings"],
+  "properties": {
+    "verdict": { "type": "string", "enum": ["pass", "fail"] },
+    "summary": { "type": "string", "description": "Two or three sentences: what the diff does and the conclusion." },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "category", "file", "description", "fix"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["blocker", "major", "minor"] },
+          "category": { "type": "string", "enum": ["correctness", "security", "spec", "rules", "tests", "factory"] },
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "description": { "type": "string", "description": "What concretely happens." },
+          "fix": { "type": "string", "description": "The result to reach." }
+        }
+      }
+    }
+  }
+}

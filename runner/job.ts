@@ -6,7 +6,7 @@ import type { Api } from './api.ts';
 import { eventSender } from './api.ts';
 import type { Exe } from './claude.ts';
 import type { RunnerConfig } from './config.ts';
-import type { StoredJobOptions } from './options.ts';
+import { jobEnv, type StoredJobOptions } from './options.ts';
 import { killTree } from './proc.ts';
 
 const WIN = process.platform === 'win32';
@@ -64,7 +64,7 @@ export function startJob(
   let killTimer: NodeJS.Timeout | null = null;
   let stderrTail = '';
 
-  const env: NodeJS.ProcessEnv = { ...process.env, BUILDYBOY_JOB_ID: job.id };
+  const env: NodeJS.ProcessEnv = { ...process.env, BUILDYBOY_JOB_ID: job.id, ...jobEnv(opts) };
   delete env.CLAUDECODE;
   delete env.CLAUDE_CODE_ENTRYPOINT;
   delete env.BUILDYBOY_TOKEN;

@@ -5,8 +5,8 @@ block content
     | Buildyboy speaks the
     strong Model Context Protocol
     | (MCP). Any agent that can use MCP tools (Claude Code, Claude Desktop, Cursor, VS Code, Codex, or your own) can read
-    | and drive the factory: the backlog, the governor, the gates, findings, decisions and the digest. This page connects
-    | one, explains the two ways to do it, and gives the loop a coordinator should run. The
+    | and drive the factory: projects, the backlog, the governor, the gates, findings, decisions and the digest. This page
+    | connects one, explains the two ways to do it, and gives the loop an agent should run. The
     a(href="/docs/mcp-tools") tool reference
     | and the
     a(href="/docs/api") HTTP API reference
@@ -222,9 +222,33 @@ block content
       strong Everything else
       | is identical: the same tools, descriptions, arguments, answers and refusals.
 
-  h2#loop The coordinator's loop
+  h2#loop The loop an agent runs
   p
-    | The server sends every client a short version of this when it connects. A coordinator runs it again and again:
+    | What an agent does depends on whether the project is on
+    a(href="/docs/autopilot") autopilot
+    | . The server sends every client a short version of this when it connects.
+  h3#loop-autopilot Autopilot on: watch
+  p
+    | The conductor in the server moves the packages, so an agent does not coordinate. It watches, and acts for you only
+    | if you made its key an
+    a(href="/docs/operators") operator
+    | :
+  ol
+    li
+      code factory_status
+      | : the governor, alerts, each project's autopilot state, the packages on the line and everything that waits for
+      | you, in one small answer.
+    li
+      | Answer what waits (
+      code decision_answer
+      | , an operator only), adjust the project (
+      code projects_set
+      | ), then come back later. An agent never answers a question it asked itself, or a launch approval.
+  h3#loop-by-hand Autopilot off: coordinate by hand
+  p
+    | A coordinator runs these again and again, with the kit's steps on the runner. The
+    a(href="/docs/coordinator#by-hand") coordinator page
+    | has the details.
   ol
     li
       code governor_get
@@ -239,39 +263,51 @@ block content
       code ack: true
       | .
     li
+      code tasks_claim
+      | with
+      code project
+      | (or
       code tasks_list
       | with
       code ready: true
-      | , then
-      code tasks_claim
-      | : the package becomes În lucru and gets its port, database and migration range.
+      | first): the package becomes În lucru and gets its port, database and migration range.
     li
-      code prompts_render
-      | ,
-      code prompts_lint
-      | and
-      code prompts_save
-      | : the worker's prompt, kept with the package.
+      code steps_run
+      | with
+      code prepare
+      | (the worktree, the branch and the
+      code .factory/
+      | folder), then with
+      code qa
+      | if the line has acceptance tests. Poll
+      code gates_status
+      | after each.
     li
       | Start the worker with
+      code tasks_launch
+      | , or yourself with
       code BB_TASK
       | and
       code BB_ROLE=lucrator
-      | set, and record its branch and terminal with
-      code tasks_update
-      | .
+      | set. It ends its work with a
+      code FACTORY-STATUS
+      | line.
     li
-      | When it is done:
+      | When it says done:
       code tasks_update
       | to La porți, then each gate with
       code gates_run
       | and
       code gates_status
-      | (recipe gates on the runner) or
+      | (or
       code gates_record
-      | (a check the agent ran itself). On a failure, hand the open findings back to the worker and go again.
+      | for a check the agent ran itself). On a failure, hand the open findings back to the worker and go again.
     li
-      | All gates pass: merge, move it to Integrată with the migrations it used, and run the cleanup lines it returns.
+      | All gates pass: move the package to Integrată with the migrations it used, then
+      code steps_run
+      | with
+      code cleanup
+      | .
     li
       | Only you can decide something:
       code decision_ask
@@ -295,11 +331,19 @@ block content
     a(href="/docs/backlog") backlog page
     | explains them, and the
     a(href="/docs/coordinator") coordinator page
-    | covers the governor, rounds and herdr terminals.
+    | covers the governor, rounds and herdr terminals. In Claude Code the plugin packages both loops as skills:
+    a(href="/docs/skills") Skills and the guard
+    | .
 
   h2#security Keeping it safe
   ul
-    li An agent key can create and change packages, record gate results and ask you questions. It cannot see your settings, approve tool calls, start jobs or read session transcripts beyond what the session tools show.
+    li
+      | An agent key can create and change packages, run steps and gates on a project's runner, record gate results and
+      | ask you questions. It cannot see your settings, approve tool calls, start jobs or read session transcripts beyond
+      | what the session tools show. Acting for you (answering decisions, changing projects) needs the Operator switch,
+      | and answering the Inbox the Inbox switch; see
+      a(href="/docs/operators#switches") Operators
+      | .
     li
       | Keys are stored as hashes. Revoke one in Settings and it stops working on the next call, on every transport.
     li

@@ -32,7 +32,9 @@ const routes: [string, (p: Record<string, string>) => ReactNode][] = [
   ['/machines', () => <Machines />],
   ['/settings', () => <Settings />],
   ['/projects', () => <Projects />],
+  // a factory project by key, /projects/new, or (a number) the old checkout page
   ['/projects/:id', (p) => <Projects id={p.id} />],
+  ['/projects/checkout/:id', (p) => <Projects checkout={p.id} />],
   ['/analytics', () => <Analytics />],
   ['/search', () => <Search />],
   ['/backlog', () => <Backlog />],
