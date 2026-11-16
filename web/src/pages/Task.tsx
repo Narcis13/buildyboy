@@ -2,9 +2,10 @@ import type { ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ROLE_LABEL, ROLES, STATUS_LABEL, TASK_STATUSES, type TaskDetail, type TaskStatus, type TaskSummary } from '../../../shared/factory.ts';
 import { api, ApiError } from '../lib/api.ts';
-import { usd } from '../lib/format.ts';
+import { exactTime, usd } from '../lib/format.ts';
 import { Link } from '../lib/router.tsx';
-import { Card, Empty, RelTime } from '../components/ui.tsx';
+import { Badge, Button, Card, Empty, RelTime } from '../components/ui.tsx';
+import { useFactoryProjects } from '../components/factory/projects.tsx';
 import { inputClass } from '../components/settings/bits.tsx';
 import { ControlSection } from '../components/factory/ControlSection.tsx';
 import { DecisionCard } from '../components/factory/DecisionCard.tsx';
@@ -12,7 +13,7 @@ import { FindingsSection, GateRunsList } from '../components/factory/FindingsSec
 import { GatesSection } from '../components/factory/GatesSection.tsx';
 import { TaskHistory } from '../components/factory/TaskHistory.tsx';
 import { LaunchTask } from '../components/factory/LaunchTask.tsx';
-import { GateChips, Section, StatusBadge, TaskFlags } from '../components/factory/common.tsx';
+import { GateChips, Section, STAGE_LABEL, StageStepper, stageOf, StatusBadge, TaskFlags } from '../components/factory/common.tsx';
 
 function Meta({ label, children, testId, wrap }: { label: string; children: ReactNode; testId?: string; wrap?: boolean }) {
   return (
@@ -78,6 +79,29 @@ function StatusSelect({ t }: { t: TaskDetail }) {
   );
 }
 
+/** Archived packages leave the board (§12.2); unarchiving one of an archived project is refused by the server. */
+function ArchiveButton({ t }: { t: TaskDetail }) {
+  const qc = useQueryClient();
+  const set = useMutation({
+    mutationFn: (archive: boolean) => api.post<TaskSummary>(`/api/tasks/${encodeURIComponent(t.id)}/${archive ? 'archive' : 'unarchive'}`),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['task', t.id] });
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+      qc.invalidateQueries({ queryKey: ['factory-projects'] });
+      qc.invalidateQueries({ queryKey: ['factory-project'] });
+    },
+  });
+  const archived = t.archivedAt != null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <Button size="sm" disabled={set.isPending} onClick={() => set.mutate(!archived)} data-testid={archived ? 'task-unarchive' : 'task-archive'}>
+        {archived ? 'Unarchive' : 'Archive'}
+      </Button>
+      {set.error && <span role="alert" className="text-error">{(set.error as Error).message}</span>}
+    </span>
+  );
+}
+
 function Deps({ t, all }: { t: TaskDetail; all: TaskSummary[] }) {
   const byId = new Map(all.map((x) => [x.id, x]));
   const unblocks = all.filter((x) => x.dependsOn.includes(t.id));
@@ -113,6 +137,7 @@ export default function Task({ id }: { id: string }) {
     retry: (n, e) => !(e instanceof ApiError && e.status === 404) && n < 2,
   });
   const all = useQuery({ queryKey: ['tasks', 'all'], queryFn: () => api.get<TaskSummary[]>('/api/tasks') });
+  const projects = useFactoryProjects();
 
   if (error) {
     return (
@@ -125,14 +150,27 @@ export default function Task({ id }: { id: string }) {
   if (isLoading || !t) return <div className="text-muted" data-testid="task-page">Loading…</div>;
 
   const pendingDecisions = t.decisions.filter((d) => d.status === 'pending');
+  const at = stageOf(t);
+  const projectName = projects.data?.find((p) => p.key === t.project)?.name;
+  const back = t.project ? `/backlog?project=${encodeURIComponent(t.project)}` : '/backlog';
   return (
     <div className="mx-auto max-w-[1200px] space-y-5" data-testid="task-page" data-task={t.id}>
-      <Link to="/backlog" className="inline-flex min-h-[44px] items-center text-accent underline">← Backlog</Link>
+      <Link to={back} className="inline-flex min-h-[44px] items-center text-accent underline">← Backlog</Link>
 
       <Card className="p-4" data-testid="task-header">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-base font-semibold text-accent" data-testid="task-id">{t.id}</span>
+          {t.localId !== t.id && (
+            <span className="font-mono text-sm text-muted" data-testid="task-local-id" title="Its id inside the project">
+              local {t.localId}
+            </span>
+          )}
           <StatusBadge status={t.status} />
+          {t.archivedAt != null && (
+            <span data-testid="task-archived" title={`Archived ${exactTime(t.archivedAt)}`}>
+              <Badge color="var(--bb-ended)">archived</Badge>
+            </span>
+          )}
           <TaskFlags t={t} />
         </div>
         <h1 className="mt-1 text-xl font-semibold leading-snug [overflow-wrap:anywhere]" data-testid="task-title">{t.title}</h1>
@@ -140,13 +178,36 @@ export default function Task({ id }: { id: string }) {
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
           <StatusSelect t={t} />
           <GateChips gates={t.gates} />
+          <ArchiveButton t={t} />
         </div>
+        {at && (
+          <div className="mt-3 max-w-xl" data-testid="task-stage" data-stage={at.stage}>
+            <div className="mb-1 text-xs uppercase tracking-wider text-muted">
+              Stage · {STAGE_LABEL[at.stage]}
+              {at.derived && (
+                <span className="normal-case tracking-normal" title="The conductor has not set a stage yet: this one comes from the status and the gate verdicts">
+                  {' '}(from the status)
+                </span>
+              )}
+            </div>
+            <StageStepper t={t} />
+          </div>
+        )}
         {t.status !== 'integrata' && (
           <div className="mt-3">
             <LaunchTask task={t} />
           </div>
         )}
         <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
+          <Meta label="Project" testId="task-project">
+            {t.project ? (
+              <Link to={`/projects/${encodeURIComponent(t.project)}`} className="inline-flex min-h-[44px] items-center text-accent underline" data-testid="task-project-link">
+                {projectName ?? t.project}
+              </Link>
+            ) : (
+              none
+            )}
+          </Meta>
           <Meta label="Repo">{t.repo ?? none}</Meta>
           <Meta label="Branch">{t.branch ? <span className="font-mono text-sm" title={t.branch}>{t.branch}</span> : none}</Meta>
           <Meta label="Cost" testId="task-cost">{t.costUsd != null ? usd(t.costUsd) : none}</Meta>

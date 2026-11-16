@@ -40,7 +40,13 @@ function invalidateFor(qc: QueryClient, m: StreamMessage) {
     qc.invalidateQueries({ queryKey: ['inbox'] });
     qc.invalidateQueries({ queryKey: ['decisions'] });
     qc.invalidateQueries({ queryKey: ['attention'] });
+    // a project's openDecisions, attention and its Line tab's questions
+    qc.invalidateQueries({ queryKey: ['factory-projects'] });
+    qc.invalidateQueries({ queryKey: ['factory-project'] });
   } else if (m.topic === 'tasks') {
+    // any package change moves a project's counts, cost and line; ('tasks', 'project', {key}) is a project's own change
+    qc.invalidateQueries({ queryKey: ['factory-projects'] });
+    qc.invalidateQueries({ queryKey: ['factory-project'] });
     qc.invalidateQueries({ queryKey: ['tasks'] });
     qc.invalidateQueries({ queryKey: ['digests'] });
     qc.invalidateQueries({ queryKey: ['governor'] });

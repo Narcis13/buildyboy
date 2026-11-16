@@ -206,12 +206,22 @@ test.describe('page smoke', () => {
 
   test('projects list and detail', async ({ loggedIn: page }) => {
     const errors = trackConsoleErrors(page);
+    // the three simulated checkouts: two belong to factory projects (fixtures/factory.ts), notes does not
     await page.goto('/projects');
-    await expect(page.getByTestId('project-card')).toHaveCount(3);
+    await expect(page.locator('[data-testid=factory-project-card][data-project=shop-api]')).toBeVisible();
+    await expect(page.getByTestId('other-repo').filter({ hasText: 'notes' })).toBeVisible();
     await shot(page, 'projects');
     await noHorizontalScroll(page);
-    await page.getByTestId('project-card').filter({ hasText: 'shop-api' }).click();
-    await expect(page).toHaveURL(/\/projects\/\d+$/);
+    // a checkout's own page (as before factory projects), from a project's Activity tab
+    await page.locator('[data-testid=factory-project-card][data-project=shop-api]').click();
+    await page.getByRole('tab', { name: /Activity/ }).click();
+    await page.getByTestId('checkout-activity').getByRole('link', { name: 'Open' }).click();
+    await expect(page).toHaveURL(/\/projects\/checkout\/\d+$/);
+    await expect(page.getByRole('heading', { name: 'shop-api' })).toBeVisible();
+    // the old numeric address still opens it
+    const id = page.url().split('/').pop();
+    await page.goto(`/projects/${id}`);
+    await expect(page.getByTestId('project-page')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'shop-api' })).toBeVisible();
     await expect(page.getByTestId('project-sessions')).toContainText('Add rate limiting to login');
     await expect(page.getByTestId('project-commits')).toContainText('Add login rate limiting');
