@@ -13,14 +13,15 @@ import { makeApi, readSSE, type Api } from './api.ts';
 import { resolveClaude, type Exe } from './claude.ts';
 import { loadConfig, type RunnerConfig } from './config.ts';
 import { startJob, type RunningJob } from './job.ts';
-import { listTerminals, resolveHc, runInTerminal } from './herdr.ts';
+import { listTerminals, resolveHc, runHcCommand, runInTerminal } from './herdr.ts';
 import { buildClaudeArgs, buildHcRunArgs, checkOptions, type StoredJobOptions } from './options.ts';
-import type { GateCommand } from '../shared/factory.ts';
-import { runGate } from './gate.ts';
+import type { GateCommand, HcCommand, HcReport, LineCommand, LineReport } from '../shared/factory.ts';
+import { readLine, runGate } from './gate.ts';
 import { checkCwd, pathKey, repoRoot } from './paths.ts';
 import { runVerify } from './proc.ts';
 
-export const RUNNER_VERSION = '0.1.0';
+/** 0.2.0: the kit's built-in steps, the line file, checked `hc send`/`hc kill` (SPEC �12.4) */
+export const RUNNER_VERSION = '0.2.0';
 
 export interface Runner {
   stop(): Promise<void>;
@@ -152,14 +153,49 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
     gatesSeen.add(id);
     if (gatesSeen.size > 200) gatesSeen.delete(gatesSeen.values().next().value!);
     const gac = new AbortController();
-    const done = runGate(run, { allowedRoots: cfg.allowedRoots, api, log, signal: gac.signal })
+    const done = runGate(run, { allowedRoots: cfg.allowedRoots, api, log, signal: gac.signal, claudePath: cfg.claudePath, hcPath: cfg.hcPath })
       .catch((e: Error) => log(`gate ${id}: ${e.message}`))
       .finally(() => gates.delete(id));
     gates.set(id, { ac: gac, done });
   }
 
-  function onCommand(c: (RunnerCommand & { cwd?: string }) | GateCommand) {
+  /** a checked hc send / kill on a factory terminal (�12.4), reported to POST /api/runner/hc/:id */
+  const hcSeen = new Set<string>();
+  async function onHc(cmd: HcCommand) {
+    if (typeof cmd?.id !== 'string' || !cmd.id || hcSeen.has(cmd.id)) return; // re-sent after a reconnect
+    hcSeen.add(cmd.id);
+    if (hcSeen.size > 500) hcSeen.delete(hcSeen.values().next().value!);
+    let rep: HcReport;
+    try {
+      rep = await runHcCommand(resolveHc(cfg.hcPath), cmd, cfg.allowedRoots);
+    } catch (e) {
+      rep = { status: 'error', error: (e as Error).message };
+    }
+    log(`hc ${cmd.op} ${cmd.name}: ${rep.status === 'done' ? 'done' : rep.error}`);
+    for (let i = 0; i < 5 && !ac.signal.aborted; i++) {
+      try {
+        await api.post(`/api/runner/hc/${encodeURIComponent(cmd.id)}`, rep);
+        return;
+      } catch (e) {
+        const status = (e as { status?: number }).status;
+        if (typeof status === 'number' && status < 500) return;
+        await new Promise((r) => setTimeout(r, 2000 * (i + 1)));
+      }
+    }
+  }
+
+  /** the project's line, resolved, for "Check setup" (�12.3), reported to POST /api/runner/lines */
+  async function onLine(cmd: LineCommand) {
+    const r = readLine(cmd.checkout, cmd.lineFile, cfg.allowedRoots);
+    await api
+      .post('/api/runner/lines', { id: cmd.id, project: cmd.project, line: r.ok ? r.line : null, error: r.ok ? null : r.error } satisfies LineReport)
+      .catch((e: Error) => log(`line ${cmd.project}: report failed: ${e.message}`));
+  }
+
+  function onCommand(c: (RunnerCommand & { cwd?: string }) | GateCommand | HcCommand | LineCommand) {
     if (c.type === 'gate') onGate(c.run);
+    else if (c.type === 'hc') void onHc(c);
+    else if (c.type === 'line') void onLine(c);
     else if (c.type === 'job') onJob(c.job);
     else if (c.type === 'stop') jobs.get(c.jobId)?.stop();
     else if (c.type === 'message') {

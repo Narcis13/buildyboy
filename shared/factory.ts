@@ -25,6 +25,16 @@ export const GATE_LABEL: Record<Gate, string> = {
 };
 export type Verdict = 'pass' | 'fail' | 'skip';
 
+/** The steps of the line that are not gates (§12.4): they run like gates but make no gate result and use no round. */
+export const KIT_STEPS = ['prepare', 'qa', 'cleanup', 'revert'] as const;
+export type KitStep = (typeof KIT_STEPS)[number];
+/** Everything a run can be: a gate or a kit step. */
+export const STEP_NAMES = ['prepare', 'qa', ...GATES, 'cleanup', 'revert'] as const;
+export type StepName = Gate | KitStep;
+export const isGate = (s: unknown): s is Gate => (GATES as readonly unknown[]).includes(s);
+/** The runner version that knows the built-in steps (runner/kit, §12.4); older runners run argv steps only. */
+export const KIT_RUNNER_VERSION = '0.2.0';
+
 export interface TaskSummary {
   id: string;
   /** the id without its project's prefix (`ED-P1` → `P1`); the id itself when the project has none */
@@ -170,7 +180,8 @@ export type GateRunStatus = 'queued' | 'running' | 'done' | 'error';
 export interface GateRunView {
   id: string;
   taskId: string;
-  gate: Gate;
+  /** a gate (G1–G5) or a kit step (prepare, qa, cleanup, revert: no gate result, no round) */
+  gate: StepName;
   round: number;
   args: string[];
   machineId: string;
@@ -181,6 +192,8 @@ export interface GateRunView {
   gateResultId: number | null;
   exitCode: number | null;
   error: string | null;
+  /** what the step reported besides its verdict (G5: { range }, qa: { commit, tag, files }, verifiers: { costUsd }…) */
+  details: unknown;
   logBytes: number;
   createdAt: number;
   startedAt: number | null;
@@ -361,13 +374,32 @@ export interface GateRecipe {
   gates: Partial<Record<Gate, { steps: RecipeStep[]; timeoutSec?: number }>>;
 }
 
-/** Server → runner: run one gate. */
+/** The package as a step command carries it (§12.4): what a built-in needs and the repo does not hold. Data, never commands. */
+export interface StepPackage {
+  id: string;
+  localId: string;
+  title: string;
+  body: string;
+  acceptance: string[];
+  sensitive: boolean;
+  /** tasks.branch as recorded; the runner uses the line's `branch` template for git (never a branch the server names) */
+  branch: string | null;
+}
+
+/** A file the runner writes under `<worktree>/.factory/` (path relative to `.factory/`; anything that escapes it is refused). */
+export interface StepFile {
+  path: string;
+  content: string;
+}
+
+/** Server → runner: run one gate or kit step (§11.7, §12.4). Runners before 0.2.0 know only gates and the first six vars. */
 export interface GateCommand {
   type: 'gate';
   run: {
     id: string;
     taskId: string;
-    gate: Gate;
+    /** G1–G5, or prepare, qa, cleanup, revert (runner 0.2.0+) */
+    gate: StepName;
     round: number;
     args: string[];
     checkout: string;
@@ -375,11 +407,79 @@ export interface GateCommand {
     recipe: string;
     /** the six the runner fills in recipe steps, plus the rest of §12.2's placeholders (localId, project, branch…) */
     vars: Record<'id' | 'idLower' | 'worktree' | 'round' | 'port' | 'db', string> & Partial<TaskVars>;
+    /** the project's key */
+    project?: string;
+    /** the package (built-in steps write it to .factory/package.md and give it to verifiers) */
+    task?: StepPackage;
+    resources?: TaskResources | null;
+    /** G3 from round 2: the open blockers and majors of earlier rounds, which the reviewer checks first */
+    findings?: FindingInput[];
+    /** written under <worktree>/.factory/ before the step runs (prepare: once the worktree exists) */
+    files?: StepFile[];
   };
+}
+
+/** Server → runner: read and resolve the project's line file now (§12.3, "Check setup"); answered on POST /api/runner/lines. */
+export interface LineCommand {
+  type: 'line';
+  id: string;
+  project: string;
+  checkout: string;
+  lineFile: string;
+}
+
+/** Runner → server: POST /api/runner/lines. */
+export interface LineReport {
+  id?: string;
+  project: string;
+  /** the resolved line (shared/line.ts ResolvedLine), or null with `error` */
+  line: unknown;
+  error?: string | null;
+}
+
+/** Server → runner: a checked herdr command on a terminal the factory started (`bb-…`, label owner=buildyboy). */
+export interface HcCommand {
+  type: 'hc';
+  id: string;
+  op: 'send' | 'kill';
+  /** the terminal's name, `bb-…` */
+  name: string;
+  /** send: the text; long or multi-line text is written to <terminal cwd>/.factory/inbox/<n>.md and the sent line points at it */
+  text?: string;
+  /** send: only when the terminal's status is exactly this (hc send --if) */
+  if?: 'idle' | 'working';
+  /** send: more files under the terminal's .factory/ first */
+  files?: StepFile[];
+}
+
+/** Runner → server: POST /api/runner/hc/:id. */
+export interface HcReport {
+  status: 'done' | 'error';
+  error?: string;
+  /** send: { sent, inbox? }; kill: { killed } */
+  result?: Record<string, unknown>;
+}
+
+export type HcCommandStatus = 'queued' | 'done' | 'error';
+export interface HcCommandView {
+  id: string;
+  machineId: string;
+  taskId: string | null;
+  op: 'send' | 'kill';
+  name: string;
+  status: HcCommandStatus;
+  result: Record<string, unknown> | null;
+  error: string | null;
+  createdAt: number;
+  finishedAt: number | null;
 }
 
 /** Runner → server: POST /api/runner/gates/:id. `done` carries a verdict; `error` means the gate could not give one. */
 export interface GateReport {
+  /** the resolved line (prepare, and any step that read it): the server keeps it on the project */
+  line?: unknown;
+  /** why the line file could not be resolved (kept on the project) */
+  lineError?: string;
   status: 'running' | 'done' | 'error';
   verdict?: Verdict;
   summary?: string;
@@ -734,8 +834,17 @@ export const TOOLS = {
     input: z.object({ taskId: id, gate: z.enum(GATES), args: z.array(z.string().max(2000)).max(30).optional() }),
   },
   gates_status: {
-    description: 'The state of a gate run; once done, its verdict, summary, findings and the recorded gate result id (never the log).',
+    description: 'The state of a gate or step run; once done, its verdict, summary, findings, details and the recorded gate result id (never the log).',
     input: z.object({ runId: z.string().min(1).max(64) }),
+  },
+  steps_run: {
+    description:
+      "Run a kit step of the line on the runner of the package's project (§12.4): prepare (worktree, branch, env file, .factory/, setup), qa (acceptance tests before the code), cleanup (after integration) or revert (undo the G5 range). Returns a runId for gates_status. Steps make no gate result and use no round.",
+    input: z.object({
+      taskId: id,
+      step: z.enum(KIT_STEPS),
+      args: z.array(z.string().max(2000)).max(30).optional().describe('revert: the range <old>..<new> (default: the last G5 pass); argv steps: their {args}'),
+    }),
   },
   findings_list: {
     description: 'Gate findings, filtered by package, status and severity.',

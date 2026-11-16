@@ -11,7 +11,8 @@ import { syncTaskSessions, taskCosts } from './cost.ts';
 import { applyGateFindings, findingsBrief, listFindings, openFindingCounts, updateFindings } from './findings.ts';
 import { listGateRuns } from './gateruns.ts';
 import {
-  localIdOf, nextProjectTaskId, projectBlocks, projectConfig, projectForNewTask, projectRow, projectTaskId, requireProject, resolveDeps, type ProjectRow,
+  lineResources, localIdOf, nextProjectTaskId, projectBlocks, projectConfig, projectForNewTask, projectMaxRounds, projectRow, projectTaskId, requireProject, resolveDeps,
+  type ProjectRow,
 } from './projects.ts';
 import {
   GATES, SHOT_MAX_BYTES, TASK_STATUSES, type ControlRequest, type Gate, type GateResult, type GovernorVerdict, type TaskDetail,
@@ -41,7 +42,8 @@ const resourcesOf = (r: TaskRow): TaskResources | null =>
     ? null
     : { port: r.res_port, db: r.res_db, migrations: r.res_mig_from != null && r.res_mig_to != null ? { from: r.res_mig_from, to: r.res_mig_to } : null };
 const migrationsOf = (r: TaskRow): number[] => json<number[]>(r.migrations_used_json, []) ?? [];
-const maxRoundsOf = (ctx: Ctx, r: TaskRow) => globalMaxRounds(ctx) + r.extra_rounds;
+/** gate_max_rounds, or the project's own limit (§12.3 `limits.rounds`: the owner's override, then the line), plus approved extra rounds */
+const maxRoundsOf = (ctx: Ctx, r: TaskRow) => (projectMaxRounds(projectRow(ctx, r.project)) ?? globalMaxRounds(ctx)) + r.extra_rounds;
 
 /**
  * The placeholders of every template filled for a package (§12.2): the project's worktree and cleanup templates, the
@@ -75,8 +77,13 @@ function summaries(ctx: Ctx, rows: TaskRow[]): TaskSummary[] {
   syncTaskSessions(ctx);
   const costs = taskCosts(ctx, ids);
   const findings = openFindingCounts(ctx, ids);
-  const maxRounds = globalMaxRounds(ctx);
-  const prefixes = new Map(db.all<{ key: string; id_prefix: string }>("SELECT key, id_prefix FROM factory_projects WHERE id_prefix != ''").map((p) => [p.key, p.id_prefix]));
+  const global = globalMaxRounds(ctx);
+  const projectRounds = new Map<string, number>();
+  for (const key of new Set(rows.map((r) => r.project).filter((k): k is string => !!k))) {
+    const n = projectMaxRounds(projectRow(ctx, key));
+    if (n != null) projectRounds.set(key, n);
+  }
+  const prefixes =new Map(db.all<{ key: string; id_prefix: string }>("SELECT key, id_prefix FROM factory_projects WHERE id_prefix != ''").map((p) => [p.key, p.id_prefix]));
   const marks = ids.map(() => '?').join(',');
   const deps = db.all<{ task_id: string; depends_on: string; status: string }>(
     `SELECT d.task_id, d.depends_on, t.status FROM task_deps d JOIN tasks t ON t.id = d.depends_on WHERE d.task_id IN (${marks}) ORDER BY d.depends_on`, ...ids,
@@ -108,7 +115,7 @@ function summaries(ctx: Ctx, rows: TaskRow[]): TaskSummary[] {
       costByRole: costs.get(r.id)?.byRole ?? null,
       linkedSessions: costs.get(r.id)?.sessions ?? 0,
       round: r.round,
-      maxRounds: maxRounds + r.extra_rounds,
+      maxRounds: ((r.project && projectRounds.get(r.project)) || global) + r.extra_rounds,
       resources: resourcesOf(r),
       migrationsUsed: migrationsOf(r),
       openFindings: findings.get(r.id)!,
@@ -414,14 +421,16 @@ export interface ClaimResult {
 }
 
 /**
- * Port, database and migration range for a package, from its project's config (the legacy fields of §11.7). Ports are
+ * Port, database and migration range for a package, from its project's line (`resources`), else its config (the legacy
+ * fields of §11.7). Ports are
  * the lowest free in the range among the project's packages that are not integrated; migration ranges never go back:
  * the next block starts after every range and every used number recorded for the project. A package keeps what it
  * already has.
  */
 function allocateResources(ctx: Ctx, t: TaskRow): TaskResources | null {
   const p = projectRow(ctx, t.project);
-  const cfg = p ? projectConfig(p).legacy : undefined;
+  // the line's `resources` (§12.3) when the runner reported one; §11.7's per-repo fields remain the fallback
+  const cfg = (p && lineResources(p)) || (p ? projectConfig(p).legacy : undefined);
   if (!cfg || !p) return resourcesOf(t);
   const repoRows = ctx.db.all<TaskRow>('SELECT * FROM tasks WHERE project = ? AND id != ?', p.key, t.id);
   let port = t.res_port;

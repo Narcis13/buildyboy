@@ -128,6 +128,15 @@ console.log(JSON.stringify({ verdict: 'pass', summary: 'G1 pass: 3 tests', findi
     }
     assert(status?.status === 'done' && status.verdict === 'pass' && status.summary === 'G1 pass: 3 tests' && status.gateResultId > 0, `gates_status done (${JSON.stringify(status)})`);
     assert(!JSON.stringify(status).includes('G1 log line'), 'gates_status returns no log text');
+    // a kit step on a §11.7 recipe (no "commands"): the runner answers with an error, no verdict, no round
+    const step = await call('steps_run', { taskId: 'P1', step: 'prepare' });
+    assert(typeof step.runId === 'string' && step.step === 'prepare' && step.sent === true, 'steps_run sent to the runner');
+    let stepStatus: any = null;
+    for (let i = 0; i < 300 && !(stepStatus && (stepStatus.status === 'done' || stepStatus.status === 'error')); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      stepStatus = await call('gates_status', { runId: step.runId });
+    }
+    assert(stepStatus?.status === 'error' && /without "commands"/.test(stepStatus.error) && stepStatus.gateResultId === null, `steps_run prepare on a recipe is an error (${JSON.stringify(stepStatus)})`);
     const machines = await call<any[]>('machines_list');
     assert(machines.some((m) => m.id === machine.id && m.runnerOnline), 'machines_list: this machine, runner online');
     // launching allowed with the owner's approval: the first call asks and starts nothing
