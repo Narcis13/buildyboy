@@ -14,6 +14,8 @@ import { importGithubIssues } from '../factory/import.ts';
 import { factoryConfig, factoryConfigSchema, saveFactoryConfig } from '../factory/config.ts';
 import { listFindings, updateFindings } from '../factory/findings.ts';
 import { applyGateReport, gateRunLog } from '../factory/gateruns.ts';
+import { applyHcReport } from '../factory/hc.ts';
+import { projectRow, storeProjectLine } from '../factory/projects.ts';
 import { lastSegment } from './projects.ts';
 
 function fail(c: Context, e: unknown) {
@@ -32,7 +34,12 @@ const gateReportSchema = z.object({
   exitCode: z.number().int().nullable().optional(),
   error: z.string().max(100_000).optional(),
   log: z.string().optional(),
+  line: z.record(z.string(), z.unknown()).optional(),
+  lineError: z.string().max(4000).optional(),
 });
+
+const hcReportSchema = z.object({ status: z.enum(['done', 'error']), error: z.string().max(4000).optional(), result: z.record(z.string(), z.unknown()).optional() });
+const lineReportSchema = z.object({ id: z.string().max(64).optional(), project: z.string().max(64), line: z.record(z.string(), z.unknown()).nullable(), error: z.string().max(4000).nullish() });
 
 const webTaskSchema = TOOLS.tasks_create.input.omit({ upsert: true, extRef: true });
 const webPatchSchema = TOOLS.tasks_update.input.omit({ id: true }).extend({
@@ -72,6 +79,27 @@ export function factoryRoutes(ctx: Ctx) {
     } catch (e) {
       return fail(c, e);
     }
+  });
+
+  // the outcome of a checked hc send / kill (§12.4)
+  app.post('/api/runner/hc/:id', requireMachine(ctx), async (c) => {
+    const b = hcReportSchema.safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: 'invalid report: { status: done | error, error?, result? }' }, 400);
+    try {
+      return c.json(applyHcReport(ctx, c.get('machineId' as never) as string, c.req.param('id'), b.data));
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  // the resolved line of a project, from its own runner (§12.3, `{type: 'line'}`)
+  app.post('/api/runner/lines', requireMachine(ctx), async (c) => {
+    const b = lineReportSchema.safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: 'invalid report: { project, line | null, error? }' }, 400);
+    const p = projectRow(ctx, b.data.project);
+    if (!p || p.machine_id !== (c.get('machineId' as never) as string)) return c.json({ error: 'unknown project' }, 404);
+    storeProjectLine(ctx, p.key, b.data.line, b.data.line ? null : (b.data.error ?? 'the runner reported no line'));
+    return c.json({ ok: true });
   });
 
   app.get('/api/gate-runs/:id/log', web, (c) => {

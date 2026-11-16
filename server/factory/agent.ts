@@ -14,7 +14,7 @@ import { ackControls, claimTask, controls, createTask, FactoryError, getTask, li
 import { askDecision, getDecision } from './decisions.ts';
 import { sendDigest } from './digest.ts';
 import { listFindings, updateFindings } from './findings.ts';
-import { gateRunStatus, startGateRun } from './gateruns.ts';
+import { gateRunStatus, startGateRun, startStepRun } from './gateruns.ts';
 import { agentLaunch, listMachines } from './launch.ts';
 import { getProject, listProjects } from './projects.ts';
 import {
@@ -182,6 +182,10 @@ export const HANDLERS: { [K in ToolName]: Handler<K> } = {
     return { runId: id, status, round, machineId, sent, ...(sent ? {} : { note: 'the runner is not connected; the run starts when gates_status finds it back' }) };
   },
   gates_status: (ctx, a) => gateRunStatus(ctx, a.runId),
+  steps_run: (ctx, a, actor) => {
+    const { id, status, round, machineId, sent } = startStepRun(ctx, { taskId: a.taskId, step: a.step, args: a.args }, actor);
+    return { runId: id, step: a.step, status, round, machineId, sent, ...(sent ? {} : { note: 'the runner is not connected; the run starts when gates_status finds it back' }) };
+  },
   findings_list: (ctx, a) => listFindings(ctx, a),
   findings_update: (ctx, a, actor) => updateFindings(ctx, a.ids, a.status, a.note?.trim() || null, actor),
   decision_ask: (ctx, a, actor, caller) => askDecision(ctx, a, actor, caller.tokenId),
