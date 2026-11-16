@@ -96,6 +96,7 @@ function summaries(ctx: Ctx, rows: TaskRow[]): TaskSummary[] {
   return rows.map((r) => {
     const mine = deps.filter((d) => d.task_id === r.id);
     const waitingOn = mine.filter((d) => d.status !== 'integrata').map((d) => d.depends_on);
+    const line = json<{ waiting?: unknown; since?: unknown }>(r.line_json, null);
     return {
       id: r.id,
       localId: localIdOf(r.id, (r.project && prefixes.get(r.project)) || ''),
@@ -103,6 +104,8 @@ function summaries(ctx: Ctx, rows: TaskRow[]): TaskSummary[] {
       title: r.title,
       status: r.status,
       stage: r.stage,
+      lineWait: line && typeof line.waiting === 'string' && typeof line.since === 'number' ? { text: line.waiting, since: line.since } : null,
+      planId: r.plan_id,
       archivedAt: r.archived_at,
       ready: r.status === 'gata' && waitingOn.length === 0,
       dependsOn: mine.map((d) => d.depends_on),

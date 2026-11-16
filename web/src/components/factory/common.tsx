@@ -144,31 +144,53 @@ export const STAGE_LABEL: Record<Stage, string> = {
 const STAGE_SHORT: Record<Stage, string> = { ...STAGE_LABEL, prepare: 'Prep', cleanup: 'Clean' };
 
 /**
- * Where a package is on the line: the conductor's `stage` when it set one; until then a position derived from the
- * status and the gate verdicts (in_lucru → Build; la_porti → the first gate without a pass or skip). Null off the line.
+ * The stages this project's line has, from the resolved line the runner reported (shared/line.ts `ResolvedLine`):
+ * Prepare, QA (only when the line has it), Build, the enabled gates in order, Cleanup. Null when the line is not known
+ * or does not look like one: the stepper then shows every stage.
  */
-export function stageOf(t: Pick<TaskSummary, 'stage' | 'status' | 'gates'>): { stage: Stage; derived: boolean } | null {
-  if (t.stage) {
-    const s = STAGES.find((x) => x.toLowerCase() === t.stage!.toLowerCase());
-    if (s) return { stage: s, derived: false };
-  }
-  if (t.status === 'in_lucru') return { stage: 'build', derived: true };
-  if (t.status === 'la_porti') return { stage: GATES.find((g) => t.gates[g] !== 'pass' && t.gates[g] !== 'skip') ?? 'G5', derived: true };
-  return null;
+export function lineStages(resolvedLine: unknown): Stage[] | null {
+  if (!resolvedLine || typeof resolvedLine !== 'object' || Array.isArray(resolvedLine)) return null;
+  const l = resolvedLine as { enabled?: unknown; qa?: unknown };
+  if (!l.enabled || typeof l.enabled !== 'object' || Array.isArray(l.enabled)) return null;
+  const enabled = l.enabled as Record<string, unknown>;
+  if (!GATES.every((g) => typeof enabled[g] === 'boolean')) return null;
+  return ['prepare', ...(l.qa === true ? (['qa'] as const) : []), 'build', ...GATES.filter((g) => enabled[g] === true), 'cleanup'];
 }
 
-/** Prepare · QA · Build · G1…G5 · Cleanup: done steps filled, the current one marked; a gate step takes its verdict's colour. */
-export function StageStepper({ t }: { t: Pick<TaskSummary, 'stage' | 'status' | 'gates'> }) {
-  const at = stageOf(t);
-  const cur = at ? STAGES.indexOf(at.stage) : -1;
+/**
+ * Where a package is on the line: the conductor's `stage` when it set one; until then a position derived from the
+ * status and the gate verdicts (in_lucru → Build; la_porti → the first gate without a pass or skip). Null off the line:
+ * a stage the stepper does not know (`revert`) counts as off it. With `stages` (the project's line), a derived gate the
+ * line does not run moves on to the next stage it does.
+ */
+export function stageOf(t: Pick<TaskSummary, 'stage' | 'status' | 'gates'>, stages?: readonly Stage[] | null): { stage: Stage; derived: boolean } | null {
+  if (t.stage) {
+    const s = STAGES.find((x) => x.toLowerCase() === t.stage!.toLowerCase());
+    return s ? { stage: s, derived: false } : null;
+  }
+  let stage: Stage | null = null;
+  if (t.status === 'in_lucru') stage = 'build';
+  else if (t.status === 'la_porti') stage = GATES.find((g) => t.gates[g] !== 'pass' && t.gates[g] !== 'skip') ?? 'G5';
+  if (!stage) return null;
+  if (stages && !stages.includes(stage)) stage = STAGES.slice(STAGES.indexOf(stage)).find((x) => stages.includes(x)) ?? null;
+  return stage ? { stage, derived: true } : null;
+}
+
+/** Prepare · QA · Build · G1…G5 · Cleanup (only `stages` when given): done steps filled, the current one marked; a gate step takes its verdict's colour. */
+export function StageStepper({ t, stages }: { t: Pick<TaskSummary, 'stage' | 'status' | 'gates'>; stages?: readonly Stage[] | null }) {
+  const shown = stages?.length ? STAGES.filter((s) => stages.includes(s)) : STAGES;
+  const at = stageOf(t, stages);
+  const cur = at ? shown.indexOf(at.stage) : -1;
   return (
     <ol
-      className="grid grid-cols-9 gap-0.5"
-      aria-label={at ? `Stage: ${STAGE_LABEL[at.stage]}${at.derived ? ' (estimated)' : ''}` : 'Not on the line'}
+      className="grid gap-0.5"
+      style={{ gridTemplateColumns: `repeat(${shown.length}, minmax(0, 1fr))` }}
+      aria-label={at && cur >= 0 ? `Stage: ${STAGE_LABEL[at.stage]}${at.derived ? ' (estimated)' : ''}` : 'Not on the line'}
       data-testid="stage-stepper"
-      data-stage={at?.stage ?? ''}
+      data-stage={cur >= 0 ? at!.stage : ''}
+      data-stages={shown.join(',')}
     >
-      {STAGES.map((s, i) => {
+      {shown.map((s, i) => {
         const verdict = (GATES as readonly string[]).includes(s) ? t.gates[s as Gate] : undefined;
         const state = i < cur ? 'done' : i === cur ? 'current' : 'todo';
         const color =

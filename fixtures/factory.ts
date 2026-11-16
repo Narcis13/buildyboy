@@ -9,7 +9,8 @@ import { deflateSync, crc32 } from 'node:zlib';
 import { configFromEnv, createContext } from '../server/main.ts';
 import { createTask, recordGate, requestControl, updateTask, listTasks } from '../server/factory/tasks.ts';
 import { answerDecision, askDecision } from '../server/factory/decisions.ts';
-import { createProject, projectAction, projectRow } from '../server/factory/projects.ts';
+import { createProject, projectAction, projectRow, storeProjectLine } from '../server/factory/projects.ts';
+import { resolveLine } from '../shared/line.ts';
 import type { Ctx } from '../server/context.ts';
 import { S1 } from './scenario.ts';
 
@@ -188,6 +189,30 @@ function seedProjects(ctx: Ctx, log: (s: string) => void) {
   recordGate(ctx, { taskId: 'SH-5', gate: 'G3', verdict: 'fail', summary: 'The TOTP secret is logged at debug level.' }, ACTOR);
   askDecision(ctx, { taskId: 'SH-5', question: 'Require two-factor sign-in for every customer, or only for admins?', options: ['Only admins', 'Every customer'] }, 'factory:line');
   projectAction(ctx, 'shop-api', 'autopilot', 'web', { on: true });
+
+  // the line the runner reported for shop-api (§12.3): G4 is off, so its stepper has no G4. Its runner is offline in the
+  // e2e run, so the conductor (autopilot on) holds the project and leaves the state below alone.
+  const line = resolveLine(
+    { commands: { verify: 'npm test', acceptance: 'npm run acceptance', shots: 'npm run shots' }, gates: { G4: { enabled: false } } },
+    { checkoutDir: 'C:\\work\\shop-api', file: 'factory.json' },
+  );
+  if (!line.ok) throw new Error(`fixture line does not resolve: ${line.errors.join('; ')}`);
+  storeProjectLine(ctx, 'shop-api', line.line, null);
+  // SH-4 is on the line for real: a stage and what the conductor waits for (SPEC §12.5), with its history
+  const ago = (min: number) => Date.now() - min * 60_000;
+  ctx.db.run('UPDATE tasks SET stage = ?, line_json = ? WHERE id = ?', 'build', JSON.stringify({ waiting: "the worker's turn to end", since: ago(7), status: 'in_lucru', attempts: 0 }), 'SH-4');
+  const lineEvent = (min: number, kind: string, detail: unknown) =>
+    ctx.db.run('INSERT INTO task_events (task_id, ts, actor, kind, from_status, to_status, detail_json) VALUES (?, ?, ?, ?, NULL, NULL, ?)', 'SH-4', ago(min), 'factory:line', kind, JSON.stringify(detail));
+  lineEvent(14, 'line', { text: 'Claimed SH-4: port 4101 and database shop_sh4 allocated. Next: prepare.', stage: 'prepare', waiting: 'the prepare step' });
+  lineEvent(12, 'step_run', { runId: 'r1', step: 'prepare', round: 1 });
+  lineEvent(11, 'step', { runId: 'r1', step: 'prepare', verdict: 'pass', summary: 'worktree ready' });
+  lineEvent(9, 'line', { text: 'Prepared SH-4. Next: build (the worker starts in terminal bb-SH-4).', stage: 'build', waiting: 'the worker to start' });
+  lineEvent(7, 'line', { text: "The worker started in terminal bb-SH-4. Waiting for its turn to end.", stage: 'build', waiting: "the worker's turn to end" });
+  // a plan that failed (the planner's job is gone), so the Line tab's Plans list shows one
+  ctx.db.run(
+    "INSERT INTO plans (id, project, goal, status, error, questions_json, actor, created_at, updated_at) VALUES (?, ?, ?, 'failed', ?, ?, 'web', ?, ?)",
+    'plan-fixture-failed', 'shop-api', 'Let customers manage their saved payment methods', 'the planner could not read the checkout', JSON.stringify(['Which payment provider does the shop use?']), ago(180), ago(170),
+  );
 
   // billing: paused, migrated from §11.7 (legacy allocation fields), one blocked package, an archive of two
   createProject(

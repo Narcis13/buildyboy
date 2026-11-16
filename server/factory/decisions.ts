@@ -31,9 +31,9 @@ export function listDecisions(ctx: Ctx, f: { status?: DecisionView['status']; ta
     args.push(f.taskId);
   }
   if (f.project) {
-    // decisions tied to the project's packages (§12.1)
-    where.push('task_id IN (SELECT id FROM tasks WHERE project = ?)');
-    args.push(f.project);
+    // decisions tied to the project's packages (§12.1), and its plans' (§12.6)
+    where.push('(task_id IN (SELECT id FROM tasks WHERE project = ?) OR id IN (SELECT decision_id FROM plans WHERE project = ? AND decision_id IS NOT NULL))');
+    args.push(f.project, f.project);
   }
   return ctx.db.all<Row>(`SELECT * FROM decisions WHERE ${where.join(' AND ')} ORDER BY status = 'pending' DESC, created_at DESC LIMIT ?`, ...args, f.limit ?? 200).map(view);
 }

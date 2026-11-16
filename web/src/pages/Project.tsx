@@ -10,13 +10,14 @@ import { Button, Card, Empty, RelTime, Tabs, Toggle } from '../components/ui.tsx
 import { AutopilotBadge, inFlight, openCount, ProgressBar, StateBadge, totalCount, useProjectAction } from '../components/factory/projects.tsx';
 import { CheckoutActivity } from '../components/projects/CheckoutActivity.tsx';
 import { ProjectLine } from '../components/projects/ProjectLine.tsx';
+import { PlanForm } from '../components/projects/Plans.tsx';
 import { ProjectBacklog, ProjectDone } from '../components/projects/ProjectDone.tsx';
 import { ProjectSetup } from '../components/projects/ProjectSetup.tsx';
 
 const TABS = ['line', 'backlog', 'done', 'activity', 'setup'] as const;
 type Tab = (typeof TABS)[number];
 
-function Header({ p }: { p: ProjectDetail }) {
+function Header({ p, planOpen, setPlanOpen }: { p: ProjectDetail; planOpen: boolean; setPlanOpen: (open: boolean) => void }) {
   const act = useProjectAction(p.key);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const archived = p.state === 'archived';
@@ -47,13 +48,19 @@ function Header({ p }: { p: ProjectDetail }) {
           ) : (
             <Button size="sm" disabled={act.isPending} onClick={() => act.mutate({ action: 'pause' })} data-testid="project-pause">Pause</Button>
           ))}
+        {!archived && !planOpen && <Button size="sm" variant="primary" onClick={() => setPlanOpen(true)} data-testid="plan-open">Plan new work</Button>}
         {archived ? (
           <Button size="sm" disabled={act.isPending} onClick={() => act.mutate({ action: 'unarchive' })} data-testid="project-unarchive">Unarchive</Button>
         ) : confirmArchive ? null : (
           <Button size="sm" disabled={act.isPending} onClick={() => setConfirmArchive(true)} data-testid="project-archive">Archive…</Button>
         )}
       </div>
-      {p.autopilot && p.state === 'paused' && <p className="mt-1 text-sm text-muted">Autopilot is held while the project is paused: work in flight goes on, nothing new starts.</p>}
+      {p.autopilot && !archived && (p.autopilotHeld || p.state === 'paused') && (
+        <p className="mt-1 text-sm text-waiting [overflow-wrap:anywhere]" data-testid="autopilot-held">
+          Autopilot held: {p.autopilotHeld ?? 'the project is paused: work in flight goes on, nothing new starts.'}
+        </p>
+      )}
+      {!archived && planOpen && <PlanForm projectKey={p.key} onClose={() => setPlanOpen(false)} />}
       {!p.autopilot && !archived && <p className="mt-1 text-sm text-muted">Autopilot off: a coordinator session or you move the packages along.</p>}
       {confirmArchive && !archived && (
         <div className="mt-3 space-y-2 rounded-lg border border-waiting p-3" data-testid="project-archive-confirm">
@@ -124,6 +131,7 @@ function Activity({ p }: { p: ProjectDetail }) {
 }
 
 export default function ProjectPage({ projectKey }: { projectKey: string }) {
+  const [planOpen, setPlanOpen] = useState(false);
   const tabParam = useQueryParam('tab');
   const tab: Tab = (TABS as readonly string[]).includes(tabParam ?? '') ? (tabParam as Tab) : 'line';
   const { data: p, isLoading, error } = useQuery({
@@ -154,7 +162,7 @@ export default function ProjectPage({ projectKey }: { projectKey: string }) {
   return (
     <div className="mx-auto max-w-[1600px] space-y-4" data-testid="factory-project-page" data-project={p.key}>
       <Link to="/projects" className="inline-flex min-h-[44px] items-center text-accent underline">← Projects</Link>
-      <Header p={p} />
+      <Header p={p} planOpen={planOpen} setPlanOpen={setPlanOpen} />
       <Tabs<Tab>
         className="-mx-4 px-4 md:mx-0 md:px-0"
         value={tab}
@@ -168,7 +176,7 @@ export default function ProjectPage({ projectKey }: { projectKey: string }) {
         ]}
       />
       <div data-testid={`project-tab-${tab}`}>
-        {tab === 'line' && <ProjectLine p={p} />}
+        {tab === 'line' && <ProjectLine p={p} onPlan={() => setPlanOpen(true)} />}
         {tab === 'backlog' && <ProjectBacklog p={p} />}
         {tab === 'done' && <ProjectDone p={p} />}
         {tab === 'activity' && <Activity p={p} />}

@@ -17,7 +17,7 @@ import { answerPending, getPending, listPending } from '../control/pending.ts';
 import { maxRounds } from './config.ts';
 import { answerDecision, decisionView, type DecisionRow } from './decisions.ts';
 import { governor } from './governor.ts';
-import { createProject, listProjectRows, projectAction, projectRow, projectView, requireProject, updateProject, type ProjectRow } from './projects.ts';
+import { autopilotHold, createProject, listProjectRows, projectAction, projectRow, projectView, requireProject, updateProject, type ProjectRow } from './projects.ts';
 import { FactoryError, requestControl } from './tasks.ts';
 
 // ---------- scopes ----------
@@ -42,12 +42,15 @@ export function requireScope(ctx: Ctx, caller: Caller, scope: Scope, what: strin
 // ---------- decisions ----------
 
 type Decision = DecisionRow & { project: string | null; launch: number };
-const DECISION_SQL = `SELECT d.*, t.project, EXISTS (SELECT 1 FROM launch_requests l WHERE l.decision_id = d.id) AS launch
+// a decision's project: its package's, or its plan's (§12.6: the plan's approval is tied to no package)
+const PROJECT_OF = 'COALESCE(t.project, (SELECT pl.project FROM plans pl WHERE pl.decision_id = d.id))';
+const DECISION_SQL = `SELECT d.*, ${PROJECT_OF} AS project, EXISTS (SELECT 1 FROM launch_requests l WHERE l.decision_id = d.id) AS launch
   FROM decisions d LEFT JOIN tasks t ON t.id = d.task_id`;
 
 function kindOf(d: Decision): DecisionKind {
   if (d.launch) return 'launch_approval';
   if (d.asked_by === 'factory:rounds') return 'round_limit';
+  if (d.asked_by === 'factory:plan') return 'plan';
   if (d.asked_by.startsWith('factory:')) return 'line';
   return 'question';
 }
@@ -82,7 +85,7 @@ export function listOperatorDecisions(ctx: Ctx, a: ToolArgs<'decisions_list'>, a
     args.push(a.status);
   }
   if (a.project) {
-    where.push('t.project = ?');
+    where.push(`${PROJECT_OF} = ?`);
     args.push(a.project);
   }
   const operator = hasScope(ctx, caller, 'operator');
@@ -261,7 +264,7 @@ export function factoryStatus(ctx: Ctx, a: ToolArgs<'factory_status'>, actor: st
   );
 
   // pending decisions and open controls, by package, for "what it waits for"
-  const decisionsSql = `${DECISION_SQL} WHERE d.status = 'pending' ${a.project ? 'AND t.project = ?' : ''}`;
+  const decisionsSql = `${DECISION_SQL} WHERE d.status = 'pending' ${a.project ? `AND ${PROJECT_OF} = ?` : ''}`;
   const decisions = db.all<Decision>(`${decisionsSql} ORDER BY d.created_at ASC LIMIT ?`, ...sargs, LIMITS.decisions);
   const decisionsTotal = count(`SELECT COUNT(*) n FROM (${decisionsSql})`, ...sargs);
   const decidingTasks = new Set(db.all<{ task_id: string }>("SELECT DISTINCT task_id FROM decisions WHERE status = 'pending' AND task_id IS NOT NULL").map((r) => r.task_id));
@@ -305,9 +308,12 @@ export function factoryStatus(ctx: Ctx, a: ToolArgs<'factory_status'>, actor: st
   const offline = new Map<string, string[]>();
   for (const p of projects) if (p.state === 'active' && p.machine_id && !ctx.runners.has(p.machine_id)) offline.set(p.machine_id, [...(offline.get(p.machine_id) ?? []), p.key]);
   for (const [m, keys] of offline) alerts.push(`runner offline on ${machines.get(m) ?? m} (${keys.join(', ')})`);
-  const piloted = projects.filter((p) => p.autopilot);
-  const held = piloted.filter((p) => p.state !== 'active' || !g.canStart || (p.machine_id && !ctx.runners.has(p.machine_id)));
-  if (held.length) alerts.push(`autopilot held: ${held.map((p) => `${p.key} (${p.state !== 'active' ? p.state : !g.canStart ? 'governor' : 'runner offline'})`).join(', ')}`);
+  // the conductor's own reasons (§12.5): paused, runner offline or too old, line unknown or invalid, a recipe line, the governor
+  const held = projects.flatMap((p) => {
+    const h = autopilotHold(ctx, p, g);
+    return h ? [`${p.key} (${h.short})`] : [];
+  });
+  if (held.length) alerts.push(`autopilot held: ${held.join(', ')}`);
   for (const p of projects) if (p.line_error) alerts.push(`line file of ${p.key}: ${cut(p.line_error, 120)}`);
 
   const operator = hasScope(ctx, caller, 'operator');

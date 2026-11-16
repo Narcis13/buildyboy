@@ -190,6 +190,8 @@ console.log(JSON.stringify({ verdict: 'pass', summary: 'G1 pass: 3 tests', findi
     const saved2 = await call('projects_save', { key: 'smoke-ops', name: 'Smoke ops', checkout: checkout, machineId: machine.id });
     assert(saved2.created === true && saved2.project.checkout === checkout, 'projects_save');
     assert((await call('projects_set', { key: 'smoke-ops', autopilot: true, state: 'paused' })).state === 'paused', 'projects_set');
+    const planned = await call('plan_request', { project: 'smoke-ops', goal: 'Smoke the planner', notes: 'nothing real' });
+    assert(planned.status === 'running' && typeof planned.jobId === 'string', 'plan_request starts the planner job');
     srv.ctx.db.setSetting('walk_mode', true);
     const hook = post('/api/hook/PermissionRequest', {
       v: 1, ts: Date.now(), env: {}, hostname: 'h', platform: process.platform, user: 'u', pid: 1, ppid: 1, hookVersion: 'smoke',

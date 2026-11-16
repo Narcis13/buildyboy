@@ -45,6 +45,10 @@ export interface TaskSummary {
   status: TaskStatus;
   /** where the conductor has it on the line (§12.5: prepare, qa, build, G1…G5, cleanup); null off the line */
   stage: string | null;
+  /** what the conductor waits for now and since when (epoch ms); null when the conductor does not drive it */
+  lineWait: { text: string; since: number } | null;
+  /** the plan it came from (§12.6), if any */
+  planId: string | null;
   /** archived packages leave the default lists (§12.2); null when not archived */
   archivedAt: number | null;
   /** status is `gata` and every dependency is `integrata` */
@@ -323,6 +327,8 @@ export interface ProjectView {
   lineError: string | null;
   state: ProjectState;
   autopilot: boolean;
+  /** with autopilot on: why the conductor holds it now (runner offline or too old, line missing or invalid, a §11.7 recipe, paused, the governor), else null */
+  autopilotHeld: string | null;
   createdAt: number;
   updatedAt: number;
   archivedAt: number | null;
@@ -352,6 +358,83 @@ export interface ProjectDetail extends ProjectView {
   next: TaskSummary[];
   /** pending decisions tied to its packages, newest first */
   decisions: DecisionView[];
+  /** its recent plans (§12.6), newest first */
+  plans: PlanView[];
+}
+
+// ---------- the conductor, the foreman and the planner (§12.5, §12.6) ----------
+
+/** The options of the decisions the conductor asks (asked_by `factory:line`); it matches the answer exactly (ignoring case). */
+export const LINE_ANSWERS = {
+  retry: 'Retry',
+  foreman: 'Ask the foreman',
+  stop: 'Stop the package',
+  mine: "I'll take it from here",
+  integrate: 'Integrate',
+  integrateProtected: 'Integrate with these changes',
+  undoProtected: 'Undo them first',
+} as const;
+/** The planner's approval (asked_by `factory:plan`). */
+export const PLAN_ANSWERS = { approve: 'Approve', discard: 'Discard' } as const;
+/** §11.7's round-limit decision (asked_by `factory:rounds`); `Încă o rundă, doar pentru G<n>` per failed gate. */
+export const ROUND_ANSWERS = { more: 'Încă o rundă', onlyFor: 'Încă o rundă, doar pentru ', stop: 'Oprește pachetul' } as const;
+
+/** The worker's status line: the last `FACTORY-STATUS:` line of its final message. */
+export type WorkerStatus = { kind: 'done' } | { kind: 'question' | 'blocked'; text: string };
+
+/** The foreman's structured answer (OUTPUT_SCHEMAS.foreman). */
+export const foremanAnswerSchema = z.object({
+  action: z.enum(['answer', 'retry', 'escalate', 'block']),
+  message: z.string().trim().min(1).max(20_000),
+  question: z.string().trim().max(4000).optional(),
+  options: z.array(z.string().trim().min(1).max(300)).max(8).optional(),
+});
+export type ForemanAnswer = z.infer<typeof foremanAnswerSchema>;
+
+/** The planner's structured answer (OUTPUT_SCHEMAS.plan). */
+export const planAnswerSchema = z.object({
+  summary: z.string().trim().max(4000).default(''),
+  packages: z
+    .array(
+      z.object({
+        localId: z.string().trim().regex(/^[\w.-]{1,40}$/, 'a short id'),
+        title: z.string().trim().min(1).max(200),
+        body: z.string().max(100_000).default(''),
+        acceptance: z.array(z.string().trim().min(1).max(2000)).max(100).default([]),
+        dependsOn: z.array(z.string().trim().min(1).max(64)).max(50).default([]),
+        sensitive: z.boolean().default(false),
+        priority: z.number().int().min(-1000).max(1000).default(50),
+      }),
+    )
+    .max(50)
+    .default([]),
+  questions: z.array(z.string().trim().min(1).max(2000)).max(30).default([]),
+});
+export type PlanAnswer = z.infer<typeof planAnswerSchema>;
+
+export const PLAN_STATUSES = ['running', 'proposed', 'approved', 'discarded', 'failed', 'cancelled'] as const;
+export type PlanStatus = (typeof PLAN_STATUSES)[number];
+
+/** A plan request and what came of it. */
+export interface PlanView {
+  id: string;
+  project: string;
+  goal: string;
+  notes: string | null;
+  status: PlanStatus;
+  /** the planner's job */
+  jobId: string | null;
+  /** the approval decision (proposed), or the questions for the owner (failed) */
+  decisionId: string | null;
+  summary: string | null;
+  questions: string[];
+  /** packages created from it (still existing) */
+  packages: string[];
+  /** why it failed */
+  error: string | null;
+  actor: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 /**
@@ -511,9 +594,10 @@ export interface DecisionView {
 
 /**
  * What a decision is about, for an operator: a launch approval (only the owner answers it), the round limit of §11.7,
- * one from the line (§12.5: needs attention, integration approval), or a question from an agent (coordinator, foreman…).
+ * one from the line (§12.5: needs attention, integration approval, a worker's question), a plan to approve (§12.6), or
+ * a question from an agent (coordinator…).
  */
-export type DecisionKind = 'launch_approval' | 'round_limit' | 'line' | 'question';
+export type DecisionKind = 'launch_approval' | 'round_limit' | 'line' | 'plan' | 'question';
 
 /** decisions_list: a decision plus what an operator needs to act on it. */
 export interface OperatorDecision extends DecisionView {
@@ -709,6 +793,8 @@ export interface MachineView {
   allowedRoots: string[];
   concurrency: number | null;
   runnerSeenAt: number | null;
+  /** the version its runner last reported (the line's built-in steps need 0.2.0); null when unknown */
+  runnerVersion: string | null;
 }
 
 export interface TerminalView {
@@ -1012,6 +1098,15 @@ export const TOOLS = {
       key: projectKey,
       autopilot: z.boolean().optional().describe('true: the conductor moves its packages along the line'),
       state: z.enum(PROJECT_STATES).optional().describe('active (resume or unarchive), paused (nothing new starts) or archived (it and its packages leave the lists)'),
+    }),
+  },
+  plan_request: {
+    description:
+      "Ask the planner to turn a goal into packages for a project (§12.6): a read-only claude -p job on the project's runner reads the repo and proposes packages, which are created in backlog as one plan; a decision then asks the owner to Approve (they become gata) or Discard (deleted). Operator tokens only.",
+    input: z.object({
+      project: projectKey.describe('The project to plan for (projects_list)'),
+      goal: z.string().trim().min(3).max(4000).describe('What to build, in the owner\'s words'),
+      notes: z.string().trim().max(20_000).optional().describe('Constraints, sources, what is out of scope'),
     }),
   },
   inbox_list: {

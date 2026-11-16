@@ -8,6 +8,7 @@ import { requireWeb } from '../auth.ts';
 import { PROJECT_ACTIONS, PROJECT_STATES, projectCreateSchema, projectPatchSchema, type ProjectAction, type ProjectState } from '../../shared/factory.ts';
 import { FactoryError } from '../factory/tasks.ts';
 import { createProject, deleteProject, getProject, listProjects, projectAction, projectView, updateProject } from '../factory/projects.ts';
+import { requestPlan } from '../factory/plan.ts';
 
 const issues = (e: z.ZodError) => e.issues.map((i) => `${i.path.join('.') || '(root)'} ${i.message}`).join('; ');
 
@@ -61,6 +62,17 @@ export function projectsRoutes(ctx: Ctx) {
     try {
       deleteProject(ctx, c.req.param('key'), 'web');
       return c.json({ ok: true });
+    } catch (e) {
+      return fail(c, e);
+    }
+  });
+
+  // the planner (§12.6): a goal becomes packages in backlog, then a decision asks Approve or Discard
+  app.post('/api/factory/projects/:key/plan', web, async (c) => {
+    const b = z.object({ goal: z.string().trim().min(3).max(4000), notes: z.string().trim().max(20_000).optional() }).safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: `invalid plan request: ${issues(b.error)}` }, 400);
+    try {
+      return c.json(requestPlan(ctx, { project: c.req.param('key'), goal: b.data.goal, notes: b.data.notes }, 'web'), 201);
     } catch (e) {
       return fail(c, e);
     }

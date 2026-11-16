@@ -25,7 +25,13 @@ interface LaunchBase {
   permissionMode?: string | null;
   maxBudgetUsd?: number | null;
 }
-export interface WorkerLaunch extends LaunchBase { taskId: string }
+export interface WorkerLaunch extends LaunchBase {
+  taskId: string;
+  /** the conductor's one-line launch prompt (§12.5: the brief is in .factory/brief.md); wins over promptId */
+  promptText?: string | null;
+  /** a claude -p worker's time limit */
+  limitMinutes?: number | null;
+}
 export interface CoordinatorLaunch extends LaunchBase { prompt?: string | null; title?: string | null }
 
 /** How long an approved launch may still be started: the agent comes back within a loop or two, not days later. */
@@ -96,15 +102,16 @@ function planWorker(ctx: Ctx, a: WorkerLaunch): Plan {
   if (task.archivedAt != null) throw new FactoryError(409, 'this package is archived');
   const blocked = projectBlocks(projectRow(ctx, task.project)); // §12.1: nothing starts in a paused or archived project
   if (blocked) throw new FactoryError(409, blocked);
-  const { machineName, options } = checkBase(ctx, a, { taskId: task.id });
-  const promptId = a.promptId ?? (task.promptId && ctx.db.get('SELECT 1 FROM prompts WHERE id = ?', task.promptId) ? task.promptId : null);
+  const { machineName, options } = checkBase(ctx, a, { taskId: task.id, ...(a.limitMinutes ? { limitMinutes: a.limitMinutes } : {}) });
+  const own = a.promptText?.trim() || null;
+  const promptId = own ? null : (a.promptId ?? (task.promptId && ctx.db.get('SELECT 1 FROM prompts WHERE id = ?', task.promptId) ? task.promptId : null));
   return {
     kind: 'worker',
-    job: { machineId: a.machineId, cwd: a.cwd, promptId, promptText: promptId ? null : taskPrompt(task), title: `${task.id}: ${task.title}`.slice(0, 200), options },
+    job: { machineId: a.machineId, cwd: a.cwd, promptId, promptText: own ?? (promptId ? null : taskPrompt(task)), title: `${task.id}: ${task.title}`.slice(0, 200), options },
     options,
     machineName,
     task,
-    promptNote: promptId ? `saved prompt #${promptId}` : 'built from the package (title, body, acceptance criteria)',
+    promptNote: own ? `its own: ${own.slice(0, 200)}` : promptId ? `saved prompt #${promptId}` : 'built from the package (title, body, acceptance criteria)',
   };
 }
 
@@ -257,7 +264,7 @@ export function listMachines(ctx: Ctx): MachineView[] {
       'SELECT id, name, platform, runner_info_json, runner_seen_at FROM machines WHERE revoked = 0 ORDER BY name, id',
     )
     .map((m) => {
-      const info = json<{ allowedRoots?: unknown; concurrency?: unknown; platform?: unknown }>(m.runner_info_json, null);
+      const info = json<{ allowedRoots?: unknown; concurrency?: unknown; platform?: unknown; version?: unknown }>(m.runner_info_json, null);
       return {
         id: m.id,
         name: m.name,
@@ -266,6 +273,7 @@ export function listMachines(ctx: Ctx): MachineView[] {
         allowedRoots: Array.isArray(info?.allowedRoots) ? info.allowedRoots.filter((r): r is string => typeof r === 'string') : [],
         concurrency: typeof info?.concurrency === 'number' ? info.concurrency : null,
         runnerSeenAt: m.runner_seen_at,
+        runnerVersion: typeof info?.version === 'string' ? info.version.slice(0, 40) : null,
       };
     });
 }

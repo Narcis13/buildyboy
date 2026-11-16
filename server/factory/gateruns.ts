@@ -12,7 +12,7 @@ import {
   KIT_RUNNER_VERSION, findingSchema, isGate, type FindingInput, type GateCommand, type GateReport, type GateRunStatus, type GateRunView, type StepFile, type StepName,
   type TaskResources, type Verdict,
 } from '../../shared/factory.ts';
-import { localIdOf, projectRow, storeProjectLine, usesBuiltIn } from './projects.ts';
+import { compareVersions, localIdOf, projectRow, storeProjectLine, usesBuiltIn } from './projects.ts';
 import { FactoryError, recordGate, taskEvent, taskVars, type TaskRow } from './tasks.ts';
 
 /** The server keeps the tail of a gate's log. */
@@ -45,13 +45,7 @@ export function gateRunView(ctx: Ctx, runId: string): GateRunView | null {
   return r ? view(r) : null;
 }
 
-/** "0.10.1" vs "0.2.0": negative when a < b. */
-export function compareVersions(a: string, b: string): number {
-  const p = (s: string) => s.split(/[.+-]/).slice(0, 3).map((x) => Number.parseInt(x, 10) || 0);
-  const [x, y] = [p(a), p(b)];
-  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0);
-  return 0;
-}
+export { compareVersions };
 
 const FILE_RE = /^(?:\.factory\/)?[\w.-]+(?:\/[\w.-]+)*$/;
 

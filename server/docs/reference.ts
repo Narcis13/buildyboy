@@ -100,6 +100,7 @@ export const SHAPES: Shape[] = [
       ['resolvedLine · lineSeenAt · lineError', '', 'The line as the runner last reported it (null until then).'],
       ['state', 'enum', 'active; paused (nothing new starts: no claim, no launch); archived (hidden, its packages archived, nothing starts).'],
       ['autopilot', 'boolean', 'The conductor moves its packages along the line.'],
+      ['autopilotHeld', 'string | null', 'With autopilot on: why the conductor holds it now (paused, runner offline or older than 0.2.0, the line unknown or invalid, a §11.7 recipe line without built-in steps, the governor), else null.'],
       ['createdAt · updatedAt · archivedAt', 'number | null', 'Epoch ms.'],
       ['counts', 'object', 'Packages per status, archived ones left out: { backlog, gata, in_lucru, la_porti, integrata, blocata }.'],
       ['archived · integrated', 'integer', 'Archived packages; packages integrated ever.'],
@@ -116,7 +117,21 @@ export const SHAPES: Shape[] = [
     fields: [
       ['line', 'Task[]', 'Its packages in in_lucru and la_porti, with their stage.'],
       ['next', 'Task[]', 'Its ready packages, in claim order.'],
-      ['decisions', 'Decision[]', 'Pending decisions tied to its packages.'],
+      ['decisions', 'Decision[]', 'Pending decisions tied to its packages or its plans.'],
+      ['plans', 'Plan[]', 'Its five newest plans.'],
+    ],
+  },
+  {
+    id: 'plan',
+    title: 'Plan',
+    intro: "Returned by plan_request and POST /api/factory/projects/:key/plan; listed in a project's detail (plans). Times are epoch ms.",
+    fields: [
+      ['id · project · goal · notes', 'string', 'What was asked, for which project.'],
+      ['status', 'enum', "running (the planner works) · proposed (its packages are in backlog; a decision asks Approve or Discard) · approved (they became gata) · discarded (the untouched ones were deleted) · failed (no packages: a decision asks the planner's questions; an answer plans again) · cancelled."],
+      ['jobId · decisionId', 'string | null', "The planner's claude -p job; the decision that waits on the owner."],
+      ['summary · questions', 'string | null · string[]', "The planner's summary, and what it asks or assumed."],
+      ['packages', 'string[]', 'The packages created from it (plan_id), still existing.'],
+      ['error · actor', 'string | null · string', 'Why it failed; who asked for it.'],
     ],
   },
   {
@@ -253,6 +268,7 @@ export const SHAPES: Shape[] = [
       ['allowedRoots', 'string[]', 'Folders the runner may work in; a cwd outside them is refused. Empty: the runner has not said.'],
       ['concurrency', 'number | null', 'How many jobs the runner runs at once.'],
       ['runnerSeenAt', 'number | null', 'Epoch ms of its last heartbeat.'],
+      ['runnerVersion', 'string | null', 'The version its runner last reported; the line\'s built-in steps (and so the conductor) need 0.2.0 or later.'],
     ],
   },
   {
@@ -837,6 +853,27 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
     example: { key: 'shop', autopilot: false },
     notes: ['State changes first, then autopilot. Archiving archives its packages; unarchiving brings back exactly those.'],
   },
+  plan_request: {
+    group: 'operators',
+    use: 'Turn the owner\'s goal into packages for a project, when the owner asked for it. The planner (a read-only claude -p job on the project\'s runner, in its main checkout) reads the repo and proposes packages; they are created in backlog as one plan, and a decision asks the owner to Approve (they become gata; with autopilot on the conductor starts them) or Discard (the untouched ones are deleted).',
+    args: {
+      project: 'The project (it needs a machine and the main checkout).',
+      goal: 'What to build, in the owner\'s words.',
+      notes: 'Constraints, sources to read, what is out of scope.',
+    },
+    returns: 'Plan (status running). Follow it with projects_get {key} (plans) and decisions_list.',
+    shapes: ['plan'],
+    errors: [
+      '403 this agent token may not request plans (turn on “Operator”)', '400 the project needs a machine and the main checkout', '404 unknown project',
+      '409 the project is archived / the planner is off (models.planner null) / governor: stop all',
+    ],
+    example: { project: 'shop', goal: 'Customers can download every invoice of a month as one PDF', notes: 'Reuse the existing PDF renderer; no new dependencies.' },
+    notes: [
+      'A plan with no packages (the goal was too vague, or the planner failed) asks the owner its questions instead; an answer runs the planner again with it as notes.',
+      'The plan\'s decision is kind plan (decisions_list); an operator may answer it only when the owner told it to.',
+      'Its cost is the planner job\'s (role coordonator); it is not counted on a package.',
+    ],
+  },
   inbox_list: {
     group: 'operators',
     use: 'See what sessions in walk mode wait for: a permission, a question, a plan to approve, or a reply at the end of a turn. They time out if nobody answers.',
@@ -1335,6 +1372,13 @@ export const API_GROUPS: ApiGroup[] = [
         errors: ['404 unknown project', '409 pause, resume or autopilot on an archived project', '400 autopilot without on'],
         notes: ['refresh sends { type: line } to the project\'s runner ({ sent: false } when it is offline); the resolved line arrives on POST /api/runner/lines and shows in resolvedLine, lineSeenAt and lineError.'],
       },
+      {
+        method: 'POST', path: '/api/factory/projects/:key/plan', auth: 'web',
+        summary: 'Plan new work (§12.6): the planner (a read-only claude -p job on the project\'s runner) turns the goal into packages in backlog as one plan, then a decision asks Approve or Discard. The same as the plan_request tool.',
+        body: [f('goal', 'Required, 3–4000 characters: what to build.'), f('notes', 'Optional: constraints, sources, what is out of scope.')],
+        returns: '201 Plan (status running).',
+        errors: ['400 no goal, or the project has no machine or checkout', '404 unknown project', '409 archived project, planner off (models.planner null), or governor: stop all'],
+      },
     ],
   },
   {
@@ -1553,7 +1597,7 @@ digest under "Answered by operators".
 
 - **Operator** switch (Settings → Factory → Agent tokens): \`decision_answer\`, \`decision_cancel\`,
   \`control_request\` (stop or revert a package), \`projects_save\`, \`projects_set\` (autopilot, pause, archive),
-  \`tasks_update {archived}\`.
+  \`plan_request\` (the planner turns a goal into packages), \`tasks_update {archived}\`.
 - **Inbox** switch (separate): \`inbox_list\`, \`inbox_answer\`: the permissions, questions, plans and end-of-turn
   replies of Claude Code sessions in walk mode.
 - Without the switch, those calls answer 403 and name the switch to ask the owner for. Reads work for every token:
@@ -1562,6 +1606,16 @@ digest under "Answered by operators".
   turn off "Ask me before each launch" for a token instead); launch workers or coordinators unless your token was
   also allowed to launch; change \`machineId\`, \`checkout\` or \`lineFile\` of a project unless the owner told you
   the exact values (they decide what runs on their machines).
+
+## The conductor
+
+With autopilot on (and the project \`active\`), the conductor in the server moves each package along the line:
+claim → prepare → QA → the worker → G1…G5 → integrated → cleanup. \`factory_status\` shows each package's
+\`stage\` and what it \`waits\` for. It holds a project (an alert "autopilot held: <key> (<why>)") while it is paused,
+its runner is offline or older than 0.2.0, its line is unknown or invalid, or the line is a §11.7 recipe without
+built-in steps; while the governor says canStart: false it starts nothing new, and under stopAll it also runs no
+step that spends tokens and tells the workers to wait. Stop and revert requests (\`control_request\`) are carried out
+by the conductor on such projects. It only asks when it must: the decisions below.
 
 ## The loop
 
@@ -1580,13 +1634,32 @@ digest under "Answered by operators".
 
 - **round_limit** (asked by \`factory:rounds\`): a package failed a gate in its last allowed round and is blocked.
   "Încă o rundă" = one more round of gates (the worker fixes the findings); "Încă o rundă, doar pentru G<n>" = one more
-  round for that gate only; "Oprește pachetul" = stop the package. Allow another round when the findings
+  round for that gate only (the next round runs that gate and G5); "Oprește pachetul" = stop the package. With
+  autopilot on the conductor acts on the answer at once; without, a coordinator does. Allow another round when the findings
   (\`findings_list {taskId, status: "open"}\`) look fixable and few; stop when it keeps failing the same way.
-- **line** (asked by \`factory:line\`, the conductor): *needs attention* (a step errored twice, the worker stopped
-  without finishing, it is past its time limit): Retry, Ask the foreman, Stop the package, or "I'll take it from here"
-  (the owner drives it by hand). *Integration approval* (before G5 merges a sensitive package or one that touched
-  protected paths): approving lets it merge into the base branch. Leave integration approvals of sensitive packages to
-  the owner unless they told you otherwise.
+- **line** (asked by \`factory:line\`, the conductor of a project with autopilot on). The conductor matches the answer
+  to the options exactly (case and surrounding spaces aside), so answer with one of them word for word:
+  - *Needs attention* ("<id> needs attention: …": a step errored twice, prepare or QA failed, the worker stopped twice
+    without finishing, it is past \`worker.limitHours\`, the foreman could not answer). Options: \`Retry\` (the step
+    runs again, a new worker starts from PROGRESS.md, the worker gets another stint, or it is asked again for its
+    status line), \`Ask the foreman\` (only when the project's foreman is on), \`Stop the package\` (the worker commits,
+    pushes and stops, its terminal is closed, the package becomes blocata), \`I'll take it from here\` (the conductor
+    leaves the package alone until its status is changed by hand). Any other text is passed to the worker as the
+    owner's instruction.
+  - *Integration approval* ("Integrate <id> into <base>?", before G5 when \`integrate.approval\` is \`always\`, or
+    \`sensitive\` and the package is sensitive): \`Integrate\`, \`Stop the package\`, \`I'll take it from here\`. Leave
+    these to the owner unless they told you otherwise.
+  - *Protected paths* ("<id> changes protected paths: …. Integrate anyway?", when G5 refused because the branch
+    changes the line file, acceptance tests or \`paths.protected\`): \`Integrate with these changes\` (G5 runs again
+    with --allow-protected), \`Undo them first\` (back to the worker), \`Stop the package\`, \`I'll take it from here\`.
+    Never answer the first one on your own judgment.
+  - *A worker's question* ("<id>: the worker asks: …", when the foreman is off or could not answer; no options) and
+    *the foreman's escalation* ("<id>: <question>", with the foreman's options): your answer goes to the worker as
+    written. Answer only what the package's spec settles.
+- **plan** (asked by \`factory:plan\`): "Plan for <project>: <goal>: N packages. Approve?" with \`Approve\` (the plan's
+  backlog packages become gata; with autopilot on they start) and \`Discard\` (its packages still untouched in backlog
+  are deleted; edited ones stay). "The plan for <project> failed: …" has no options: your answer is what the planner
+  needs to know, and it runs again with it. Approve or discard only when the owner told you to.
 - **question** (asked by an agent: a coordinator or the foreman): a technical or scope question about a package.
   Answer only what the context and the package's spec settle. A question that changes scope, an acceptance
   criterion, a recorded decision, or touches production goes to the owner.

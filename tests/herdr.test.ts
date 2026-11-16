@@ -232,7 +232,9 @@ describe('launching a package', () => {
       'run', '--bg', '--json', '--name', 'bb-t10', '--cwd', realpathSync.native(repoA),
       '--label', 'owner=buildyboy', '--label', 'bb.task=T10', '--label', `bb.job=${id}`, '--no-parent',
       // claude resolved to a real executable (here: node + the fake claude script), never a shell shim
-      process.execPath, FAKE_CLAUDE, '--model', 'sonnet', '--permission-mode', 'acceptEdits', '-n', 'T10: Package T10',
+      process.execPath, FAKE_CLAUDE, '--model', 'sonnet', '--permission-mode', 'acceptEdits',
+      // the worker's env (BB_TASK, BB_ROLE) through claude's settings: hc has no env option
+      '--settings', '{"env":{"BB_TASK":"T10","BB_ROLE":"lucrator"}}', '-n', 'T10: Package T10',
       argv[argv.length - 1],
     ]);
     expect(argv).not.toContain('-p'); // interactive, not headless
@@ -508,8 +510,13 @@ describe('options and argv', () => {
     const a = buildHcRunArgs(o, { jobId: 'job-1', cwd: '/w', title: '-sneaky title', prompt: '- do a thing --and "quote" $(x)', program: ['/bin/claude'], pluginDirs: ['/p'] });
     expect(a).toEqual([
       'run', '--bg', '--json', '--name', 'bb-t5', '--cwd', '/w', '--label', 'owner=buildyboy', '--label', 'bb.task=T5', '--label', 'bb.job=job-1', '--no-parent',
-      '/bin/claude', '--plugin-dir', '/p', '-n', 'sneaky title', 'Task: - do a thing --and "quote" $(x)',
+      '/bin/claude', '--settings', '{"env":{"BB_TASK":"T5","BB_ROLE":"lucrator"}}', '--plugin-dir', '/p', '-n', 'sneaky title', 'Task: - do a thing --and "quote" $(x)',
     ]);
+    // a coordinator has no package: no env; a coordinator with a package to count on gets its role
+    const coord = buildHcRunArgs({ maxBudgetUsd: 1, launcher: 'hc', role: 'coordonator' }, { jobId: 'j', cwd: '/w', title: null, prompt: 'x', program: ['/bin/claude'] });
+    expect(coord).not.toContain('--settings');
+    const counted = buildHcRunArgs({ maxBudgetUsd: 1, launcher: 'hc', role: 'coordonator', bbTask: 'T6' }, { jobId: 'j', cwd: '/w', title: null, prompt: 'x', program: ['/bin/claude'] });
+    expect(counted[counted.indexOf('--settings') + 1]).toBe('{"env":{"BB_TASK":"T6","BB_ROLE":"coordonator"}}');
     expect(() => buildHcRunArgs(o, { jobId: 'a b', cwd: '/w', title: null, prompt: 'x' })).toThrow(/job id/);
     expect(() => buildHcRunArgs(o, { jobId: 'j', cwd: '/w', title: null, prompt: '   ' })).toThrow(/empty prompt/);
     expect(() => buildHcRunArgs(o, { jobId: 'j', cwd: '/w', title: null, prompt: 'x'.repeat(30_000) })).toThrow(/too long/);

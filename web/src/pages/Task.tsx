@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ROLE_LABEL, ROLES, STATUS_LABEL, TASK_STATUSES, type TaskDetail, type TaskStatus, type TaskSummary } from '../../../shared/factory.ts';
+import { ROLE_LABEL, ROLES, STATUS_LABEL, TASK_STATUSES, type ProjectDetail, type TaskDetail, type TaskStatus, type TaskSummary } from '../../../shared/factory.ts';
 import { api, ApiError } from '../lib/api.ts';
 import { exactTime, usd } from '../lib/format.ts';
 import { Link } from '../lib/router.tsx';
@@ -13,7 +13,7 @@ import { FindingsSection, GateRunsList } from '../components/factory/FindingsSec
 import { GatesSection } from '../components/factory/GatesSection.tsx';
 import { TaskHistory } from '../components/factory/TaskHistory.tsx';
 import { LaunchTask } from '../components/factory/LaunchTask.tsx';
-import { GateChips, Section, STAGE_LABEL, StageStepper, stageOf, StatusBadge, TaskFlags } from '../components/factory/common.tsx';
+import { GateChips, lineStages, Section, STAGE_LABEL, StageStepper, stageOf, StatusBadge, TaskFlags } from '../components/factory/common.tsx';
 
 function Meta({ label, children, testId, wrap }: { label: string; children: ReactNode; testId?: string; wrap?: boolean }) {
   return (
@@ -138,6 +138,12 @@ export default function Task({ id }: { id: string }) {
   });
   const all = useQuery({ queryKey: ['tasks', 'all'], queryFn: () => api.get<TaskSummary[]>('/api/tasks') });
   const projects = useFactoryProjects();
+  // the project's line decides which stages the stepper shows (the project's page query, so it is shared and live)
+  const project = useQuery({
+    queryKey: ['factory-project', t?.project],
+    queryFn: () => api.get<ProjectDetail>(`/api/factory/projects/${encodeURIComponent(t!.project!)}`),
+    enabled: !!t?.project,
+  });
 
   if (error) {
     return (
@@ -150,7 +156,8 @@ export default function Task({ id }: { id: string }) {
   if (isLoading || !t) return <div className="text-muted" data-testid="task-page">Loading…</div>;
 
   const pendingDecisions = t.decisions.filter((d) => d.status === 'pending');
-  const at = stageOf(t);
+  const stages = lineStages(project.data?.resolvedLine);
+  const at = stageOf(t, stages);
   const projectName = projects.data?.find((p) => p.key === t.project)?.name;
   const back = t.project ? `/backlog?project=${encodeURIComponent(t.project)}` : '/backlog';
   return (
@@ -180,17 +187,28 @@ export default function Task({ id }: { id: string }) {
           <GateChips gates={t.gates} />
           <ArchiveButton t={t} />
         </div>
-        {at && (
-          <div className="mt-3 max-w-xl" data-testid="task-stage" data-stage={at.stage}>
-            <div className="mb-1 text-xs uppercase tracking-wider text-muted">
-              Stage · {STAGE_LABEL[at.stage]}
-              {at.derived && (
-                <span className="normal-case tracking-normal" title="The conductor has not set a stage yet: this one comes from the status and the gate verdicts">
-                  {' '}(from the status)
-                </span>
-              )}
-            </div>
-            <StageStepper t={t} />
+        {(at || t.lineWait) && (
+          <div className="mt-3 max-w-xl" data-testid="task-stage" data-stage={at?.stage ?? ''}>
+            {at && (
+              <>
+                <div className="mb-1 text-xs uppercase tracking-wider text-muted">
+                  Stage · {STAGE_LABEL[at.stage]}
+                  {at.derived && (
+                    <span className="normal-case tracking-normal" title="The conductor has not set a stage yet: this one comes from the status and the gate verdicts">
+                      {' '}(from the status)
+                    </span>
+                  )}
+                </div>
+                <StageStepper t={t} stages={stages} />
+              </>
+            )}
+            {t.lineWait && (
+              <div className="mt-1.5 text-sm [overflow-wrap:anywhere]" data-testid="task-line-wait">
+                <span className="text-muted">Waits: </span>
+                {t.lineWait.text}
+                <span className="text-muted"> · since <RelTime ts={t.lineWait.since} /></span>
+              </div>
+            )}
           </div>
         )}
         {t.status !== 'integrata' && (

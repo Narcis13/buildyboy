@@ -24,7 +24,8 @@ test.describe('projects list', () => {
     await page.goto('/projects');
     const shop = page.locator('[data-testid=factory-project-card][data-project=shop-api]');
     await expect(shop).toContainText('Shop API');
-    await expect(shop).toContainText('autopilot on');
+    // the runner of its machine is offline in the e2e run, so the conductor holds it
+    await expect(shop).toContainText('autopilot held');
     await expect(shop.getByRole('progressbar')).toHaveAttribute('aria-valuenow', /\d+/);
     await expect(shop).toContainText('on the line');
     await expect(shop.getByTestId('card-attention')).toContainText('waits on you');
@@ -117,6 +118,15 @@ test.describe('project page', () => {
     // Line: stages derived from the status and the gate verdicts, the worker's session, the decision, what is next
     const sh4 = page.locator('[data-testid=line-card][data-task=SH-4]');
     await expect(sh4.getByTestId('stage-stepper')).toHaveAttribute('data-stage', 'build');
+    // the stepper shows only the stages of shop-api's line (G4 is off in it); the real stage is the current one
+    await expect(sh4.getByTestId('stage-stepper')).toHaveAttribute('data-stages', 'prepare,qa,build,G1,G2,G3,G5,cleanup');
+    await expect(sh4.locator('[data-step]')).toHaveCount(8);
+    await expect(sh4.locator('[data-step=G4]')).toHaveCount(0);
+    await expect(sh4.locator('[data-step=build]')).toHaveAttribute('aria-current', 'step');
+    await expect(sh4.locator('[data-step=prepare]')).toHaveAttribute('data-state', 'done');
+    // what the conductor waits for, and since when
+    await expect(sh4.getByTestId('line-waits')).toContainText("the worker's turn to end");
+    await expect(sh4.getByTestId('line-waits')).toContainText(/since \d+m ago/);
     await expect(sh4.getByTestId('line-session')).toHaveAttribute('href', /^\/s\/1{8}-/);
     const sh5 = page.locator('[data-testid=line-card][data-task=SH-5]');
     await expect(sh5.getByTestId('stage-stepper')).toHaveAttribute('data-stage', 'G3');
@@ -124,6 +134,14 @@ test.describe('project page', () => {
     await expect(sh5.locator('[data-step=G3]')).toHaveAttribute('aria-current', 'step');
     await expect(sh5.getByTestId('line-round')).toContainText('Round 1 of');
     await expect(sh5.getByTestId('line-waits')).toContainText('Waits on you');
+    await expect(sh5.locator('[data-step=G4]')).toHaveCount(0);
+    // autopilot is on but held: the header says why
+    await expect(page.getByTestId('project-header')).toContainText('autopilot held');
+    await expect(page.getByTestId('autopilot-held')).toContainText(/Autopilot held: the runner on .+ is offline/);
+    // recent plans, a failed one with its reason
+    const failed = page.getByTestId('project-plans').locator('[data-testid=plan-row][data-status=failed]');
+    await expect(failed).toContainText('saved payment methods');
+    await expect(failed.getByTestId('plan-why')).toContainText('could not read the checkout');
     await expect(page.getByTestId('project-decisions').getByTestId('decision-card')).toContainText('Require two-factor sign-in');
     await expect(page.getByTestId('project-next').getByTestId('task-card').filter({ hasText: 'Login audit trail' })).toBeVisible();
     await noHorizontalScroll(page);
@@ -205,7 +223,9 @@ test.describe('project page', () => {
     await expect(sw).toHaveAttribute('aria-checked', 'false');
     await sw.click();
     await expect(header).toHaveAttribute('data-autopilot', 'on');
-    await expect(header).toContainText('autopilot on');
+    // this project has no machine, so the conductor holds it: autopilot is on, but held, and the header says why
+    await expect(header).toContainText('autopilot held');
+    await expect(header.getByTestId('autopilot-held')).toContainText('Autopilot held: set the machine and the main checkout');
     // the decision is answered on the line
     const card = page.getByTestId('project-decisions').getByTestId('decision-card').filter({ hasText: question });
     await expect(page.locator(`[data-testid=line-card][data-task=${work}]`).getByTestId('line-waits')).toContainText('Waits on you');
@@ -215,6 +235,7 @@ test.describe('project page', () => {
     await page.getByTestId('project-pause').click();
     await expect(header).toHaveAttribute('data-state', 'paused');
     await expect(header).toContainText('autopilot held');
+    await expect(header.getByTestId('autopilot-held')).toContainText('the project is paused');
     await page.getByTestId('project-resume').click();
     await expect(header).toHaveAttribute('data-state', 'active');
     await noHorizontalScroll(page);
@@ -317,6 +338,9 @@ test.describe('backlog by project and the package page', () => {
     await expect(page.getByTestId('task-local-id')).toHaveText('local 5');
     await expect(page.getByTestId('task-stage')).toHaveAttribute('data-stage', 'G3');
     await expect(page.getByTestId('task-stage')).toContainText('from the status');
+    // the project's line has no G4
+    await expect(page.getByTestId('task-stage').locator('[data-step]')).toHaveCount(8);
+    await expect(page.getByTestId('task-stage').locator('[data-step=G4]')).toHaveCount(0);
     await noHorizontalScroll(page);
     await page.getByTestId('task-project-link').click();
     await expect(page).toHaveURL(/\/projects\/shop-api$/);
@@ -325,6 +349,88 @@ test.describe('backlog by project and the package page', () => {
     await expect(page.getByTestId('task-local-id')).toHaveCount(0);
     await expect(page.getByTestId('task-stage')).toHaveCount(0);
     await expect(page.getByTestId('task-project')).toHaveText('—');
+  });
+
+  test('the package page shows what the conductor waits for and its line history', async ({ loggedIn: page }) => {
+    const errors = trackConsoleErrors(page);
+    await page.goto('/backlog/SH-4');
+    const stage = page.getByTestId('task-stage');
+    await expect(stage).toHaveAttribute('data-stage', 'build');
+    await expect(stage).not.toContainText('from the status'); // the conductor's own stage
+    await expect(stage.locator('[data-step=G4]')).toHaveCount(0);
+    await expect(page.getByTestId('task-line-wait')).toContainText("Waits: the worker's turn to end");
+    await expect(page.getByTestId('task-line-wait')).toContainText(/since \d+m ago/);
+    // history: the conductor's sentences, and readable lines for its steps
+    const lines = page.locator('[data-testid=history-item][data-kind=line]');
+    await expect(lines.first()).toContainText('The worker started in terminal bb-SH-4. Waiting for its turn to end.');
+    await expect(lines.filter({ hasText: 'Claimed SH-4: port 4101' })).toHaveCount(1);
+    await expect(page.locator('[data-testid=history-item][data-kind=step_run]')).toContainText('started step prepare, round 1');
+    await expect(page.locator('[data-testid=history-item][data-kind=step]')).toContainText('step prepare pass: worktree ready');
+    await noHorizontalScroll(page);
+    expect(real(errors)).toEqual([]);
+  });
+});
+
+test.describe('plan new work', () => {
+  test('starts a plan from the header: the goal is required, the plan shows as running', async ({ loggedIn: page }, info) => {
+    const errors = trackConsoleErrors(page);
+    await page.goto('/projects/shop-api');
+    await page.getByTestId('plan-open').click();
+    const form = page.getByTestId('plan-form');
+    await expect(form).toBeVisible();
+    await noHorizontalScroll(page);
+    // an empty goal is held back in the browser
+    let posted = 0;
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && /\/plan$/.test(r.url())) posted++;
+    });
+    await page.getByTestId('plan-submit').click();
+    await expect(page.getByTestId('plan-goal-error')).toBeVisible();
+    expect(posted).toBe(0);
+    // cancel closes it
+    await page.getByTestId('plan-cancel').click();
+    await expect(form).toHaveCount(0);
+    await page.getByTestId('plan-open').click();
+
+    const goal = `Add a wish list to the shop (${info.project.name})`;
+    await page.getByTestId('plan-goal').fill(goal);
+    await page.getByTestId('plan-notes').fill('Keep it to signed-in customers.');
+    await page.getByTestId('plan-submit').click();
+    await expect(form).toHaveCount(0);
+    const row = page.getByTestId('project-plans').locator('[data-testid=plan-row]').filter({ hasText: goal });
+    await expect(row).toHaveAttribute('data-status', 'running');
+    await expect(row).toContainText('running');
+    expect(posted).toBe(1);
+    await noHorizontalScroll(page);
+    expect(real(errors)).toEqual([]);
+  });
+
+  test('a project without a machine: the server says why, inline; the empty line has its own button', async ({ loggedIn: page }, info) => {
+    const errors = trackConsoleErrors(page);
+    const headers = { 'x-bb-csrf': await csrf(page) };
+    const key = `plan-${info.project.name}`;
+    const res = await page.request.post('/api/factory/projects', { headers, data: { key, name: `Plan ${info.project.name}` } });
+    expect(res.status(), await res.text()).toBe(201);
+    await page.goto(`/projects/${key}`);
+    await expect(page.getByTestId('project-line')).toContainText('Nothing on the line');
+    await page.getByTestId('line-plan').click();
+    await expect(page.getByTestId('plan-form')).toBeVisible();
+    await page.getByTestId('plan-goal').fill('Build the first feature');
+    await page.getByTestId('plan-submit').click();
+    await expect(page.getByTestId('plan-error')).toContainText('needs a machine and the main checkout');
+    await expect(page.getByTestId('plan-form')).toBeVisible();
+    await noHorizontalScroll(page);
+    await page.getByTestId('plan-cancel').click();
+    await expect(page.getByTestId('plan-form')).toHaveCount(0);
+    // an archived project takes no new plan
+    await page.request.post(`/api/factory/projects/${key}/archive`, { headers });
+    await page.reload();
+    await expect(page.getByTestId('project-header')).toHaveAttribute('data-state', 'archived');
+    await expect(page.getByTestId('plan-open')).toHaveCount(0);
+    await expect(page.getByTestId('line-plan')).toHaveCount(0);
+    await page.request.post(`/api/factory/projects/${key}/unarchive`, { headers });
+    await page.request.delete(`/api/factory/projects/${key}`, { headers });
+    expect(real(errors)).toEqual([]);
   });
 });
 

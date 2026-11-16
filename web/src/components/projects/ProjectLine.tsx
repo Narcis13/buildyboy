@@ -6,17 +6,22 @@ import type { SessionSummary } from '../../../../shared/types.ts';
 import { api } from '../../lib/api.ts';
 import { usd } from '../../lib/format.ts';
 import { Link } from '../../lib/router.tsx';
-import { Card, Empty, Lamp, statusLabel } from '../ui.tsx';
+import { Button, Card, Empty, Lamp, RelTime, statusLabel } from '../ui.tsx';
 import { DecisionCard } from '../factory/DecisionCard.tsx';
-import { Section, STAGE_LABEL, StageStepper, stageOf, StatusBadge, TaskCard, TaskFlags } from '../factory/common.tsx';
+import { lineStages, Section, STAGE_LABEL, StageStepper, stageOf, StatusBadge, TaskCard, TaskFlags, type Stage } from '../factory/common.tsx';
+import { PlansSection } from './Plans.tsx';
 
-/** One short line: what the package is waiting for now. `owner`: it waits on the owner. */
-function waitsFor(t: TaskSummary, decisions: DecisionView[], session: SessionSummary | undefined): { text: string; owner?: boolean } {
+/**
+ * One short line: what the package is waiting for now. `owner`: it waits on the owner. `since`: when the conductor
+ * started waiting for it (its own `lineWait`, which wins over the guesses below, after what waits on the owner).
+ */
+function waitsFor(t: TaskSummary, decisions: DecisionView[], session: SessionSummary | undefined, stages: Stage[] | null): { text: string; owner?: boolean; since?: number } {
   const asks = decisions.filter((d) => d.taskId === t.id).length;
   if (asks) return { text: `Waits on you: ${asks} decision${asks > 1 ? 's' : ''} below`, owner: true };
   if (t.status === 'blocata') return { text: 'Blocked', owner: true };
   if (t.openControls) return { text: 'A stop or revert request is open' };
-  const at = stageOf(t);
+  if (t.lineWait) return { text: t.lineWait.text, since: t.lineWait.since };
+  const at = stageOf(t, stages);
   if (!at) return { text: '' };
   if (at.stage === 'build') {
     if (!t.sessionId) return { text: 'Waits for a worker' };
@@ -28,8 +33,8 @@ function waitsFor(t: TaskSummary, decisions: DecisionView[], session: SessionSum
   return { text: `${STAGE_LABEL[at.stage]} next` };
 }
 
-function LineCard({ t, decisions, session }: { t: TaskSummary; decisions: DecisionView[]; session: SessionSummary | undefined }) {
-  const w = waitsFor(t, decisions, session);
+function LineCard({ t, decisions, session, stages }: { t: TaskSummary; decisions: DecisionView[]; session: SessionSummary | undefined; stages: Stage[] | null }) {
+  const w = waitsFor(t, decisions, session, stages);
   return (
     <Card className="space-y-3 p-3 sm:p-4" data-testid="line-card" data-task={t.id}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -39,7 +44,7 @@ function LineCard({ t, decisions, session }: { t: TaskSummary; decisions: Decisi
         {t.costUsd != null && <span className="ml-auto text-sm tabular-nums text-muted">{usd(t.costUsd)}</span>}
       </div>
       <Link to={`/backlog/${encodeURIComponent(t.id)}`} className="block text-[15px] font-medium leading-snug [overflow-wrap:anywhere] hover:underline">{t.title}</Link>
-      <StageStepper t={t} />
+      <StageStepper t={t} stages={stages} />
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
         <span className="text-muted" data-testid="line-round">{t.round > 0 ? `Round ${t.round} of ${t.maxRounds}` : 'Before its first round'}</span>
         {t.sessionId && (
@@ -51,6 +56,12 @@ function LineCard({ t, decisions, session }: { t: TaskSummary; decisions: Decisi
         {w.text && (
           <span className={w.owner ? 'font-medium text-waiting' : 'text-muted'} data-testid="line-waits">
             {w.text}
+            {w.since != null && (
+              <span className="font-normal text-muted">
+                {' · since '}
+                <RelTime ts={w.since} />
+              </span>
+            )}
           </span>
         )}
       </div>
@@ -58,7 +69,9 @@ function LineCard({ t, decisions, session }: { t: TaskSummary; decisions: Decisi
   );
 }
 
-export function ProjectLine({ p }: { p: ProjectDetail }) {
+/** `onPlan` opens the project's "Plan new work" form (the header holds it). */
+export function ProjectLine({ p, onPlan }: { p: ProjectDetail; onPlan?: () => void }) {
+  const stages = lineStages(p.resolvedLine);
   const sessionIds = p.line.map((t) => t.sessionId).filter(Boolean);
   // the workers' lamps; the list is live through the floor topic
   const sessions = useQuery({
@@ -89,12 +102,17 @@ export function ProjectLine({ p }: { p: ProjectDetail }) {
           <ul className="space-y-3">
             {p.line.map((t) => (
               <li key={t.id}>
-                <LineCard t={t} decisions={p.decisions} session={t.sessionId ? byId.get(t.sessionId) : undefined} />
+                <LineCard t={t} decisions={p.decisions} session={t.sessionId ? byId.get(t.sessionId) : undefined} stages={stages} />
               </li>
             ))}
           </ul>
         ) : (
-          <Empty>Nothing on the line. {emptyLine}</Empty>
+          <div className="space-y-3">
+            <Empty>Nothing on the line. {emptyLine}</Empty>
+            {onPlan && p.state !== 'archived' && (
+              <Button size="sm" variant="primary" onClick={onPlan} data-testid="line-plan">Plan new work</Button>
+            )}
+          </div>
         )}
       </Section>
       <div className="min-w-0 space-y-5">
@@ -118,6 +136,7 @@ export function ProjectLine({ p }: { p: ProjectDetail }) {
             </div>
           </Section>
         )}
+        <PlansSection plans={p.plans ?? []} />
         <Section title="Next up" count={p.next.length} testId="project-next">
           {p.next.length ? (
             <ul className="flex flex-col gap-2">

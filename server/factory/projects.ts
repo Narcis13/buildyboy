@@ -10,12 +10,22 @@ import {
   type ProjectPatch, type ProjectState, type ProjectView, type TaskStatus,
 } from '../../shared/factory.ts';
 import { randomUUID } from 'node:crypto';
-import { sendToRunner } from '../jobs/core.ts';
+import { runnerInfo, sendToRunner } from '../jobs/core.ts';
 import { argvStepsOf, type ResolvedLine } from '../../shared/line.ts';
-import type { LineCommand, StepName } from '../../shared/factory.ts';
+import { KIT_RUNNER_VERSION, type GovernorVerdict, type LineCommand, type StepName } from '../../shared/factory.ts';
 import { syncTaskSessions, taskCosts } from './cost.ts';
 import { listDecisions } from './decisions.ts';
+import { governor } from './governor.ts';
+import { listPlans } from './plan.ts';
 import { FactoryError, listTasks, taskEvent } from './tasks.ts';
+
+/** "0.10.1" vs "0.2.0": negative when a < b. */
+export function compareVersions(a: string, b: string): number {
+  const p = (s: string) => s.split(/[.+-]/).slice(0, 3).map((x) => Number.parseInt(x, 10) || 0);
+  const [x, y] = [p(a), p(b)];
+  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0);
+  return 0;
+}
 
 // ---------- the resolved line (§12.3) ----------
 
@@ -131,6 +141,33 @@ export function projectBlocks(p: ProjectRow | null): string | null {
   return null;
 }
 
+/**
+ * Why the conductor (§12.5) holds a project with autopilot on, or null: `short` for one-line alerts, `why` for the
+ * owner. `all`: it touches none of the project's packages (paused, no runner, the line unknown, invalid or a §11.7
+ * recipe); otherwise (the governor) packages in flight go on and only new work waits.
+ */
+export function autopilotHold(ctx: Ctx, p: ProjectRow, g: GovernorVerdict = governor(ctx)): { short: string; why: string; all: boolean } | null {
+  if (!p.autopilot || p.state === 'archived') return null;
+  const all = (short: string, why: string) => ({ short, why, all: true });
+  if (p.state === 'paused') return all('paused', 'the project is paused: work in flight goes on, the conductor starts nothing');
+  if (!p.machine_id || !p.checkout) return all('no machine', 'set the machine and the main checkout on the Setup tab');
+  const name = ctx.db.get<{ name: string }>('SELECT name FROM machines WHERE id = ? AND revoked = 0', p.machine_id)?.name;
+  if (!name) return all('no machine', `the machine ${p.machine_id} is unknown or revoked: pick another on the Setup tab`);
+  if (!ctx.runners.has(p.machine_id)) return all('runner offline', `the runner on ${name} is offline: start \`bb runner\` there`);
+  const version = runnerInfo(ctx, p.machine_id)?.version;
+  if (typeof version !== 'string') return all('runner version unknown', `the runner on ${name} has not reported its version yet`);
+  if (compareVersions(version, KIT_RUNNER_VERSION) < 0) {
+    return all('runner too old', `the runner on ${name} is ${version}; the line's built-in steps need ${KIT_RUNNER_VERSION}: update that checkout and restart \`bb runner\``);
+  }
+  if (p.line_error) return all('line invalid', `the line file ${p.line_file} does not resolve: ${p.line_error.slice(0, 300)}`);
+  const line = projectLine(p);
+  if (!line) return all('line unknown', `the line is not known yet: the conductor asked the runner for ${p.line_file} (Check setup on the Setup tab)`);
+  if (line.legacy) return all('recipe line', 'this line has no built-in steps (a §11.7 recipe without "commands"): add "commands" to the line file, or drive it by hand');
+  if (g.stopAll) return { short: 'governor', why: `governor: stop all (${g.reason})`, all: false };
+  if (!g.canStart) return { short: 'governor', why: `governor: no new work (${g.reason})`, all: false };
+  return null;
+}
+
 // ---------- ids (§12.2) ----------
 
 /** The id without the prefix: `ED-P1` → `P1`. */
@@ -207,6 +244,7 @@ function views(ctx: Ctx, rows: ProjectRow[]): ProjectView[] {
   for (const t of tasks) cost.set(t.project, (cost.get(t.project) ?? 0) + (measured.get(t.id) ?? t.cost_usd ?? 0));
   const machines = new Map(db.all<{ id: string; name: string }>('SELECT id, name FROM machines').map((m) => [m.id, m.name]));
   const checkouts = db.all<{ id: number; owner: string | null; repo: string }>('SELECT id, gh_owner owner, gh_repo repo FROM projects WHERE gh_repo IS NOT NULL ORDER BY id');
+  const g = rows.some((r) => r.autopilot) ? governor(ctx) : null;
   return rows.map((r) => {
     const c = zeroCounts();
     for (const x of counts) if (x.project === r.key && x.status in c) c[x.status] = x.n;
@@ -227,6 +265,7 @@ function views(ctx: Ctx, rows: ProjectRow[]): ProjectView[] {
       lineError: r.line_error,
       state: r.state,
       autopilot: !!r.autopilot,
+      autopilotHeld: g ? (autopilotHold(ctx, r, g)?.why ?? null) : null,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
       archivedAt: r.archived_at,
@@ -259,6 +298,7 @@ export function getProject(ctx: Ctx, key: string): ProjectDetail {
     line: listTasks(ctx, { project: key, status: ['in_lucru', 'la_porti'] }),
     next: listTasks(ctx, { project: key, ready: true }),
     decisions: listDecisions(ctx, { project: key, status: 'pending' }),
+    plans: listPlans(ctx, key, 5),
   };
 }
 

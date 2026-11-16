@@ -17,8 +17,9 @@ import { listFindings, updateFindings } from './findings.ts';
 import { gateRunStatus, startGateRun, startStepRun } from './gateruns.ts';
 import { agentLaunch, listMachines } from './launch.ts';
 import { getProject, listProjects } from './projects.ts';
+import { requestPlan } from './plan.ts';
 import {
-  factoryStatus, hasScope, listOperatorDecisions, operatorAnswer, operatorControl, operatorInbox, operatorInboxAnswer, operatorSaveProject, operatorSetProject,
+  factoryStatus, hasScope, listOperatorDecisions, requireScope, operatorAnswer, operatorControl, operatorInbox, operatorInboxAnswer, operatorSaveProject, operatorSetProject,
 } from './operator.ts';
 
 export function createAgentToken(ctx: Ctx, name: string): { id: string; token: string } {
@@ -213,6 +214,10 @@ export const HANDLERS: { [K in ToolName]: Handler<K> } = {
   control_request: (ctx, a, actor, caller) => operatorControl(ctx, a, actor, caller),
   projects_save: (ctx, a, actor, caller) => operatorSaveProject(ctx, a, actor, caller),
   projects_set: (ctx, a, actor, caller) => operatorSetProject(ctx, a, actor, caller),
+  plan_request: (ctx, a, actor, caller) => {
+    requireScope(ctx, caller, 'operator', 'request plans');
+    return requestPlan(ctx, a, actor);
+  },
   inbox_list: (ctx, a, _actor, caller) => operatorInbox(ctx, a, caller),
   inbox_answer: (ctx, a, actor, caller) => operatorInboxAnswer(ctx, a, actor, caller),
   docs_get: (ctx, a) => {

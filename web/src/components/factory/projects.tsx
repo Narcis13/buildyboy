@@ -54,12 +54,14 @@ export function StateBadge({ p }: { p: Pick<ProjectView, 'state'> }) {
   );
 }
 
-/** "Held": autopilot is on but the project is paused or archived, so the conductor leaves it alone. */
-export function AutopilotBadge({ p }: { p: Pick<ProjectView, 'autopilot' | 'state'> }) {
-  return p.autopilot && p.state === 'active' ? (
+/** On, off, or "held": autopilot is on but the conductor leaves the project alone (paused, runner offline, no line…; the reason is `autopilotHeld`). */
+export function AutopilotBadge({ p }: { p: Pick<ProjectView, 'autopilot' | 'state' | 'autopilotHeld'> }) {
+  return p.autopilot && p.state === 'active' && !p.autopilotHeld ? (
     <Badge color="var(--bb-working)" className="normal-case">autopilot on</Badge>
   ) : (
-    <Badge className="normal-case">{p.autopilot ? 'autopilot held' : 'autopilot off'}</Badge>
+    <span title={p.autopilot ? (p.autopilotHeld ?? undefined) : undefined}>
+      <Badge className="normal-case">{p.autopilot ? 'autopilot held' : 'autopilot off'}</Badge>
+    </span>
   );
 }
 
