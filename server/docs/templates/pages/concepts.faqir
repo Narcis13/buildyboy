@@ -65,7 +65,7 @@ block content
     a(href="/docs/floor") Floor
     | and a page of its own with the full timeline. Sessions are grouped by machine and by
     strong project
-    | (the git repository or folder they run in).
+    | (the git repository or folder they run in; a factory project is a different thing, described below).
   p A session always has one of these statuses:
   div(data-ui="table")
     table(data-part="table")
@@ -185,6 +185,60 @@ block content
     | file. The
     a(href="/docs/composer") Composer
     | helps you fill it in, warns you about gaps, and keeps your prompts in a library.
+
+  h2#factory The factory
+  p
+    | Besides watching sessions, Buildyboy can run a
+    strong factory
+    | : Claude Code workers that build your repositories package by package while you follow from your phone. These
+    | are its parts, each explained on its own page.
+  dl
+    dt#factory-project Project
+    dd
+      | A repository you have put on the factory. It owns its packages, its settings and its history. Not the same as the
+      | checkouts the Floor groups sessions by.
+      a(href="/docs/projects") Projects
+    dt#factory-line Line and factory.json
+    dd
+      | The line is the path every package follows: prepare, build, the gates G1 to G5, cleanup. A repo describes its
+      | line in one small file,
+      code factory.json
+      | , in its main checkout.
+      a(href="/docs/line") The line
+    dt#factory-kit Kit and steps
+    dd
+      | The kit is what the runner already knows how to do: make a worktree, write acceptance tests, review, take
+      | screenshots, merge, clean up. Each of these is a step, and the file only has to say which commands to run.
+      a(href="/docs/line#gates") Gates
+    dt#factory-conductor Conductor and autopilot
+    dd
+      | The conductor is a program in the server, with no AI in it, that moves a project's packages along the line.
+      | Autopilot is its switch, one per project.
+      a(href="/docs/autopilot") Autopilot
+    dt#factory-foreman Foreman
+    dd
+      | A short Claude run that the conductor calls only when judgment is needed: a worker's question, or a package that
+      | is stuck. It answers, retries, asks you or blocks.
+      a(href="/docs/autopilot#foreman") The foreman
+    dt#factory-planner Planner
+    dd
+      | A short Claude run that reads the repo and turns your goal into packages. You approve them before they start.
+      a(href="/docs/planning") Planning
+    dt#factory-operator Operator
+    dd
+      | An agent key you allow to act for you, for example a bot on your phone. It can answer decisions and change
+      | projects, but not approve its own questions or a launch.
+      a(href="/docs/operators") Operators
+    dt#factory-guard Guard
+    dd
+      | A plugin hook that stops a worker from writing to the acceptance tests, the line file or other protected paths.
+      a(href="/docs/skills#guard") Skills and the guard
+  p
+    | The server still runs nothing: the conductor only sends commands, and the
+    a(href="/docs/runner") runner
+    | on your machine carries them out. Without autopilot you or a
+    a(href="/docs/coordinator") coordinator
+    | drive the same steps by hand.
 
   h2#data Where your data lives
   ul

@@ -51,6 +51,15 @@ block content
           | and launch it as a
           a(href="/docs/jobs") job
           | on any machine, with a budget and a time limit, now or on a schedule.
+    +card(title="Let the factory build a repo")
+      @body
+        p
+          | Put a repository on the factory as a
+          a(href="/docs/projects") project
+          | , plan its work, and turn on
+          a(href="/docs/autopilot") autopilot
+          | : Claude Code workers build it package by package, pass each one through the gates, and ask you only when
+          | they need you.
     +card(title="See where the money goes")
       @body
         p
@@ -73,8 +82,11 @@ block content
       strong Everyday use
       | covers the screens you will use daily: the Floor, sessions, the Inbox and walk mode.
     li
+      strong Prompts and jobs
+      | is about writing a task for Claude and running it unattended.
+    li
       strong The factory
-      | is about writing tasks for Claude and running them unattended.
+      | covers projects, the line file, planning, autopilot, the backlog and gates, operators and the plugin's skills.
     li
       strong Your setup
       | covers connecting machines and every setting.

@@ -1,0 +1,128 @@
+layout "layout.faqir"
+
+block content
+  p
+    | The Buildyboy plugin for Claude Code (installed when you
+    a(href="/docs/machines") pair a machine
+    | ) brings four
+    strong skills
+    | , ready-made instructions you start with a slash command, and a
+    strong guard
+    | that protects a package's acceptance tests and protected files while a worker builds it.
+  h2#install Getting them
+  ul
+    li
+      | The skills come with plugin version 0.2.0. A machine paired before gets them when the plugin updates: run the installer again, or
+      code claude plugin marketplace update buildyboy
+      | and
+      code claude plugin update buildyboy@buildyboy
+      | , then start a new session.
+    li
+      | They talk to Buildyboy through its MCP tools, which you register once per machine with an agent token (
+      a(href="/docs/agents") Connecting agents
+      | ). A skill checks that the tools are there and tells you how to connect when they are not.
+    li
+      | Type
+      code /buildyboy:
+      | in a session to list them. They start only when you type them, except
+      strong factory-status
+      | , which Claude may also use by itself when you ask how the factory is doing.
+  h2#factory-init /buildyboy:factory-init
+  p
+    strong Puts the current repository on the factory.
+    | Run it in the repository's main checkout. It reads the repository (package manager and scripts, test runners, end-to-end tests, how the app starts, CI,
+    code CLAUDE.md
+    | ), then:
+  ol
+    li
+      | proposes a
+      code factory.json
+      | with only the keys that differ from the defaults, and never a command the repository does not have: without acceptance tests or screenshots it says what adding them would switch on;
+    li
+      | checks it with
+      code bb line check
+      | from your Buildyboy checkout;
+    li
+      | creates the packages folder, a package template next to it and, if you want them, stubs for
+      code factory/worker.md
+      | ,
+      code review.md
+      | ,
+      code visual.md
+      | and
+      code qa.md
+      | ;
+    li
+      | makes sure
+      code .factory/
+      | and the env file are ignored by git;
+    li
+      | registers the project with
+      code projects_save
+      | when its token is an operator, or prints a link to the prefilled
+      strong New project
+      | form;
+    li
+      | tells you what comes next: commit the line, plan, turn autopilot on.
+  p
+    | It asks before writing anything, and before choosing the machine, checkout and id prefix.
+  h2#factory-plan /buildyboy:factory-plan
+  p
+    strong Turns a goal or a spec document into packages.
+    | Give it the goal in words or the path to a spec. It reads the line and the code, cuts the work by the planner's rules (
+    a(href="/docs/planning") Planning
+    | ), shows you the cut (ids, titles, dependencies) and waits for your yes, writes one file per package under
+    code paths.packages
+    | , and imports them with
+    code bb tasks import <folder> --project <key>
+    | , or with
+    code tasks_create
+    | per package when this machine has no Buildyboy checkout.
+  h2#factory-foreman /buildyboy:factory-foreman
+  p
+    strong Drives one project by hand
+    | , as its coordinator, for a project whose autopilot is off or when you want to supervise closely. It runs the loop of
+    a(href="/docs/coordinator#by-hand") Coordinating by hand
+    | with the kit: governor and controls first, claim,
+    code prepare
+    | ,
+    code qa
+    | , start the worker, read its status line, the gates G1 to G5 with their findings sent back to the worker, integration,
+    code cleanup
+    | , and decisions for what only you can answer. If the project's autopilot is on, it does not coordinate: it asks whether you want to watch or switch autopilot off.
+  p
+    | It never writes product code, never touches acceptance tests, the line file or protected paths, never answers what only you can decide, never merges by hand, and never touches herdr terminals the factory did not start.
+  h2#factory-status /buildyboy:factory-status
+  p
+    strong Says what the factory is doing and what waits on you
+    | , in a few lines: alerts, decisions and requests waiting, and per project its autopilot and the packages on the line with their stage and what they wait for. Add a project key for one project. It only reads (
+    code factory_status
+    | ).
+  h2#guard The guard
+  p
+    | Workers are told never to change their acceptance tests or the line file; the guard makes sure they do not do it by accident. It is a hook on Claude Code's Write, Edit, MultiEdit and NotebookEdit tools that acts only in a session started for a package (the
+    code BB_TASK
+    | variable is set) whose worktree holds
+    code .factory/guard.json
+    | , which the
+    code prepare
+    | step writes from the line. In such a session it refuses, with the reason and what to do instead:
+  ul
+    li
+      | a worker's edits to
+      code factory.json
+      | , to its own acceptance tests, to other packages' acceptance tests, to anything listed in
+      code paths.protected
+      | , and to the guard file itself;
+    li
+      | a QA session's edits anywhere outside the package's acceptance folder.
+  p
+    | Paths are compared after resolving
+    code ..
+    | , links, and the different spellings of Windows paths. Edits outside the worktree and reads are never blocked, and a session without
+    code BB_TASK
+    | (you, a coordinator) is never affected. If anything is missing or unreadable, the guard lets the edit through: it is a second line of defence, and the gates decide. G2 fails when the acceptance tests changed, and G5 stops for your approval when protected paths did.
+  p
+    | When a worker's package really needs a protected file changed, the guard tells it to say so in its status line (
+    code FACTORY-STATUS: question …
+    | ), and the change reaches the base branch only through G5 with your approval.

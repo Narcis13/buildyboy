@@ -2,24 +2,36 @@ layout "layout.faqir"
 
 block content
   p
-    | In the
-    strong factory
-    | , a Claude Code session called the
+    | With
+    a(href="/docs/autopilot") autopilot
+    | on, the factory needs no coordinator: the server's conductor moves each package along the line by itself, and
+    | you only answer the questions it asks you. This page is for the other case: a
+    a(href="/docs/projects") project
+    | with autopilot off, where a
     strong coordinator
-    | runs in a herdr terminal and does the orchestration: it picks the next package from the
-    a(href="/docs/backlog") backlog
-    | , starts a worker for it, runs the gates and integrates what passes. Buildyboy is its control tower. The
-    | coordinator reads and writes everything through Buildyboy's MCP server, and you follow along on your phone.
-  p This page sets up that link, explains the consumption governor, and shows how herdr terminals appear in Buildyboy.
+    | (a Claude Code session in a herdr terminal, or you) drives the same steps by hand, and for supervising a project
+    | that is on autopilot. Either way Buildyboy is the control tower: the coordinator reads and writes everything
+    | through its MCP server, and you follow along on your phone.
+  p
+    | This page sets up that link, explains the consumption governor, shows the loop to run by hand with the kit's
+    | steps, and shows how herdr terminals appear in Buildyboy.
+  +callout(variant="info")
+    @content
+      p
+        | Not sure which one you need? Turn autopilot on for the project and watch it with
+        code factory_status
+        | or the
+        a(href="/docs/skills#factory-status") factory-status
+        | skill. Come back here when you want to take a package over, or when a project should not run on its own.
 
   h2#pieces The three pieces
   dl
     dt Claude Code
-    dd The agents: one coordinator and the workers, each with its own subagents.
+    dd The agents: the workers, each with its own subagents, and a coordinator when you run one by hand.
     dt herdr (hc)
     dd The execution: terminals that stay alive, so a worker can be watched and corrected while it runs.
     dt Buildyboy
-    dd The memory and the phone: backlog, usage and the governor, gates, decisions and the daily digest.
+    dd The memory and the phone: projects, backlog, usage and the governor, gates, decisions and the daily digest. With autopilot on it also does the coordinating.
 
   h2#token Step 1 · Create an agent key
   p
@@ -88,7 +100,11 @@ block content
   p
     | Each tool answers with JSON. A refused call says why, for example "task P3 waits on P1". The
     a(href="/docs/mcp-tools") MCP tool reference
-    | has every argument, result and error.
+    | has every argument, result and error. The planner has a tool of its own,
+    code plan_request
+    | (see
+    a(href="/docs/planning#planner") Planning
+    | ).
   div(data-ui="table")
     table(data-part="table")
       thead(data-part="thead")
@@ -110,20 +126,28 @@ block content
           td(data-part="td") Status, context, cost and branch of the sessions Buildyboy knows.
         tr(data-part="tr")
           td(data-part="td")
+            code projects_list, projects_get
+          td(data-part="td") The factory projects, and one with its counts, its line and the packages ready next.
+        tr(data-part="tr")
+          td(data-part="td")
             code tasks_list, tasks_get
-          td(data-part="td") The backlog, or only the packages ready to start; one package with its history, gates and requests.
+          td(data-part="td") The backlog (all, one project, or only the packages ready to start); one package with its history, gates and requests.
         tr(data-part="tr")
           td(data-part="td")
             code tasks_create, tasks_update
-          td(data-part="td") Add a package (also from chosen findings), or change its status, branch, cost, prompt version, terminal, used migrations or note.
+          td(data-part="td") Add a package (also from chosen findings), or change its status, branch, cost, prompt version, terminal, used migrations, note or archived state.
         tr(data-part="tr")
           td(data-part="td")
             code tasks_claim
-          td(data-part="td") Take the next ready package (or a given one), mark it În lucru and get its port, database and migration range. Refused while the governor says no.
+          td(data-part="td") Take the next ready package (or a given one, or the next of one project), mark it În lucru and get its port, database and migration range. Refused while the governor says no.
         tr(data-part="tr")
           td(data-part="td")
             code prompts_render, prompts_lint, prompts_save
           td(data-part="td") Fill the harness template, check it, and save it as a versioned prompt tied to a package.
+        tr(data-part="tr")
+          td(data-part="td")
+            code steps_run
+          td(data-part="td") Run one of the kit's steps for a package on its project's runner: prepare, qa, cleanup or revert. Poll it with gates_status.
         tr(data-part="tr")
           td(data-part="td")
             code gates_record
@@ -131,7 +155,7 @@ block content
         tr(data-part="tr")
           td(data-part="td")
             code gates_run, gates_status
-          td(data-part="td") Run a gate on the runner from the repo's recipe and get back only the verdict, summary and findings. The log stays in Buildyboy.
+          td(data-part="td") Run a gate on the runner from the project's line file and get back only the verdict, summary and findings; gates_status also reports a step. The log stays in Buildyboy.
         tr(data-part="tr")
           td(data-part="td")
             code findings_list, findings_update
@@ -147,7 +171,22 @@ block content
         tr(data-part="tr")
           td(data-part="td")
             code control_get
-          td(data-part="td") Your requests to stop a package or revert its integration, so the coordinator can act on them.
+          td(data-part="td") Your requests to stop a package or revert its integration, so whoever coordinates can act on them.
+        tr(data-part="tr")
+          td(data-part="td")
+            code factory_status
+          td(data-part="td") Everything in one small answer: the governor, alerts, each project's autopilot state, the packages on the line and what waits for you. What an agent calls when autopilot is on.
+        tr(data-part="tr")
+          td(data-part="td")
+            code machines_list, tasks_launch, coordinator_launch
+          td(data-part="td") Find a machine and its allowed folders, then start a worker for a package, or another coordinator. Off until you allow it; see Letting agents start agents below.
+        tr(data-part="tr")
+          td(data-part="td")
+            code decisions_list, decision_answer, decision_cancel, control_request, projects_save, projects_set, inbox_list, inbox_answer
+          td(data-part="td")
+            | The tools that let an agent act for you. Most need a key you made an operator; the two inbox tools need its Inbox switch. See
+            a(href="/docs/operators") Operators
+            | .
         tr(data-part="tr")
           td(data-part="td")
             code docs_get
@@ -156,7 +195,8 @@ block content
   h2#governor The consumption governor
   p
     | Your subscription has a rolling 5-hour window and a weekly 7-day window. The governor reads them from the
-    | statusline bridge and answers the coordinator's question: can I start a worker now, or until when should I wait?
+    | statusline bridge and answers the question of whoever coordinates, the conductor included: can I start a worker now,
+    | or until when should I wait?
   ul
     li
       strong 7-day window at 80% or more:
@@ -176,6 +216,99 @@ block content
     code GET /api/governor
     | returns it as JSON.
 
+  h2#by-hand The by-hand loop with the kit
+  p
+    | With autopilot off, nothing moves on its own: you or a coordinator session run the line's stages with the tools
+    | below. It is the same sequence the
+    a(href="/docs/autopilot#stages") conductor
+    | follows, and the project's
+    a(href="/docs/line") line file
+    | decides what each step does. The
+    a(href="/docs/skills#factory-foreman") factory-foreman
+    | skill of the plugin (
+    code /buildyboy:factory-foreman
+    | ) packages this loop for Claude Code.
+  ol
+    li
+      code governor_get
+      | : start new work only when
+      code canStart
+      | is true. With
+      code stopAll
+      | , stop.
+    li
+      code control_get
+      | : act on your stop and revert requests first, then call it again with
+      code ack: true
+      | .
+    li
+      code tasks_claim
+      | with
+      code project
+      | set to the project's key. The package becomes În lucru and you get its port, database and migration range.
+    li
+      code steps_run
+      | with
+      code prepare
+      | : the runner creates the package's worktree and branch, writes the
+      code .factory/
+      | folder (the package and the guard's file) and runs the line's setup command. Poll
+      code gates_status
+      | until it is done.
+    li
+      code steps_run
+      | with
+      code qa
+      | , when the line has acceptance tests: a verifier writes the black-box tests before the code, and they are
+      | committed and tagged.
+    li
+      code tasks_launch
+      | to start the worker, or start it yourself in the worktree with
+      code BB_TASK
+      | set to the package and
+      code BB_ROLE=lucrator
+      | .
+    li
+      | Wait for the worker's last message. It ends with a
+      code FACTORY-STATUS
+      | line:
+      code done
+      | ,
+      code question
+      | or
+      code blocked
+      | , the last two followed by the text. A question or a block needs an answer from you or the coordinator.
+    li
+      code tasks_update
+      | to La porți (this starts a gate round), then
+      code gates_run
+      | for G1, G2, G3 and G4 in order, and G5 last. After each one, poll
+      code gates_status
+      | until it is done. A gate the line does not enable comes back as skipped.
+    li
+      | On a failure, send the open findings back to the worker (a live terminal takes a short message; longer text goes
+      | in a file under
+      code .factory/inbox/
+      | ), move the package back to În lucru and repeat from the gates.
+    li
+      | When G5 has passed:
+      code tasks_update
+      | to Integrată with the migrations the package used, then
+      code steps_run
+      | with
+      code cleanup
+      | to end its terminal and remove the worktree and the branch.
+    li
+      code decision_ask
+      | for anything only you can decide, and read the answer later with
+      code decision_get
+      | . Keep working on other packages meanwhile.
+  p
+    | A package you move by hand while autopilot is on is picked up by the conductor from its new status, so you can
+    | take one over and hand it back. See
+    a(href="/docs/autopilot#by-hand") By hand
+    | .
+
   h2#bookkeeping The factory's bookkeeping
   ul
     li
@@ -193,14 +326,22 @@ block content
       | package page shows their exact sum, split by role.
     li
       strong Gates on the runner:
-      | each repo names its recipe, a JSON file in its main checkout, never in the worker's worktree.
+      | the runner reads the project's line file,
+      code factory.json
+      | , in its main checkout, never in the worker's worktree (see
+      a(href="/docs/line") The line
+      | ).
       code gates_run
-      | sends one gate to the runner, which runs its steps without a shell and reports the verdict, summary and
-      | findings. The log stays on the package page.
+      | sends one gate to the runner. If the line has argv steps for that gate the runner runs them without a shell;
+      | otherwise it runs the kit's built-in gate. It reports the verdict, summary and findings, and the log stays on
+      | the package page. The settings that used to be kept per repo in Settings → Factory now live on the project and in
+      | its line file.
     li
       strong Resources:
       code tasks_claim
-      | gives each package a port, a database name and a range of migration numbers from the repo's config. When a
+      | gives each package a port, a database name and a range of migration numbers, from the line file's
+      code resources
+      | or, for a project that came from the old per-repo settings, from its own config. When a
       | package is integrated with migrations inside another active package's range, that package and the digest get
       | a warning to renumber.
     li

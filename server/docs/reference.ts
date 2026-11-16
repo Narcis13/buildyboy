@@ -1432,10 +1432,12 @@ function startGuide(site: RefSite): string {
   return `# Buildyboy for agents
 
 Buildyboy is a self-hosted control tower around Claude Code (${u}). It records every Claude Code session on every paired
-machine, lets its owner approve and steer them from a phone, and runs an autonomous **software factory**: a
-*coordinator* agent takes packages from a backlog, starts *workers* for them, runs *gates* (checks) and integrates what
-passes. Buildyboy holds the factory's memory: the backlog, subscription usage and the governor, gate results and
-findings, the human's decisions, stop/revert requests and the daily digest.
+machine, lets its owner approve and steer them from a phone, and runs an autonomous **software factory**: each repo on
+it is a *project* with a *line* (\`factory.json\`); packages from its backlog get a worktree, acceptance tests written
+first, a *worker*, *gates* (checks) and integration. With *autopilot* on, the server's conductor drives that by itself;
+otherwise a coordinator agent (or the owner) does, with the same tools. Buildyboy holds the factory's memory: projects
+and backlog, subscription usage and the governor, gate results and findings, the owner's decisions, stop/revert
+requests and the daily digest.
 
 ## Connect
 
@@ -1469,50 +1471,76 @@ curl -X POST ${u}/api/agent/tasks_list -H "Authorization: Bearer bba_…" -H "Co
 
 ## Concepts
 
-- **Package (task)**: one unit of work in the backlog, with an id (P3), acceptance criteria, dependencies, a repo and a
-  status. Statuses are Romanian: ${TASK_STATUSES.map((s) => `\`${s}\` (${STATUS_LABEL[s]})`).join(', ')}.
-- **Project**: a package belongs to one project for life (\`projects_list\`). The project says where its line runs
-  (machine, main checkout, line file), may give its package ids a prefix (\`ED-\`: P1 is stored as ED-P1; \`localId\`
-  is P1), and can be paused (nothing new starts) or archived. Pass \`project\` to \`tasks_list\`, \`tasks_create\` and
-  \`tasks_claim\` to work in one project.
-- **Archive**: integrated packages leave the lists a day later (and an archived project's at once); \`tasks_list
-  {archived: true}\` shows them. \`tasks_get\` and dependencies are unaffected.
-- **Ready**: status \`gata\` and every dependency \`integrata\`. Only ready packages can be claimed.
-- **Claim**: \`tasks_claim\` moves a ready package to \`in_lucru\` and allocates its **resources** from its project's
-  config: a port, a database name and a block of migration numbers, kept until it is integrated.
-- **Gates**: ${GATES.map((g) => `${g} ${GATE_LABEL[g]}`).join('; ')}. A gate result is pass, fail or skip, with a
-  summary, optional screenshots and **findings** (blocker, major, minor).
+- **Project**: a repo on the factory (\`projects_list\`, \`projects_get\`). It owns its packages for life, says where
+  its line runs (a paired machine, the trusted main checkout, the line file), may give its package ids a prefix
+  (\`ED-\`: P1 is stored as ED-P1; \`localId\` is P1), and can be paused (nothing new starts) or archived. Pass
+  \`project\` to \`tasks_list\`, \`tasks_create\` and \`tasks_claim\` to work in one project.
+- **Package (task)**: one unit of work, with an id, a spec, acceptance criteria, dependencies and a status. Statuses
+  are Romanian: ${TASK_STATUSES.map((s) => `\`${s}\` (${STATUS_LABEL[s]})`).join(', ')}. **Ready**: \`gata\` and
+  every dependency \`integrata\`. **Archive**: integrated packages leave the lists a day later (\`tasks_list
+  {archived: true}\` shows them); \`tasks_get\` and dependencies are unaffected.
+- **The line**: the repo's \`factory.json\` in the main checkout: its commands (setup, verify, acceptance, shots, app,
+  cleanup), paths (packages, acceptance tests, screenshots, protected files), resources, models and limits. The
+  runner reads it; a worker can never change its own gates.
+- **Steps and the kit**: the runner's built-in work, run with \`steps_run\` (\`prepare\`: worktree, branch, env file,
+  \`.factory/\`, setup; \`qa\`: acceptance tests written before the code; \`cleanup\`; \`revert\`) and \`gates_run\`
+  (${GATES.map((g) => `${g} ${GATE_LABEL[g]}`).join('; ')}). Poll both with \`gates_status\`. A gate result is pass,
+  fail or skip with a summary and **findings** (blocker, major, minor); an error has no verdict and uses no round.
+- **Claim and resources**: \`tasks_claim\` moves a ready package to \`in_lucru\` and allocates a port, a database name
+  and a block of migration numbers, kept until it is integrated.
 - **Rounds**: every move into \`la_porti\` starts a gate round. A failing gate in the last allowed round (3 by
-  default) blocks the package (\`blocata\`) and asks the human whether to allow another round.
-- **Governor**: from the subscription's 5-hour and 7-day windows, says whether a new worker may start
-  (\`canStart\`) or the factory must stop (\`stopAll\`).
-- **Launching**: an agent token the owner allowed to launch can start workers (\`tasks_launch\`) and, if allowed,
-  coordinators (\`coordinator_launch\`) on a paired machine's runner. Refused while the governor says no; may wait
-  for the owner's approval first.
-- **Decisions**: questions for the human, answered on the phone. **Controls**: the human's requests to stop a
-  package or revert its integration. **Digest**: a daily summary pushed to the phone.
-- **Roles and cost**: sessions started with the env vars \`BB_TASK=<id>\` and \`BB_ROLE\` (lucrator = worker, qa,
-  poarta = gates, coordonator) are linked to the package; its cost is their measured sum.
+  default) blocks the package and asks the owner whether to allow another one.
+- **Autopilot**: per project. When it is on, the server's **conductor** moves the packages along the line by itself
+  (claim → prepare → qa → build → G1…G5 → cleanup), with no LLM, and calls a **foreman** (\`claude -p\`) only for a
+  worker's question or a stuck package. The **planner** turns a goal into a plan of packages the owner approves.
+- **Status line**: a worker ends every final message with \`FACTORY-STATUS: done\`, \`FACTORY-STATUS: question
+  <text>\` or \`FACTORY-STATUS: blocked <text>\`.
+- **Governor**: from the subscription's 5-hour and 7-day windows, whether new work may start (\`canStart\`) or the
+  factory must stop (\`stopAll\`).
+- **Decisions**: questions for the owner, answered on the phone. **Controls**: the owner's requests to stop a package
+  or revert its integration. **Digest**: a daily summary pushed to the phone. An **operator** token may act for the
+  owner (\`docs_get {topic: "operator"}\`).
+- **Launching**: a token the owner allowed to launch can start workers (\`tasks_launch\`) and coordinators
+  (\`coordinator_launch\`) on a paired machine's runner; refused while the governor says no; may wait for approval.
+- **Roles and cost**: sessions started with \`BB_TASK=<id>\` and \`BB_ROLE\` (lucrator = worker, qa, poarta = gates,
+  coordonator) are linked to the package; its cost is their measured sum.
 
-## The coordinator loop
+## When autopilot is on: watch, do not coordinate
 
-1. \`governor_get\`. If \`stopAll\`, send \`digest_post\` with a note and stop. If not \`canStart\`, start nothing new;
-   wait until \`waitUntil\` (keep supervising running workers).
-2. \`control_get\`. For each request: \`stop\` → stop that package's worker, \`tasks_update\` it with a note;
-   \`revert\` → revert its integration in git yourself. Then \`control_get {ack: true}\`.
-3. \`tasks_list {ready: true}\` and \`tasks_claim\` (optionally \`{id}\`). Read the package with \`tasks_get\`.
-4. Write the worker prompt: \`prompts_render\` with the harness slots (Goal, Done when, Scope, Limit, Subagents,
-   Branch, PR, Unattended) and the package's acceptance criteria; fix what \`warnings\` says; \`prompts_save {taskId}\`.
-5. Start the worker in a worktree with \`BB_TASK\` and \`BB_ROLE=lucrator\` set, and record it:
-   \`tasks_update {id, branch, terminal or sessionId}\`. Or, when your token may launch, let a runner start it:
-   \`machines_list\`, then \`tasks_launch {taskId, machineId, cwd}\` (it records the terminal or session itself).
-6. When it is done: \`tasks_update {status: "la_porti"}\`. Run each gate: \`gates_run\` then \`gates_status\` until
-   \`done\`/\`error\` for recipe gates, or run a check yourself and \`gates_record\` it. On a fail, hand the open
-   blockers and majors (\`findings_list {taskId, status: "open"}\`) back to the worker, move it to \`in_lucru\`, repeat.
-7. All gates pass: merge, \`tasks_update {status: "integrata", migrationsUsed}\`, run the returned \`cleanup\`
-   lines, and pass any \`warnings\` on to the packages they name.
-8. Only the human can decide something? \`decision_ask\` (with options and context), keep working on other packages,
-   and check \`decision_get\` on later loops.
+\`projects_get {key}\` says whether a project's autopilot is on. If it is, the conductor already claims, prepares,
+launches, gates, integrates and cleans up: **do not** call \`tasks_claim\`, \`steps_run\`, \`gates_run\` or
+\`tasks_update\` for its packages. Watch with \`factory_status\` (one compact call: alerts, the line, what waits on the
+owner), come back every 10–15 minutes, and tell the owner what waits for them. Moving a package by hand while
+autopilot is on is allowed (the conductor picks it up from its new status), but only when the owner asked.
+
+## The coordinator loop (autopilot off: by hand)
+
+1. \`governor_get\`. If \`stopAll\`, tell running workers to commit, push and wait, send \`digest_post\` with a note
+   and stop. If not \`canStart\`, start nothing new; keep supervising what runs.
+2. \`control_get\`. \`stop\` → tell the worker to commit, push and stop, then \`tasks_update {status: "blocata", note}\`;
+   \`revert\` → \`steps_run {taskId, step: "revert"}\`, then \`tasks_update {status: "gata", note}\`. Then
+   \`control_get {ack: true}\`.
+3. Fewer packages in flight than the line's \`limits.workers\`: \`tasks_claim {project}\` (\`task: null\` is not an
+   error: read \`reason\`), then \`steps_run {taskId, step: "prepare"}\` and \`gates_status\` until \`done\`. When the
+   line has QA: \`steps_run {taskId, step: "qa"}\` the same way.
+4. Write the worker prompt (\`prompts_render\`, harness slots, the package's criteria, the rules: never touch the
+   acceptance tests or the line file, push to its branch, never merge, end with the status line), \`prompts_save
+   {taskId}\`. Start the worker in the worktree: \`tasks_launch {taskId, machineId, cwd}\` when your token may launch,
+   or yourself with \`BB_TASK\` and \`BB_ROLE=lucrator\` set, then \`tasks_update {id, branch, terminal or sessionId}\`.
+5. Its status line says \`done\`: \`tasks_update {status: "la_porti"}\`, then each enabled gate in order: \`gates_run
+   {taskId, gate}\` and \`gates_status\` until \`done\`/\`error\`. On a fail, hand the open blockers and majors
+   (\`findings_list {taskId, status: "open"}\`) back to the worker, move it to \`in_lucru\`, repeat. \`question\`:
+   answer it if the spec settles it, else \`decision_ask\`. \`blocked\`: fix the cause or ask the owner.
+6. G5 integrates (merge of the base, G1 and G2 again, fast-forward, push). Ask the owner first when the line's
+   \`integrate.approval\` says so; \`needs approval: <paths>\` means protected paths changed: only with their yes,
+   run it again with \`args: ["--allow-protected"]\`. Then \`tasks_update {status: "integrata", migrationsUsed}\`, pass
+   any \`warnings\` on, and \`steps_run {taskId, step: "cleanup"}\`.
+7. Only the owner can decide something (scope, a criterion, a recorded decision, production, money)? \`decision_ask\`
+   (with options and context), keep working on what does not depend on it, check \`decision_get\` on later loops.
+   Never write product code, change acceptance tests or the line file, or answer for the owner.
+
+A project whose line file is a §11.7 recipe (argv steps, no \`commands\`) has no kit steps: skip \`prepare\` and
+\`qa\`, prepare the worktree yourself, and run its gates with \`gates_run\` as before.
 
 ## Conventions
 

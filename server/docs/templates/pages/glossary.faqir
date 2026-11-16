@@ -12,6 +12,10 @@ block content
     dd
       | The folders a machine's runner may start jobs in, listed in its runner.json. Only that machine can change them.
       a(href="/docs/runner#config") More
+    dt#archive Archive
+    dd
+      | Where a project's finished packages go: integrated ones are archived after a day (Settings), by you, or with the project. They leave the board and stay in the project's Done tab.
+      a(href="/docs/projects#archive") More
     dt#backlog Backlog
     dd
       | The list of the factory's packages and their statuses.
@@ -20,6 +24,10 @@ block content
     dd
       | The strip at the top of every page that says what needs you, such as "2 waiting for you".
       a(href="/docs/floor#attention-bar") More
+    dt#autopilot Autopilot
+    dd
+      | A project's switch that lets the conductor move its packages along the line by itself, asking you only when it needs you.
+      a(href="/docs/autopilot") More
     dt#bay Bay
     dd A machine on the Floor, drawn as a dashed box holding its stations.
     dt#belt Belt (conveyor belt)
@@ -28,7 +36,8 @@ block content
       a(href="/docs/floor#bays-and-stations") More
     dt#coordinator Coordinator
     dd
-      | The Claude Code session that runs the factory: it starts workers, runs the gates and integrates what passes.
+      | A Claude Code session (or you) that drives a project by hand when autopilot is off: it starts workers, runs the
+      | gates and integrates what passes. With autopilot on none is needed.
       a(href="/docs/coordinator") More
     dt#claude-code Claude Code
     dd Anthropic's AI coding assistant that runs in your terminal (and in its desktop app). Buildyboy watches and helps steer it.
@@ -38,11 +47,16 @@ block content
     dd
       | The page where you write and save prompts for unattended runs.
       a(href="/docs/composer") More
+    dt#conductor Conductor
+    dd
+      | The program in the server, with no AI in it, that moves the packages of projects on autopilot through the line: prepare, build, the gates and cleanup.
+      a(href="/docs/autopilot#stages") More
     dt#context Context
     dd How much of the model's working memory (its context window) the conversation fills, as a percentage.
     dt#decision Decision
     dd
-      | A question from the coordinator that waits for your answer on the Decisions page.
+      | A question that waits for your answer on the Decisions page. It comes from the conductor, the planner, a gate
+      | round that failed, or an agent.
       a(href="/docs/backlog#decisions") More
     dt#digest Digest
     dd
@@ -52,6 +66,14 @@ block content
     dd
       | The list of checks in a harness prompt that tell Claude, and Buildyboy's Verify, when the work is finished.
       a(href="/docs/composer#fields") More
+    dt#factory-json factory.json (line file)
+    dd
+      | The one file in a repo's main checkout that tells the factory how to build, test, check and integrate it.
+      a(href="/docs/line") More
+    dt#foreman Foreman
+    dd
+      | A short Claude run the conductor calls when judgment is needed: a worker's question or a stuck package. It answers, retries, asks you or blocks the package.
+      a(href="/docs/autopilot#foreman") More
     dt#gate Gate (G1 to G5)
     dd
       | An automatic check a package must pass before it is integrated.
@@ -60,6 +82,10 @@ block content
     dd
       | The rule that decides, from your subscription usage, whether the factory may start a new worker.
       a(href="/docs/coordinator#governor") More
+    dt#guard Guard
+    dd
+      | The plugin hook that stops a worker from writing to the acceptance tests, the line file or other protected paths. Gates G2 and G5 are what decide; the guard is a second line.
+      a(href="/docs/skills#guard") More
     dt#herdr herdr (hc)
     dd
       | A tool that runs programs, including Claude Code, in terminals that stay alive and can be taken over.
@@ -74,6 +100,10 @@ block content
       | A small program Claude Code runs at fixed moments (a tool is about to run, a turn ended…). The Buildyboy plugin's
       | hook reports these moments to the server.
       a(href="/docs/concepts#hooks") More
+    dt#id-prefix Id prefix, local id
+    dd
+      | A project's prefix (for example ED-) is added to its package ids, so P1 is stored as ED-P1. The local id is the id without the prefix.
+      a(href="/docs/projects#ids") More
     dt#inbox Inbox
     dd
       | Where requests wait for your answer while walk mode is on.
@@ -82,6 +112,10 @@ block content
     dd
       | A Claude Code run started by Buildyboy on one of your machines, with a budget and optional limits.
       a(href="/docs/jobs") More
+    dt#kit Kit
+    dd
+      | What the runner already knows how to do for any repo: the worktree, QA, review, screenshots, integration and cleanup. factory.json only adds the commands that are particular to the repo.
+      a(href="/docs/line#gates") More
     dt#machine Machine
     dd A computer, or a WSL installation, paired with Buildyboy. Windows and WSL on the same PC are two machines.
     dt#mcp MCP
@@ -94,6 +128,10 @@ block content
       | :
       a(href="/docs/agents") Connecting agents
       | .
+    dt#operator Operator
+    dd
+      | An agent key you allow to act for you: answer decisions, stop or revert packages, change projects and autopilot. A second switch, Inbox, lets it answer the Inbox.
+      a(href="/docs/operators") More
     dt#package Package
     dd
       | The factory's unit of work: a module or a large slice, taken from start to finish by one worker.
@@ -104,15 +142,25 @@ block content
       a(href="/docs/machines") More
     dt#permission-mode Permission mode
     dd What Claude may do without asking: default, acceptEdits, plan, auto, dontAsk or bypassPermissions.
+    dt#plan Plan
+    dd
+      | The packages the planner writes for one goal. They wait in the backlog until you approve them.
+      a(href="/docs/planning#approval") More
     dt#plan-mode Plan mode
     dd A Claude Code mode in which Claude proposes a plan before changing anything. With walk mode on, the plan comes to your Inbox.
+    dt#planner Planner
+    dd
+      | A short Claude run that reads the repo and turns your goal into a plan of packages with acceptance criteria and dependencies.
+      a(href="/docs/planning#planner") More
     dt#plugin Plugin
     dd The Buildyboy add-on installed into Claude Code on each paired machine. It provides the hooks and the /bb-… commands.
     dt#progress PROGRESS.md
     dd A file harness runs keep in the repository with what is done, decisions, failed attempts and next steps. Shown in the session's Progress panel.
     dt#project Project
     dd
-      | A repository or folder on one machine, with all the sessions and jobs that ran in it.
+      | A factory project: a repo put on the factory, which owns its packages, settings and history. Not the same as a
+      | checkout, the repository or folder on one machine with the sessions and jobs that ran in it, which the Floor and
+      | Insights group by.
       a(href="/docs/projects") More
     dt#pwa PWA
     dd A web app that can be installed on a phone's home screen. Buildyboy is one; on iPhone, installing it is needed for notifications.
@@ -140,14 +188,26 @@ block content
       a(href="/docs/composer#spec-ify") More
     dt#spool Spool
     dd The file on each machine (~/.buildyboy/spool.jsonl) where events wait when the server cannot be reached.
+    dt#stage Stage
+    dd
+      | Where a package is on the line: prepare, qa, build, G1 to G5 or cleanup.
+      a(href="/docs/autopilot#stages") More
     dt#stale Stale
     dd A session that was working but has sent nothing for 10 minutes.
     dt#station Station
     dd A session's card on the Floor.
+    dt#status-line Status line (FACTORY-STATUS)
+    dd
+      | The last line of a worker's final message: done, a question or blocked. The conductor reads it to know what to do next.
+      a(href="/docs/autopilot#status-line") More
     dt#statusline Statusline bridge
     dd
       | An optional script that feeds context and usage-limit figures to Buildyboy.
       a(href="/docs/settings#statusline") More
+    dt#step Step
+    dd
+      | One thing the runner does for a package: prepare, qa, a gate, cleanup or revert. Started by the conductor, or by hand with steps_run.
+      a(href="/docs/coordinator#by-hand") More
     dt#subagent Subagent
     dd A helper agent Claude starts for part of a task. Shown as ✣ on the Floor and as its own lane in a session.
     dt#turn Turn
