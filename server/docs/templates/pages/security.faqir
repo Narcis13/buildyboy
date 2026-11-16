@@ -74,6 +74,49 @@ block content
       | inside the runner's allowed folders and are recorded in the audit log.
     li Revoking a key on the same screen cuts it off at once.
 
+  h2#operators Operator keys
+  p
+    | An agent key can be made an
+    a(href="/docs/operators") operator
+    | in Settings → Factory → Agent tokens. It then acts for you, and it is off by default. Two separate switches decide
+    | how far it goes.
+  ul
+    li
+      strong Operator
+      | lets the key answer decisions, ask for a stop or a revert, create and change projects (including autopilot, pause
+      | and archive), archive packages and ask the planner for a plan.
+    li
+      strong Inbox
+      | lets the key answer the Inbox for you: permissions, questions, plans and replies of sessions in walk mode. It is a
+      | different switch because it can let a tool call run.
+    li A key never answers a decision it asked itself, and no agent can answer a launch approval. To remove that wait, turn off Ask me before each launch for that key.
+    li Everything an operator does is recorded in the audit log as agent:NAME, and the daily digest lists what operators answered.
+  p
+    | Keep an operator key on as few devices as you can, and revoke it when the device is lost: it holds almost every
+    | power you have in the app, apart from changing settings, tokens and your password.
+
+  h2#line-trust What the factory runs
+  ul
+    li
+      strong Only you set where a line runs.
+      | A project's machine, main checkout and line file decide what the runner executes, so only you on the web, or an
+      | operator key, can set them. Any other agent key may only read projects.
+    li
+      strong The runner trusts the main checkout, not the worktree.
+      | It runs only what the
+      code factory.json
+      | in the trusted main checkout says, plus the kit's own steps. A command in a worktree is never read, so a worker
+      | cannot change its own gates. A package that changes the line file or another protected path is integrated only
+      | after you approve it.
+    li
+      strong The guard is a second line of defence.
+      | In a worker's session the plugin's guard refuses writes to the acceptance tests, the line file and the other
+      | protected paths. It does nothing outside a factory session and fails open if it breaks, so gates G2 and G5 are what
+      | decide. See
+      a(href="/docs/skills#guard") The guard
+      | .
+    li The server still never runs a command and never reads a repository. It stores what the runner reports and sends the runner its orders.
+
   h2#what-runs What runs where
   ul
     li
@@ -89,7 +132,9 @@ block content
       code claude
       | with a checked list of options (no shell), only inside the allowed roots listed in its own settings file, which
       | the server cannot change. The only other commands it runs are a job's own Done when commands, and only after you
-      | confirm them on the job page.
+      | confirm them on the job page, and, for a factory project, the steps of its line (see
+      a(href="#line-trust") What the factory runs
+      | ).
 
   h2#permissions Choosing permission modes for jobs
   p

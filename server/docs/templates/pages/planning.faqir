@@ -1,0 +1,116 @@
+layout "layout.faqir"
+
+block content
+  p
+    | The factory builds
+    strong packages
+    | : one coherent piece of work that one worker can finish in a sitting and that can be integrated on its own. Planning turns a goal ("CSV export for invoices", a spec document) into such packages, with their acceptance criteria and dependencies. There are three ways to do it.
+  h2#planner Ask the planner
+  ul
+    li
+      | On a project's page,
+      strong Plan new work
+      | takes a goal and optional notes. An
+      a(href="/docs/operators") operator
+      | bot can do the same with
+      code plan_request {project, goal, notes}
+      | .
+    li
+      | The
+      strong planner
+      | is a read-only
+      code claude -p
+      | session on the project's runner, in the main checkout, with the line's
+      code models.planner
+      | , a turn limit and a budget. It reads the context files, the existing package specs and the code the goal touches.
+    li
+      | It answers with a short summary, the packages (local id, title, spec, acceptance criteria, dependencies, sensitive flag, priority) and its questions: what it needs to know, or what it assumed and you should confirm. When the goal is too vague, it returns only questions.
+  p
+    | What it aims for: packages that each deliver one thing and leave the base branch working; criteria a black-box test can check through the public surface, including refusals (who is not allowed, which input is rejected); criteria marked _(G1)_ when the build and test command proves them and _(G3)_ when only a review can; real dependencies only, so independent packages run in parallel; and fewer, well-cut packages, because each one pays for a full run of the gates.
+  h2#approval Approving a plan
+  p
+    | The planner's packages are created in
+    strong Backlog
+    | as one plan, and one decision reaches your phone with the summary. You can:
+  dl
+    dt
+      | Approve
+    dd
+      | Every package of the plan becomes Gata (ready). With autopilot on, they start by themselves as their dependencies allow.
+    dt
+      | Discard
+    dd
+      | The plan's packages are deleted.
+    dt
+      | Edit first
+    dd
+      | Leave the decision open, change titles, criteria or dependencies on the packages' pages (they are ordinary Backlog packages), then approve.
+  h2#skill Plan in Claude Code
+  p
+    | In a Claude Code session in the repository,
+    code /buildyboy:factory-plan <goal or path to a spec>
+    | does the planner's job with you in the conversation: it shows you the cut (ids, titles, dependencies) before writing, writes one Markdown file per package under the line's
+    code paths.packages
+    | , and imports them into the project (
+    a(href="/docs/skills#factory-plan") Skills
+    | ). The files stay in the repository, so the specs are versioned with the code. Imported this way, the packages keep the status their files say (Backlog by default): move them to Gata on the board when you are happy with them.
+  h2#spec Writing package files yourself
+  p
+    | A package file is Markdown with frontmatter.
+    code /buildyboy:factory-init
+    | puts a template at
+    code factory/package-template.md
+    | , outside the packages folder so it is never imported itself:
+  pre
+    code
+      | ---
+      | id: P4
+      | title: Export invoices as CSV
+      | status: backlog
+      | depends_on: [P2]
+      | priority: 50
+      | sensitive: false
+      | ---
+      | 
+      | # P4: Export invoices as CSV
+      | 
+      | ## Scope
+      | ## Sources
+      | ## External effects
+      | ## What it delivers
+      | ## Acceptance criteria
+      | 
+      | 1. The invoices page has an Export button that downloads the filtered list as CSV.
+      | 2. A user without the accounting role gets 403 from the export URL.
+      | 3. _(G3)_ The export never includes deleted invoices.
+      | 
+      | ## Pages for the visual check
+  p
+    | Then import the folder into the project:
+  pre
+    code
+      | node cli/bb.ts tasks import factory/packages --project shop-api --dry-run
+      | BUILDYBOY_AGENT_TOKEN=bba_… node cli/bb.ts tasks import factory/packages --project shop-api
+  ul
+    li
+      | The criteria come from the section headed
+      strong Acceptance criteria
+      | : every list item is one criterion.
+      code --dry-run
+      | prints each package with its criteria, numbered, and writes nothing.
+    li
+      | Ids are local: with the project's prefix
+      code SH-
+      | ,
+      code P4
+      | is stored as
+      code SH-P4
+      | , and
+      code depends_on: [P2]
+      | means
+      code SH-P2
+      | .
+    li
+      | Re-importing updates packages by id and never changes the status of one already started. See
+      a(href="/docs/backlog#markdown") Importing Markdown files
+      | for every frontmatter key.

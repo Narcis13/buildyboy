@@ -187,6 +187,81 @@ block content
         | For safety, Verify only runs commands that were in that job's prompt, on the runner that ran the job, before it
         | restarts. Use the pre-filled list, and verify soon after the job ends.
 
+  h2#factory-issues The factory
+  +collapsible(id="runner-too-old")
+    @trigger Running a gate or a step answers 409 "the runner … is version …; the kit's built-in … needs 0.2.0"
+    @content
+      p
+        | The project's machine runs an older
+        code bb runner
+        | than the kit needs. Update the Buildyboy code in the checkout the runner starts from, then restart the runner
+        | (see
+        a(href="/docs/runner") Setting up the runner
+        | ). Then run the gate or step again. A line made only of your own commands in argv steps does not
+        | need the new version; the built-in gates and steps do.
+  +collapsible(id="line-invalid")
+    @trigger The project's Setup tab shows a line error
+    @content
+      p
+        | The runner could not read the line file in the project's main checkout. In that checkout run
+        code node cli/bb.ts line check
+        | : it lists every mistake in
+        code factory.json
+        | and exits with 1. Fix the file, commit it on the base branch (the runner reads the main checkout, not a
+        | worktree), then press
+        strong Check setup
+        | again. Also check that the Setup tab names the right checkout and line file. See
+        a(href="/docs/line#check") Checking the file
+        | .
+  +collapsible(id="autopilot-held")
+    @trigger Autopilot is on, but nothing starts
+    @content
+      p
+        | The conductor holds a project back in one of these cases. The alerts of
+        code factory_status
+        | and the project's page say which one.
+      ul
+        li
+          strong The governor says no.
+          | Your 5-hour window is at 85% or more, the 7-day window at 80% or more, or the usage data is missing or older
+          | than 30 minutes. Packages already running go on; nothing new starts until the window resets (the answer says
+          | when). Stale or missing data means no Claude Code session with the statusline bridge has reported; open one, or
+          | see
+          a(href="/docs/coordinator#activate") Turning it on for this machine
+          | .
+        li
+          strong The runner is offline.
+          | The project's machine is not connected. Start the runner there; the conductor continues when it reconnects.
+        li
+          strong The project is paused.
+          | Work in flight finishes, nothing new starts. Press
+          strong Resume
+          | on the project page.
+        li
+          strong The package waits on you.
+          | A decision is open for it (needs attention, or approval before integrating). Answer it in Decisions.
+      p
+        | See
+        a(href="/docs/autopilot#stops") What stops it
+        | .
+  +collapsible(id="guard-blocked")
+    @trigger A write was blocked by the Buildyboy guard
+    @content
+      p
+        | A worker tried to change a file it may not: the acceptance tests, the line file (
+        code factory.json
+        | ) or a path listed in
+        code paths.protected
+        | . This is intended, and the worker is told why. Only the QA step may write, and only in the package's acceptance
+        | folder. If the change is really needed, make it yourself, or approve the package that changes it: the gates ask
+        | you before integrating a protected path. The guard acts only in a session that has
+        code BB_TASK
+        | set and a
+        code .factory/guard.json
+        | in its worktree, so your own Claude Code sessions are never affected. See
+        a(href="/docs/skills#guard") The guard
+        | .
+
   h2#data-issues Numbers and data
   +collapsible
     @trigger The context meter shows a dash

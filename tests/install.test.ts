@@ -79,6 +79,15 @@ describe('installer routes', () => {
     expect(marketplace.plugins[0].source).toBe('./plugin');
     const hook = readFileSync(join(srv.ctx.config.rootDir, 'plugin/hooks/bb-hook.mjs'));
     expect(files.get('plugin/hooks/bb-hook.mjs')!.equals(hook)).toBe(true);
+    // the factory's guard and its hook entry, and the four skills (SPEC §12.8)
+    expect([...files.keys()]).toContain('plugin/hooks/bb-guard.mjs');
+    const hooks = JSON.parse(files.get('plugin/hooks/hooks.json')!.toString('utf8'));
+    expect(hooks.hooks.PreToolUse.some((h: { matcher: string; hooks: { command: string }[] }) => h.matcher === 'Write|Edit|MultiEdit|NotebookEdit' && h.hooks.some((x) => x.command.includes('bb-guard.mjs')))).toBe(true);
+    for (const skill of ['factory-init', 'factory-plan', 'factory-foreman', 'factory-status']) {
+      const md = files.get(`plugin/skills/${skill}/SKILL.md`)?.toString('utf8');
+      expect(md, skill).toMatch(new RegExp(`^---\\r?\\nname: ${skill}\\r?\\ndescription: `));
+    }
+    expect(JSON.parse(files.get('plugin/.claude-plugin/plugin.json')!.toString('utf8')).version).toBe('0.2.0');
   });
 
   it('produces an archive that the system tar can extract', async () => {
@@ -96,6 +105,8 @@ describe('installer routes', () => {
       throw e;
     }
     expect(existsSync(join(dest, 'plugin', 'hooks', 'bb-hook.mjs'))).toBe(true);
+    expect(existsSync(join(dest, 'plugin', 'hooks', 'bb-guard.mjs'))).toBe(true);
+    expect(existsSync(join(dest, 'plugin', 'skills', 'factory-init', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(dest, '.claude-plugin', 'marketplace.json'))).toBe(true);
   });
 });

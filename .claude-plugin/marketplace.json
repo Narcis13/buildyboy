@@ -6,7 +6,7 @@
     {
       "name": "buildyboy",
       "source": "./plugin",
-      "description": "Telemetry and remote control (approvals, steering, walk mode) for Claude Code sessions"
+      "description": "Telemetry and remote control (approvals, steering, walk mode) for Claude Code sessions, the factory's skills and the worker guard"
     }
   ]
 }

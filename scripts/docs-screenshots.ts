@@ -1,5 +1,6 @@
 // Regenerates the app screenshots in the user manual (server/docs/assets/img) from the synthetic fixtures.
 //   node scripts/docs-screenshots.ts            (needs `npm run build` first; uses Playwright's Chromium, or Chrome)
+//   DOCS_SHOTS=a,b node scripts/docs-screenshots.ts   (only those images, names without .png; all others are left untouched)
 // It boots a throwaway server exactly like the e2e suite, replays the fixtures, parks a few real hook calls in the
 // Inbox, and photographs each screen at desktop (1280×800) and phone (390×844) sizes.
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -51,7 +52,10 @@ async function csrf(page: Page) {
   return (await page.context().cookies()).find((c) => c.name === 'bb_csrf')?.value ?? '';
 }
 
+const ONLY = process.env.DOCS_SHOTS ? new Set(process.env.DOCS_SHOTS.split(',').map((n) => n.trim()).filter(Boolean)) : null;
+
 async function shot(page: Page, name: string, path: string, ready?: (p: Page) => Promise<unknown>) {
+  if (ONLY && !ONLY.has(name)) return;
   await page.goto(path);
   await page.waitForLoadState('networkidle');
   if (ready) await ready(page);
@@ -139,6 +143,12 @@ async function main() {
     await shot(p, 'task-phone', '/backlog/P4', factoryReady);
     await shot(d, 'decisions-desktop', '/decisions', (pg) => pg.getByTestId('decision-card').first().waitFor());
     await shot(p, 'decisions-phone', '/decisions', (pg) => pg.getByTestId('decision-card').first().waitFor());
+
+    // The factory projects: the list of projects, and one project page (its line is the default tab).
+    await shot(d, 'projects-desktop', '/projects', (pg) => pg.getByTestId('factory-project-card').first().waitFor());
+    await shot(p, 'projects-phone', '/projects', (pg) => pg.getByTestId('factory-project-card').first().waitFor());
+    await shot(d, 'project-desktop', '/projects/shop-api', (pg) => pg.getByTestId('project-header').waitFor());
+    await shot(p, 'project-phone', '/projects/shop-api', (pg) => pg.getByTestId('project-header').waitFor());
 
     await d.request.post('/api/global/walk', { data: { on: false }, headers: { 'x-bb-csrf': await csrf(d) } });
   } finally {

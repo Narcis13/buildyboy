@@ -1,7 +1,7 @@
 # Buildyboy × herdr working protocol
 
 How Buildyboy and herdr (`hc`, herdr-core) work together in the factory, what each side does, and who can start a
-herdr terminal from where. Normative details live in SPEC §11 (especially §11.4); this page is the overview.
+herdr terminal from where. Normative details live in SPEC §11 (especially §11.4) and §12.4–§12.5; this page is the overview.
 
 Checked against herdr-core **0.1.21** (`%LOCALAPPDATA%\Programs\herdr-core\hc.exe`) on 2026-11-14.
 
@@ -40,14 +40,30 @@ In order: `BUILDYBOY_HC`, then `hcPath` in `~/.buildyboy/runner.json`, then herd
 (`%LOCALAPPDATA%\Programs\herdr-core\hc.exe`), then `PATH`. Setting either one to `off` (or `none`, `false`, `0`)
 turns the integration off. `bb doctor` reports whether `hc` was found.
 
-### Only two commands
+### The commands it runs
 
-The runner executes exactly these, as an argv with no shell:
+The runner executes exactly these, each as an argv with no shell:
 
 | Command | When | Timeout |
 |---|---|---|
 | `hc ls --json` | every `hcPollSeconds` (default 15 s) | 10 s |
 | `hc run --bg --json …` | a job with `launcher: 'hc'` | 30 s |
+| `hc get <name> --json` | before every `send` and `kill`: the check below | 15 s |
+| `hc send --json [--if idle\|working] <name> <line>` | a `{type: 'hc', op: 'send'}` command (runner 0.2.0+, SPEC §12.4) | 60 s |
+| `hc kill --json <name>` | a `{type: 'hc', op: 'kill'}` command, and the kit's `cleanup` step | 30 s |
+
+**Only its own terminals.** `send` and `kill` act on a terminal only when all of these hold, else the command is
+refused with the reason and nothing runs: the name matches `^bb-[a-z0-9_-]{1,29}$` (the names the runner gives:
+`bb-<package id in lower case>`, `bb-coord-<job>`); `hc get <name>` answers that same name; and the terminal carries
+the label `owner=buildyboy`. The owner's own herdr terminals never match.
+
+**Long messages go through a file.** `send` takes one short line (at most 500 characters). Longer or multi-line text,
+and any `files` sent with it, are written first under the terminal's working folder, in `.factory/inbox/<n>.md` (the
+folder must be inside the runner's allowed roots), and the line sent is `Read .factory/inbox/<n>.md: a message from
+the factory. Act on it, then go on.` A line that starts with `-` is prefixed so it is never read as a flag.
+
+The server sends these as `{type: 'hc', id, op, name, text?, if?, files?}` and the runner answers
+`POST /api/runner/hc/:id` with `done` (`{sent, inbox?}` or `{killed}`) or `error`.
 
 ### Reporting terminals
 
@@ -144,10 +160,33 @@ The rules:
 - **Audit.** `task_launch` / `coordinator_launch` as `agent:<name>` (with the decision id), plus
   `launch_approval_asked` and `launch_refused`.
 
-`gates_run` still only runs a gate's argv steps from the recipe in the repo's main checkout: it is not a way to start
-terminals.
+`gates_run` and `steps_run` run a project's line (its `factory.json` in the main checkout: argv steps or the kit's
+built-ins): they are not a way to start terminals. The kit's `cleanup` step ends the package's terminal `bb-<id>` with
+the checked `kill` above.
 
-## 6. Settings and env, at a glance
+## 6. How the conductor uses terminals
+
+With a project's autopilot on, the server's conductor (SPEC §12.5) drives its packages and never runs `hc` itself:
+it sends commands to the project's runner.
+
+- **Start.** At the `build` stage it launches the worker as in §4, with `launcher` from the line's `worker.launcher`
+  (default `hc`): terminal `bb-<id>`, labels `owner=buildyboy` and `bb.task=<id>`, in the package's worktree. The launch
+  line only says to read `.factory/brief.md`, which the `prepare` step wrote.
+- **Listen.** It learns that a worker's turn ended from the hooks (the Stop event's `last_assistant_message`, linked to
+  the package through the terminal), and reads the worker's status line: `FACTORY-STATUS: done`, `question <text>` or
+  `blocked <text>`. `hc wait` and `hc read` are not used.
+- **Tell.** Findings after a failed gate, the foreman's answers, a nudge for a missing status line, and the governor's
+  "commit, push and wait" go to a live terminal with the checked `send` (findings travel as a file in
+  `.factory/inbox/`). A headless worker (`launcher: claude`) gets a new job that resumes its session instead.
+- **Stop.** A stop request tells the worker to commit, push and stop, then ends its terminal with the checked `kill`.
+  After integration the `cleanup` step ends it too.
+- **Gone.** A worker whose terminal closed without `done` (see "Closed terminals end their sessions") is started again
+  once in the same worktree; the second time the package needs the owner's attention.
+
+A coordinator driving a project by hand (autopilot off) keeps using `hc` directly on its own machine; it should give
+the terminals it starts the same name and labels, so the runner can still `send` to them and `cleanup` can end them.
+
+## 7. Settings and env, at a glance
 
 | Name | Where | Meaning |
 |---|---|---|

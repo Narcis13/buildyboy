@@ -4,70 +4,282 @@ block content
   p
     | A
     strong project
-    | is a folder you work in with Claude Code on one machine, usually a git repository. Buildyboy creates projects by
-    | itself as sessions arrive, and groups everything that happened there: sessions, jobs, cost, commits, pull requests
-    | and progress notes. Open
+    | is a repository on the factory. It owns its packages for life, its settings and its history, and it says where its
+    a(href="/docs/line") line
+    | runs: on which paired machine, from which checkout, with which line file. Open
     strong Projects
     | in the top bar (on a phone, go to
     code {{ site.url }}/projects
     | ).
-
-  h2#how How sessions are grouped
+  h2#what What a project holds
+  dl
+    dt
+      | Key
+    dd
+      | A short name such as
+      code shop-api
+      | : a lower-case letter, then letters, digits and dashes, 2 to 24 characters. It never changes; tools and links use it.
+    dt
+      | Name and repository
+    dd
+      | A display name, and the GitHub repository (
+      code owner/name
+      | ) when there is one. One project per repository.
+    dt
+      | Id prefix
+    dd
+      | Optional, such as
+      code SH-
+      | : the package ids the project owns (see
+      a(href="#ids") Package ids
+      | ).
+    dt
+      | Machine and main checkout
+    dd
+      | Where the line runs: a paired machine with a
+      a(href="/docs/runner") runner
+      | , and the trusted main checkout of the repository on it. The runner reads the line file there, never in a worker's worktree.
+    dt
+      | Line file
+    dd
+      | The path of the line file relative to the checkout,
+      code factory.json
+      | by default (
+      a(href="/docs/line") The line
+      | ).
+    dt
+      | State and autopilot
+    dd
+      | Active, paused or archived (
+      a(href="#states") States
+      | ), and whether the
+      a(href="/docs/autopilot") autopilot
+      | moves its packages along the line.
+  p
+    | A package belongs to one project for life. Packages without a project (older data, one-off tasks) still work on the
+    a(href="/docs/backlog") backlog
+    | as before.
+  h2#put-on Putting a repo on the factory
+  p
+    | Before you start, the machine must be
+    a(href="/docs/machines") paired
+    | and run a
+    a(href="/docs/runner") runner
+    | whose allowed folders include the checkout and the folder where package worktrees go (by default next to the checkout:
+    code ../<checkout folder>-wt/
+    | ). Then pick one of these:
+  ul
+    li
+      strong In Claude Code
+      | , in the repository:
+      code /buildyboy:factory-init
+      | . It reads the repository, proposes a
+      code factory.json
+      | , checks it, adds the package folder and a template, and registers the project, or prints a prefilled link to the form below (
+      a(href="/docs/skills#factory-init") Skills
+      | ).
+    li
+      strong From the Projects page
+      | : under the factory projects, each repository Buildyboy has seen in your sessions but that has no project yet has a
+      strong Put on the factory
+      | button. It opens the new-project form filled in from that checkout.
+    li
+      strong New project
+      | at the top of the Projects page opens the same form empty. The form also reads its fields from the address, so
+      code /projects/new?key=shop-api&name=Shop%20API&repo=acme/shop-api&machineId=…&checkout=…&lineFile=factory.json&idPrefix=SH-
+      | opens it filled in.
+    li
+      strong An operator bot
+      | can create it with
+      code projects_save
+      | (
+      a(href="/docs/operators") Operators
+      | ).
+  p
+    | Then commit the line file on the base branch and press
+    strong Check setup
+    | on the project's Setup tab: the runner reads the line, validates it and reports what it resolved to. Only you (on the web) or an operator token may set a project's machine, checkout and line file, because they decide what the runner executes.
+  h2#ids Package ids
+  ul
+    li
+      | Ids stay unique across all projects. A project with an id prefix owns the ids that start with it: a package created in it as
+      code P1
+      | is stored as
+      code SH-P1
+      | , and one created without an id gets the next number,
+      code SH-7
+      | . An id that already starts with the prefix is kept.
+    li
+      | The id without the prefix is the
+      strong local id
+      | (
+      code P1
+      | ). Package files, the planner and dependencies use local ids:
+      code depends_on: [P1]
+      | in project shop-api means
+      code SH-P1
+      | .
+    li
+      | The prefix is fixed once the project has packages. A project without a prefix keeps ids as given.
+    li
+      | Line files use both:
+      code {id}
+      | (
+      code SH-P1
+      | ) and
+      code {localId}
+      | (
+      code P1
+      | ), also in lower case (
+      code {idLower}
+      | ,
+      code {localIdLower}
+      | ), for branches, folders and database names (
+      a(href="/docs/line#placeholders") Placeholders
+      | ).
+  h2#states Pause, archive and delete
+  dl
+    dt
+      | Active
+    dd
+      | Normal.
+    dt
+      | Paused
+    dd
+      strong Pause
+      | on the project page. Nothing new starts: no claim, no launch, and the autopilot leaves the project alone. Work already in flight carries on.
+      strong Resume
+      | undoes it.
+    dt
+      | Archived
+    dd
+      strong Archive…
+      | on the project page, after a confirmation. The project and its open packages leave the default lists, and nothing in it can be claimed or launched.
+      strong Unarchive
+      | brings back the project and exactly the packages archiving put away. Archived projects sit behind
+      strong Show archived
+      | on the Projects page.
+    dt
+      | Deleted
+    dd
+      strong Delete project…
+      | at the bottom of the Setup tab, only while the project has no packages.
+  h2#archive The archive
+  p
+    | Integrated packages do not stay on the board forever. A package is
+    strong archived
+    | when:
+  ul
+    li
+      | it was integrated more than a day ago (the delay is
+      strong archive_done_after_hours
+      | in
+      a(href="/docs/settings") Settings
+      | , 24 by default; 0 turns the sweep off);
+    li
+      | you press
+      strong Archive done
+      | on a project's Done tab, or archive it from its package page;
+    li
+      | its project is archived;
+    li
+      | an operator archives it (
+      code tasks_update {archived: true}
+      | ).
+  p
+    | The board and
+    code tasks_list
+    | leave archived packages out, so the
+    strong Integrată
+    | column holds what landed in the last day. The project's
+    strong Done
+    | tab is its archive: every integrated package with its date, rounds, cost and duration. Opening an archived package, and dependencies on it, work as before. Unarchiving a package puts it back on the board.
+  h2#list The Projects page
+  include "partials/shot.faqir" (assets=site.assets file="projects-desktop.png" alt="The Projects page on a desktop: a card for Shop API with autopilot on, a progress bar, packages on the line and one waiting on you; a card for Billing, paused; then other repositories with a Put on the factory button." caption="Factory projects first, then the repositories that are not on the factory yet.")
+  p
+    | Factory projects come first, active ones before paused ones. Each card shows the autopilot state, a progress bar (integrated packages of all its packages), what is on the line, what waits on you (blocked packages and pending decisions), the cost so far and the last activity. Tap a card to open the project.
+  p
+    | Below them,
+    strong Other repositories
+    | lists every repository Buildyboy has seen in your sessions that has no factory project, each with
+    strong Put on the factory
+    | .
+  include "partials/shot.faqir" (assets=site.assets file="projects-phone.png" alt="The Projects page on a phone: the project cards stacked, then the list of other repositories." caption="On a phone the cards stack." phone)
+  h2#page A project's page
+  include "partials/shot.faqir" (assets=site.assets file="project-desktop.png" alt="A project page on a desktop: the header with the Autopilot switch and the Pause and Archive buttons, the progress and cost figures, the tabs Line, Backlog, Done, Activity and Setup, then two packages on the line and a pending decision." caption="A project with autopilot on: what is on the line and what waits on you.")
+  p
+    | The header holds the project's switches:
+    strong Autopilot
+    | (
+    a(href="/docs/autopilot") Autopilot
+    | ),
+    strong Pause
+    | or
+    strong Resume
+    | ,
+    strong Archive…
+    | or
+    strong Unarchive
+    | , and
+    strong Plan new work
+    | , which asks the
+    a(href="/docs/planning") planner
+    | for a plan from a goal you type. Under it: progress, cost, decisions waiting and the last activity. The tabs:
+  dl
+    dt
+      | Line
+    dd
+      | The packages in flight, each with a stage stepper (prepare, qa, build, G1 to G5, cleanup), the worker's lamp and what it waits for; the project's pending decisions; the ready packages that start next.
+    dt
+      | Backlog
+    dd
+      | This project's board, the same as the
+      a(href="/docs/backlog") backlog
+      | filtered to it.
+    dt
+      | Done
+    dd
+      | The archive: integrated packages with date, rounds, cost and duration, and
+      strong Archive done
+      | for the integrated ones still on the board.
+    dt
+      | Activity
+    dd
+      | The sessions, pull requests, commits and cost of the project's checkouts (see
+      a(href="#checkouts") below
+      | ).
+    dt
+      | Setup
+    dd
+      | Name, key, repository and id prefix; where the line runs (machine, main checkout, line file); the resolved line as the runner last reported it, with
+      strong Check setup
+      | to ask again; and overrides that win over the line file: parallel packages (
+      code limits.workers
+      | ), gate rounds (
+      code limits.rounds
+      | ), the model per role, and when to ask before G5 (
+      code integrate.approval
+      | ). A project that came from the old per-repo factory settings also shows its allocation (worktree, ports, database prefix, migrations, cleanup lines) until its line file declares its own resources.
+  include "partials/shot.faqir" (assets=site.assets file="project-phone.png" alt="A project page on a phone: the header with its switches, then the tabs and the line." caption="The same project on a phone." phone)
+  h2#checkouts Repositories seen by telemetry
+  p
+    | Separately from factory projects, Buildyboy groups every session by the folder it ran in, by itself, as sessions arrive:
   ul
     li
       | A session belongs to the
       strong git repository
-      | it runs in (the top folder of the repository), even if you started Claude in a sub-folder.
-    li Outside git, the folder Claude was started in is the project.
-    li The project's name is the last part of its path, for example shop-api for C:\work\shop-api.
+      | it runs in (its top folder), even when Claude started in a sub-folder; outside git, to the folder Claude started in.
     li
-      | The same repository on two machines is two projects, one per machine. This includes Windows and WSL on the same
-      | computer.
+      | The same repository on two machines is two checkouts, one per machine. This includes Windows and WSL on the same computer.
     li
-      | Repositories hosted on github.com are linked to their GitHub page, which is what lets Buildyboy follow pull
-      | requests when you add a
+      | Repositories on github.com are linked to their GitHub page, which lets Buildyboy follow pull requests once you add a
       a(href="/docs/settings#github") GitHub token
       | .
-
-  h2#list The project list
   p
-    | Each card shows the project's name and total cost, its path and machine, how many sessions it has, its GitHub
-    | owner and name, and when it was last active. Click a card to open the project.
-
-  h2#page A project's page
-  p Under the header (path, machine, default branch, GitHub link and total cost) you find:
-  dl
-    dt
-      strong Cost over time
-    dd Daily cost for the last 60 days.
-    dt
-      strong Sessions
-    dd The most recent sessions, linking to their pages.
-    dt
-      strong Jobs
-    dd Jobs that ran in this project's folder.
-    dt
-      strong Pull requests
-    dd
-      | Open and recent pull requests for the project's branches, with their state and checks (
-      code success
-      | ,
-      code failure
-      | ,
-      code pending
-      | or
-      code none
-      | ). This needs a GitHub token in Settings.
-    dt
-      strong Commits
-    dd Commits made during sessions.
-    dt
-      strong Recent PROGRESS.md
-    dd
-      | The latest progress notes written by harness runs (see
-      a(href="/docs/composer#harness") the harness prompt
-      | ).
-  p
-    | Projects appear on their own; there is nothing to create or delete. Use the Floor's
+    | A factory project links to the checkouts of its repository, and its
+    strong Activity
+    | tab shows them: daily cost, recent sessions, jobs that ran there, pull requests with their checks, commits made during sessions and the latest progress notes of
+    a(href="/docs/composer#harness") harness runs
+    | . There is nothing to create or delete for a checkout. The Floor's
     strong All projects
-    | filter to see only one project's sessions.
+    | filter shows one checkout's sessions.

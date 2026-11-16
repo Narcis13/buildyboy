@@ -36,6 +36,34 @@ block content
   p
     | If the machine is not paired, all three say "Buildyboy is not configured on this machine" and point you to the
     | Machines page.
+  h3#skills The factory skills
+  p
+    | The plugin also ships four skills for working with the factory. They need an agent key (see
+    a(href="/docs/skills#install") Skills and the guard
+    | ).
+  dl
+    dt
+      code /buildyboy:factory-init
+    dd
+      | Puts the repository you are in on the factory: proposes a
+      code factory.json
+      | , checks it and registers the project.
+      a(href="/docs/skills#factory-init") More
+    dt
+      code /buildyboy:factory-plan
+    dd
+      | Turns a goal or a spec into package files and imports them.
+      a(href="/docs/skills#factory-plan") More
+    dt
+      code /buildyboy:factory-foreman
+    dd
+      | Drives a project by hand as its coordinator, with the kit's steps.
+      a(href="/docs/skills#factory-foreman") More
+    dt
+      code /buildyboy:factory-status
+    dd
+      | Says what the factory is doing and what waits for you.
+      a(href="/docs/skills#factory-status") More
 
   h2#bb The bb command-line tool
   p
@@ -56,7 +84,11 @@ block content
       | block lists what the
       a(href="/docs/coordinator#activate") factory
       | still needs on this machine (statusline bridge, OTEL, the MCP registration, hc and fresh usage data), each with
-      | the exact next step; those lines start with ✔ or ! and never make the check fail.
+      | the exact next step; those lines start with ✔ or ! and never make the check fail. Two checks are about the
+      | factory's line: the version of the runner code in this checkout (the kit's built-in steps need 0.2.0 or later)
+      | and whether the folder you run it in has a valid
+      code factory.json
+      | .
     dt#pair
       code node cli/bb.ts pair <server> <code> [name]
     dd
@@ -113,12 +145,34 @@ block content
       | endpoint instead. See
       a(href="/docs/agents") Connecting agents
       | .
+    dt#line-check
+      code node cli/bb.ts line check [dir] [--file <line file>] [--id <sample id>] [--json]
+    dd
+      | Checks a repo's
+      code factory.json
+      | (in
+      code dir
+      | , default the current folder) and prints the line it resolves to: which gates are on, the branch and worktree
+      | for a sample package, the commands, paths, models and limits.
+      code --file
+      | names another line file,
+      code --id
+      | the sample package id, and
+      code --json
+      | prints the whole resolved line. With errors it lists them and exits with 1. It only reads: it runs nothing and
+      | needs no server. See
+      a(href="/docs/line#check") Checking the file
+      | .
     dt#tasks-import
-      code node cli/bb.ts tasks import <file or folder> [--dry-run]
+      code node cli/bb.ts tasks import <file or folder> [--project <key>] [--dry-run]
     dd
       | Adds Markdown task files to the backlog, or updates the ones already there by id. A folder imports every
       code .md
       | file in it that starts with frontmatter.
+      code --project
+      | imports into a factory project, so its
+      a(href="/docs/projects#ids") id prefix
+      | applies.
       code --dry-run
       | only prints what it would import. Needs the same two variables as
       code mcp

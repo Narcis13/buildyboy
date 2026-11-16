@@ -7,17 +7,24 @@ block content
     | holds the factory's
     strong packages
     | : large pieces of work, each one taken from start to finish by one worker. The
+    a(href="/docs/projects") project
+    | owns its packages. With
+    a(href="/docs/autopilot") autopilot
+    | on, the server moves them along the line by itself; with it off, a
     a(href="/docs/coordinator") coordinator
-    | picks them from here, records how they did at each gate, and asks you when it cannot decide alone. You watch,
-    | answer and, when needed, stop or revert from your phone.
+    | or you do it by hand. Either way each package's gates are recorded here, and you are asked when something needs
+    | you. You watch, answer and, when needed, stop or revert from your phone.
 
   h2#board The board
   include "partials/shot.faqir" (assets=site.assets file="backlog-desktop.png" alt="The backlog on a desktop: the governor banner with the 5-hour and 7-day usage bars, then six columns of package cards from Backlog to Blocată." caption="The backlog on a desktop, one column per status.")
   p
     | Open
     strong Backlog
-    | in the menu. On a desktop each status is a column; on a phone you pick a status at the top and see one list. A
-    | card shows the package's id and title, the G1 to G5 gate chips, its cost, and these marks:
+    | in the menu. At the top a
+    strong project switcher
+    | shows all active projects, or just one. On a desktop each status is a column; on a phone you pick a status at the
+    | top and see one list. A card shows the package's id and title, the G1 to G5 gate chips, its cost, and these
+    | marks:
   ul
     li
       strong ready
@@ -43,7 +50,7 @@ block content
     dt La porți
     dd The work is done and the gates are running.
     dt Integrată
-    dd It passed the gates and was merged.
+    dd It passed the gates and was merged. The board shows only what landed in the last day; older packages are archived.
     dt Blocată
     dd It failed the gates three times, or something outside it stops it.
 
@@ -54,6 +61,16 @@ block content
     | answer: whether new workers may start, or until when the factory waits, with the 5-hour and 7-day usage and how
     | old that data is.
 
+  h3#archive-link The archive
+  p
+    | The board shows only packages that are not archived. A package is archived when you or an
+    a(href="/docs/operators") operator
+    | archives it, when its project is archived, or by itself once it has been integrated for a day (the delay is in
+    a(href="/docs/settings#factory") Settings
+    | ). Under the board there is a link to each project's archive, its Done tab. See
+    a(href="/docs/projects#archive") The archive
+    | .
+
   h2#new Adding packages
   p
     | Use
@@ -63,7 +80,18 @@ block content
     | ; otherwise one like
     code T12
     | is made), a description, the acceptance criteria one per line, what it depends on, its status and its priority.
-    | Higher priority starts first among ready packages.
+    | Higher priority starts first among ready packages. Choose the project it belongs to; if the project has an id
+    | prefix, it is added to the id (
+    code P3
+    | becomes
+    code ED-P3
+    | ). See
+    a(href="/docs/projects#ids") Package ids
+    | .
+  p
+    | You can also let the planner write the packages from a goal: see
+    a(href="/docs/planning") Planning
+    | .
 
   h3#markdown Importing from Markdown
   p
@@ -71,7 +99,9 @@ block content
     code ---
     | lines, then the description. Upload the files on the board, or run
     a(href="/docs/commands#tasks-import") bb tasks import
-    | with a file or a folder. Importing the same file again updates the package instead of adding a new one. A
+    | with a file or a folder; add
+    code --project <key>
+    | to import into a project, so its id prefix applies. Importing the same file again updates the package instead of adding a new one. A
     | status in the file only applies while the package is still Backlog or Gata, and a file without dependencies or
     | criteria leaves the existing ones alone.
   pre
@@ -109,7 +139,10 @@ block content
   p
     | Tap a card to open its page: status (you can change it), repository, branch, cost, the prompt and its version,
     | the Claude Code session and herdr terminal working on it, the acceptance criteria, its dependencies and its full
-    | history.
+    | history. When the package is on the line, the page also shows its stage (prepare, qa, build, G1 to G5, cleanup)
+    | and what it waits for, and the history lists every move the conductor made and why, as
+    code line
+    | events.
 
   h3#gates The gates
   p Each gate shows its latest verdict, its summary and any screenshots; earlier attempts fold away below it.
@@ -128,11 +161,12 @@ block content
   h3#stop Stopping or reverting
   p
     strong Oprește pachetul
-    | asks the coordinator to stop work on this package.
+    | asks whoever is working on this package to stop.
     strong Cere revenirea integrării
-    | asks it to revert the package's merge. Both only record your request, with an optional note: the coordinator
-    | reads it and does the git work, because Buildyboy never runs git on your repositories. The page shows whether it
-    | has picked the request up yet.
+    | asks them to revert the package's merge. Both record your request, with an optional note, and the page shows
+    | whether it has been picked up yet. With autopilot on, the conductor carries it out: it tells the worker to commit
+    | and stop, or runs the revert step on the project's runner. With autopilot off, the coordinator reads the request
+    | and does it. The server itself never runs git on your repositories; the runner on your machine does.
   include "partials/shot.faqir" (assets=site.assets file="task-phone.png" alt="A package page on a phone: the gates as a list, followed by the Oprește pachetul and Cere revenirea integrării buttons." caption="The same package on a phone." phone)
 
   h3#launch Starting a package
@@ -143,21 +177,46 @@ block content
     | . Both need the machine's
     a(href="/docs/runner") runner
     | , and the folder must be inside its allowed roots. Launching claims the package at once (it becomes În lucru),
-    | so the coordinator cannot hand it to another worker; if the launch fails, it goes back to the status it had.
+    | so nothing else can hand it to another worker; if the launch fails, it goes back to the status it had.
 
   h2#decisions Decisions
-  include "partials/shot.faqir" (assets=site.assets file="decisions-desktop.png" alt="The Decisions page: a pending question with its context and one button per option, and answered questions below." caption="A question from the coordinator, waiting for you.")
+  include "partials/shot.faqir" (assets=site.assets file="decisions-desktop.png" alt="The Decisions page: a pending question with its context and one button per option, and answered questions below." caption="A question waiting for you.")
   p
-    | When the coordinator cannot settle something alone, it asks you. The question arrives as a notification and waits
-    | on the
+    | When something cannot be settled without you, a question arrives as a notification and waits on the
     strong Decisions
     | page (the Inbox links to it, and the attention bar counts it). Tap one of the offered answers or write your own;
-    | the coordinator reads it the next time it checks. Cancel a question that no longer matters.
+    | whoever asked reads it the next time it checks. Cancel a question that no longer matters.
+  p The questions come from:
+  ul
+    li
+      strong The conductor
+      | (the question is marked
+      code factory:line
+      | ): a package that needs attention, or the approval to integrate a package before G5. See
+      a(href="/docs/autopilot#decisions") What autopilot asks you
+      | .
+    li
+      strong The planner:
+      | the plan you approve before its packages become ready. See
+      a(href="/docs/planning#approval") Approving a plan
+      | .
+    li
+      strong The gate rounds:
+      | a package that failed its last round asks for another round, or to stop.
+    li
+      strong A coordinator or the foreman,
+      | through
+      code decision_ask
+      | , and launch approvals when an agent key may start workers.
+  p
+    | An
+    a(href="/docs/operators") operator
+    | key may answer decisions for you, except its own and launch approvals, which only you answer.
   include "partials/shot.faqir" (assets=site.assets file="decisions-phone.png" alt="The Decisions page on a phone, with option buttons sized for a thumb." caption="Answering from a phone." phone)
 
   h2#digest The daily digest
   p
     | Once a day, at the time set in Settings → Factory (08:00 by default, the server's time), a notification sums up
     | the last 24 hours: what was integrated, which gates passed or failed, what is in progress or blocked, usage and
-    | the governor, and the decisions and requests still waiting. The coordinator can send one at any time, and so can
-    | you from Settings.
+    | the governor, and the decisions and requests still waiting, and what operators answered for you. An agent can send one
+    | at any time, and so can you from Settings.

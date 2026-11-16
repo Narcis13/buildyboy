@@ -1,7 +1,7 @@
 {
   "name": "buildyboy",
-  "version": "0.1.0",
-  "description": "Streams Claude Code sessions to your Buildyboy server and lets you approve, steer and stop them from your phone.",
+  "version": "0.2.0",
+  "description": "Streams Claude Code sessions to your Buildyboy server so you can approve, steer and stop them from your phone; skills that put a repo on the factory, plan its work, drive it by hand or report its status; and a guard that keeps factory workers out of their acceptance tests and protected files.",
   "author": { "name": "Narcis13" },
   "homepage": "https://github.com/Narcis13/buildyboy",
   "license": "MIT"

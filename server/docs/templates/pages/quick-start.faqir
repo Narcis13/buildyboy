@@ -7,7 +7,8 @@ block content
     | , and notifications on your phone. Plan for about fifteen minutes. You do not need to understand how anything
     | works yet;
     a(href="/docs/concepts") How it works
-    | explains that afterwards.
+    | explains that afterwards. Steps 7 to 9 go on to the factory: putting a repository on it, planning work, and
+    | letting autopilot build it while you follow from your phone.
 
   h2#before-you-start Before you start
   p You need three things:
@@ -213,6 +214,73 @@ block content
     a(href="/docs/walk-mode") Walk mode
     | .
 
+  h2#step-7 Step 7 · Put a repository on the factory
+  p
+    | The factory builds your repositories package by package, with Claude Code workers on your machine. A repository
+    | has to be put on it once. It needs the paired machine from step 3 with the
+    a(href="/docs/runner") runner
+    | running, and the plugin installed.
+  ol
+    li
+      | Open Claude Code in the repository and type
+      code /buildyboy:factory-init
+      | . It reads your scripts and tests, proposes a
+      code factory.json
+      | (the file that tells the factory how to build and check this repo), checks it, and registers the project. The skills
+      | use the factory's tools, so the machine needs an agent key; see
+      a(href="/docs/skills#install") Skills and the guard
+      | .
+    li
+      | Or do it in the app: open
+      strong Projects
+      | and press
+      strong Put on the factory
+      | next to the repository. Pick the machine, the main checkout and the line file, and save. Then press
+      strong Check setup
+      | on the project's Setup tab.
+  p
+    | What a project is and what each field means:
+    a(href="/docs/projects") Projects
+    | . What goes in the file:
+    a(href="/docs/line") The line
+    | .
+
+  h2#step-8 Step 8 · Plan the work
+  p
+    | Say what you want built. In Claude Code, type
+    code /buildyboy:factory-plan
+    | with your goal or a spec, and it writes the package files and imports them. In the app, open the project and press
+    strong Plan new work
+    | , write the goal, and the planner reads the repo and proposes packages. The planner's packages wait in the
+    | backlog until you approve the plan; package files you import yourself start with the status written in them. See
+    a(href="/docs/planning") Planning
+    | .
+
+  h2#step-9 Step 9 · Turn on autopilot and follow it
+  ol
+    li
+      | On the project's page, switch
+      strong Autopilot
+      | on. The factory also needs usage data to know whether it may start work; if the governor says no, set up the
+      | statusline bridge as in
+      a(href="/docs/coordinator#activate") Turning it on for this machine
+      | .
+    li
+      | Watch the
+      strong Line
+      | tab: each package in flight, its stage and what it waits for.
+    li
+      | When something needs you (an approval before a package is integrated, a package that is stuck), you get a
+      | notification and a card in
+      strong Decisions
+      | . Answer from your phone.
+  p
+    | What autopilot does, what it asks you and what stops it:
+    a(href="/docs/autopilot") Autopilot
+    | . To run a project without it, see
+    a(href="/docs/coordinator") Coordinating by hand
+    | .
+
   h2#next Where to go next
   ul
     li
@@ -223,6 +291,11 @@ block content
       | and
       a(href="/docs/sessions") Following a session
       | : reading what your sessions are doing.
+    li
+      a(href="/docs/projects") Projects
+      | and
+      a(href="/docs/backlog") the backlog
+      | : what the factory is working on.
     li
       a(href="/docs/composer") The Composer
       | and
