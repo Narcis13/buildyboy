@@ -217,7 +217,7 @@ export function agentLaunch(ctx: Ctx, kind: LaunchKind, a: ToolArgs<'tasks_launc
     const key = argsKey(kind, a as WorkerLaunch | CoordinatorLaunch);
     const close = (id: string, status: 'refused' | 'expired') => db.run('UPDATE launch_requests SET status = ?, closed_at = ? WHERE id = ?', status, Date.now(), id);
     const ask = (): LaunchResult => {
-      const asked = askDecision(ctx, { ...approvalQuestion(p, actor), options: ['Launch', 'Refuse'], taskId: p.task?.id }, actor);
+      const asked = askDecision(ctx, { ...approvalQuestion(p, actor), options: ['Launch', 'Refuse'], taskId: p.task?.id }, actor, tokenId);
       db.run(
         'INSERT INTO launch_requests (id, token_id, kind, task_id, args_key, decision_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
         randomUUID(), tokenId, kind, p.task?.id ?? null, key, asked.id, Date.now(),

@@ -346,6 +346,28 @@ test.describe('decisions', () => {
     expect(errors).toEqual([]);
   });
 
+  test('shows which operator answered', async ({ loggedIn: page }, info) => {
+    const errors = trackConsoleErrors(page);
+    const q = `Answered by a deputy (${info.project.name} ${Date.now()})`;
+    const id = await askDecision(page, `e2e-asker-${info.project.name}`, { question: q, options: ['Yes', 'No'] });
+    // another token, made an operator by the owner, answers it
+    const headers = { 'x-bb-csrf': await csrf(page) };
+    const deputy = `e2e-deputy-${info.project.name}`;
+    const created = (await (await page.request.post('/api/agent-tokens', { data: { name: deputy }, headers })).json()) as { id: string; token: string };
+    expect((await page.request.put(`/api/agent-tokens/${created.id}`, { data: { operator: true }, headers })).ok()).toBe(true);
+    const res = await page.request.post('/api/agent/decision_answer', { data: { id, answer: 'No' }, headers: { authorization: `Bearer ${created.token}` } });
+    expect(res.ok()).toBe(true);
+    await page.goto('/decisions');
+    const card = page.getByTestId('decisions-history').getByTestId('decision-card').filter({ hasText: q });
+    await expect(card.getByTestId('decision-answer')).toContainText('No');
+    await expect(card.getByTestId('decision-answered-by')).toContainText(`answered by ${deputy}`);
+    await expect(card.getByTestId('decision-answered-by')).not.toContainText('agent:');
+    // the owner's own answers carry no such line
+    await expect(page.getByTestId('decisions-history').getByTestId('decision-card').filter({ hasText: 'legacy customer export' }).getByTestId('decision-answered-by')).toHaveCount(0);
+    await noHorizontalScroll(page);
+    expect(errors).toEqual([]);
+  });
+
   test('cancels a question', async ({ loggedIn: page }, info) => {
     const q = `Cancel me (${info.project.name} ${Date.now()})`;
     await askDecision(page, `e2e-cancel-${info.project.name}`, { question: q });
@@ -388,10 +410,27 @@ test.describe('settings and layout', () => {
     await expect(ask).toHaveAttribute('aria-checked', 'true');
     await ask.click();
     await expect(ask).toHaveAttribute('aria-checked', 'false');
+    // operator and inbox (§12.7): off by default, each with what it allows
+    const operator = row.getByTestId('agent-token-operator');
+    const inbox = row.getByTestId('agent-token-inbox');
+    await expect(operator.getByRole('switch', { name: 'Operator' })).toHaveAttribute('aria-checked', 'false');
+    await expect(operator).toContainText('answers decisions');
+    await expect(inbox.getByRole('switch', { name: 'Inbox' })).toHaveAttribute('aria-checked', 'false');
+    await expect(inbox).toContainText('permissions, questions, plans');
+    await operator.getByRole('switch').click();
+    await expect(operator.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+    await inbox.getByRole('switch').click();
+    await expect(inbox.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
     await noHorizontalScroll(page);
     await page.reload();
     await expect(row.getByTestId('agent-token-launch')).toHaveValue('all');
     await expect(row.getByTestId('agent-token-approval').getByRole('switch')).toHaveAttribute('aria-checked', 'false');
+    await expect(row.getByTestId('agent-token-operator').getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+    await expect(row.getByTestId('agent-token-inbox').getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+    await row.getByTestId('agent-token-inbox').getByRole('switch').click();
+    await expect(row.getByTestId('agent-token-inbox').getByRole('switch')).toHaveAttribute('aria-checked', 'false');
+    const saved = ((await (await page.request.get('/api/agent-tokens')).json()) as { name: string; operator: boolean; inbox: boolean }[]).find((t) => t.name === name);
+    expect(saved).toMatchObject({ operator: true, inbox: false });
     await row.getByTestId('agent-token-revoke').click();
     await row.getByTestId('agent-token-revoke-confirm').click();
     await expect(row).toHaveAttribute('data-revoked', 'true');

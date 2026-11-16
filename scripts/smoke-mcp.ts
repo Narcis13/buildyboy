@@ -10,7 +10,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { startServer } from '../server/main.ts';
 import { createMachine } from '../server/auth.ts';
 import { createAgentToken, revokeAgentToken, setTokenLaunch } from '../server/factory/agent.ts';
-import { answerDecision } from '../server/factory/decisions.ts';
+import { answerDecision, askDecision } from '../server/factory/decisions.ts';
 import { requestControl } from '../server/factory/tasks.ts';
 import { saveFactoryConfig } from '../server/factory/config.ts';
 import { startRunner, type Runner } from '../runner/main.ts';
@@ -162,6 +162,40 @@ console.log(JSON.stringify({ verdict: 'pass', summary: 'G1 pass: 3 tests', findi
     const ctl = await call('control_get', { ack: true });
     assert(ctl.requests.length === 1 && ctl.requests[0].kind === 'stop', 'control_get');
     assert((await call('control_get')).requests.length === 0, 'control_get after ack');
+
+    // operators (§12.7): the owner makes this token an operator and lets it answer the Inbox
+    const refused = (await client.callTool({ name: 'control_request', arguments: { taskId: 'P2', kind: 'stop' } })) as { isError?: boolean; content: { text: string }[] };
+    assert(refused.isError && /“Operator”/.test(refused.content[0].text), 'control_request needs the Operator switch');
+    setTokenLaunch(srv.ctx, agent.id, { operator: true, inbox: true });
+    const overview = await call('factory_status');
+    assert(overview.projects.some((p: any) => p.key === 'arond') && typeof overview.waiting.inbox === 'number', 'factory_status');
+    const other = askDecision(srv.ctx, { question: 'Merge P2 today?', options: ['Yes', 'No'], taskId: 'P2' }, 'agent:another-coordinator');
+    const drop = askDecision(srv.ctx, { question: 'Still needed?' }, 'agent:another-coordinator');
+    const pending = await call<any[]>('decisions_list', { status: 'pending' });
+    assert(pending.find((d) => d.id === other.id)?.mayAnswer === true, 'decisions_list: the operator may answer it');
+    const ans = await call('decision_answer', { id: other.id, answer: 'no' });
+    assert(ans.answer === 'No' && ans.answeredBy === 'agent:smoke-coordinator', 'decision_answer');
+    assert((await call('decision_cancel', { id: drop.id })).status === 'cancelled', 'decision_cancel');
+    const stop = await call('control_request', { taskId: 'P2', kind: 'stop', note: 'smoke' });
+    assert((await call('control_get', { taskId: 'P2', ack: true })).requests[0]?.id === stop.id, 'control_request reaches control_get');
+    const saved2 = await call('projects_save', { key: 'smoke-ops', name: 'Smoke ops', checkout: checkout, machineId: machine.id });
+    assert(saved2.created === true && saved2.project.checkout === checkout, 'projects_save');
+    assert((await call('projects_set', { key: 'smoke-ops', autopilot: true, state: 'paused' })).state === 'paused', 'projects_set');
+    srv.ctx.db.setSetting('walk_mode', true);
+    const hook = post('/api/hook/PermissionRequest', {
+      v: 1, ts: Date.now(), env: {}, hostname: 'h', platform: process.platform, user: 'u', pid: 1, ppid: 1, hookVersion: 'smoke',
+      event: { session_id: sid, cwd: dir, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'npm test' } },
+    }).then((r) => r.text());
+    let item: any = null;
+    for (let i = 0; i < 200 && !item; i++) {
+      item = (await call('inbox_list')).pending.find((p: any) => p.sessionId === sid) ?? null;
+      if (!item) await new Promise((r) => setTimeout(r, 25));
+    }
+    assert(item?.kind === 'permission', 'inbox_list shows the permission');
+    assert((await call('inbox_answer', { id: item.id, type: 'allow' })).ok === true, 'inbox_answer');
+    assert(JSON.parse((await hook).trim()).output?.hookSpecificOutput?.decision?.behavior === 'allow', 'the session got the answer');
+    srv.ctx.db.setSetting('walk_mode', false);
+    log('✔ operator tools: status, decisions, control, projects, the Inbox');
 
     const integrated = await call('tasks_update', { id: 'P1', status: 'integrata' });
     assert(integrated.cleanup?.[0] === 'bash curata.sh P1', 'integration returns the cleanup list');

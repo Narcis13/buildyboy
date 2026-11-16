@@ -403,7 +403,79 @@ export interface DecisionView {
   askedBy: string;
   createdAt: number;
   answeredAt: number | null;
+  /** who answered or cancelled it: `web` (the owner), `agent:<name>` (an operator, §12.7), a `factory:` actor; null when unknown */
+  answeredBy: string | null;
 }
+
+// ---------- operators (§12.7) ----------
+
+/**
+ * What a decision is about, for an operator: a launch approval (only the owner answers it), the round limit of §11.7,
+ * one from the line (§12.5: needs attention, integration approval), or a question from an agent (coordinator, foreman…).
+ */
+export type DecisionKind = 'launch_approval' | 'round_limit' | 'line' | 'question';
+
+/** decisions_list: a decision plus what an operator needs to act on it. */
+export interface OperatorDecision extends DecisionView {
+  kind: DecisionKind;
+  project: string | null;
+  /** may the calling token answer or cancel it (pending, not its own question, not a launch approval, operator scope) */
+  mayAnswer: boolean;
+  /** why not, when mayAnswer is false and it is pending */
+  why?: string;
+}
+
+/**
+ * factory_status: one compact answer for a small context. Ages are in minutes; lists are capped, `…More` counts the rest.
+ * In list items, a field that would be null (or a zero round, a zero priority) is left out.
+ */
+export interface FactoryStatus {
+  at: number;
+  governor: { canStart: boolean; stopAll: boolean; reason: string; waitUntil: number | null; fiveHourPct: number | null; sevenDayPct: number | null; usageAgeMin: number | null };
+  /** runner offline, usage data stale, autopilot held… one line each */
+  alerts: string[];
+  /** counts per status, zeros left out; machine and runnerOnline only when the project has a machine */
+  projects: { key: string; name: string; state: ProjectState; autopilot: boolean; machine?: string; runnerOnline?: boolean; counts: Partial<Record<TaskStatus, number>> }[];
+  /** packages on the line (in_lucru, la_porti) and blocked ones: blocked first, then the longest unchanged */
+  line: { id: string; project?: string; title: string; status: TaskStatus; stage?: string; round?: number; maxRounds?: number; waits: string; sinceMin: number }[];
+  lineMore: number;
+  /** ready packages in claim order */
+  ready: { id: string; project?: string; title: string; priority?: number }[];
+  readyMore: number;
+  /** everything waiting on the owner (or an operator) */
+  waiting: {
+    decisions: { id: string; kind: DecisionKind; taskId?: string; question: string; options: string[]; askedBy: string; ageMin: number; mayAnswer: boolean }[];
+    decisionsMore: number;
+    controls: { id: number; taskId: string; kind: 'stop' | 'revert'; ageMin: number }[];
+    controlsMore: number;
+    /** pending Inbox actions of sessions in walk mode (inbox_list with an inbox token) */
+    inbox: number;
+  };
+}
+
+/** inbox_list: a pending Inbox action, cut for a small context. */
+export interface InboxItem {
+  id: string;
+  kind: 'permission' | 'question' | 'plan' | 'stop_wait';
+  sessionId: string;
+  session: string | null;
+  project: string | null;
+  machine: string | null;
+  cwd: string | null;
+  branch: string | null;
+  tool: string | null;
+  ageMin: number;
+  expiresInMin: number | null;
+  /** the tool input (permission), the plan, or the last message of the finished turn, cut to ~1500 characters */
+  detail: string;
+  /** a question's questions with their option labels: answer with { type: 'answers', answers: { [question]: label } } */
+  questions?: { question: string; options: string[]; multiSelect: boolean }[];
+  /** the answer types inbox_answer takes for this kind */
+  answers: InboxAnswerType[];
+}
+
+export const INBOX_ANSWER_TYPES = ['allow', 'deny', 'answers', 'reply', 'release'] as const;
+export type InboxAnswerType = (typeof INBOX_ANSWER_TYPES)[number];
 
 export interface UsageWindow {
   /** 0–100 */
@@ -517,6 +589,10 @@ export interface AgentTokenView {
   launch: LaunchScope;
   /** each launch waits for the owner's approval (a decision) */
   launchApproval: boolean;
+  /** acts for the owner (§12.7): answers decisions, asks for stop/revert, creates and changes projects, archives */
+  operator: boolean;
+  /** answers the Inbox's pending actions of sessions in walk mode (§12.7) */
+  inbox: boolean;
 }
 
 /** The answer of tasks_launch and coordinator_launch. */
@@ -593,7 +669,7 @@ export const QUEUEABLE_TOOLS = ['gates_record', 'tasks_update', 'digest_post', '
 /** Tools that change nothing (MCP `readOnlyHint`). control_get changes state only with ack: true. */
 export const READ_ONLY_TOOLS = [
   'usage_get', 'governor_get', 'sessions_list', 'sessions_get', 'tasks_list', 'tasks_get', 'projects_list', 'projects_get', 'prompts_render', 'prompts_lint',
-  'gates_status', 'findings_list', 'decision_get', 'machines_list', 'docs_get',
+  'gates_status', 'findings_list', 'decision_get', 'machines_list', 'factory_status', 'decisions_list', 'inbox_list', 'docs_get',
 ] as const;
 
 /** Longest coordinator prompt: it goes on a herdr command line (runner/options.ts HC_PROMPT_MAX). */
@@ -609,7 +685,7 @@ const launchArgs = {
 };
 
 /** docs_get topics. */
-export const DOCS_TOPICS = ['start', 'tools', 'api', 'all'] as const;
+export const DOCS_TOPICS = ['start', 'tools', 'api', 'operator', 'all'] as const;
 export type DocsTopic = (typeof DOCS_TOPICS)[number];
 
 export const TOOLS = {
@@ -789,11 +865,68 @@ export const TOOLS = {
     description: "Narcis's open requests to stop a package or revert its integration. ack: true marks the returned ones as handled.",
     input: z.object({ taskId: id.optional(), ack: z.boolean().optional() }),
   },
+  // ---------- operators (§12.7): reads for every token, writes for operator (or inbox) tokens ----------
+  factory_status: {
+    description:
+      'What the factory is doing, in one small answer: the governor, alerts, each project (autopilot, counts), the packages on the line with what they wait for, the ready ones, and everything waiting on the owner (decisions, stop/revert requests, the Inbox). Start every operator loop here.',
+    input: z.object({ project: projectKey.optional().describe('Only this project (default: active and paused projects)') }),
+  },
+  decisions_list: {
+    description: 'Decisions, pending first, each with its kind (launch_approval, round_limit, line, question), its project and whether you may answer it.',
+    input: z.object({
+      status: z.enum(['pending', 'answered', 'cancelled']).optional().describe('Only this status (default: all, pending first)'),
+      project: projectKey.optional().describe("Only decisions tied to this project's packages"),
+      limit: z.number().int().min(1).max(200).optional().describe('Default 20'),
+    }),
+  },
+  decision_answer: {
+    description:
+      "Answer a pending decision for the owner. Operator tokens only. The answer must be one of its options when it has some. Never a decision your token asked, never a launch approval (the owner's alone).",
+    input: z.object({ id: z.string().trim().min(1).max(64), answer: z.string().trim().min(1).max(20_000) }),
+  },
+  decision_cancel: {
+    description: 'Cancel a pending decision (withdraw the question). Operator tokens only; the same limits as decision_answer.',
+    input: z.object({ id: z.string().trim().min(1).max(64) }),
+  },
+  control_request: {
+    description: "Ask for a package to be stopped or its integration reverted, as the owner's \"Stop the package\" button does. Operator tokens only. The coordinator (or the conductor) acts on it through control_get.",
+    input: z.object({ taskId: id, kind: z.enum(['stop', 'revert']), note: z.string().max(4000).optional().describe('Why, for whoever carries it out') }),
+  },
+  projects_save: {
+    description:
+      'Create a project, or change one (only the fields given). Operator tokens only. machineId, checkout and lineFile decide what the runner executes: set them only as the owner told you.',
+    input: projectPatchSchema.extend({ key: projectKey }),
+  },
+  projects_set: {
+    description: "Switch a project's autopilot, or pause, resume, archive or unarchive it (state). Operator tokens only.",
+    input: z.object({
+      key: projectKey,
+      autopilot: z.boolean().optional().describe('true: the conductor moves its packages along the line'),
+      state: z.enum(PROJECT_STATES).optional().describe('active (resume or unarchive), paused (nothing new starts) or archived (it and its packages leave the lists)'),
+    }),
+  },
+  inbox_list: {
+    description: "The Inbox's pending actions of sessions in walk mode: permissions, questions, plans and finished turns waiting for a reply. Inbox tokens only.",
+    input: z.object({ limit: z.number().int().min(1).max(50).optional().describe('Default 10') }),
+  },
+  inbox_answer: {
+    description:
+      'Answer a pending Inbox action as the web Inbox does: allow or deny a permission or a plan, answer a question, reply to a finished turn (or release it). Inbox tokens only. The session acts on it at once.',
+    input: z.object({
+      id: z.string().trim().min(1).max(64),
+      type: z.enum(INBOX_ANSWER_TYPES).describe("One of the item's answers (inbox_list)"),
+      scope: z.enum(['once', 'session']).optional().describe('allow: once (default) or for the rest of the session'),
+      message: z.string().max(4000).optional().describe('deny: what to tell Claude instead'),
+      interrupt: z.boolean().optional().describe('deny: also stop the turn'),
+      answers: z.record(z.string().max(2000), z.string().max(4000)).optional().describe('answers: { [question]: chosen label }'),
+      text: z.string().trim().min(1).max(20_000).optional().describe('reply: the next instruction'),
+    }),
+  },
   docs_get: {
     description:
-      "Buildyboy's own manual for agents, as Markdown: how the factory works and the recommended loop (topic start), every MCP tool with its arguments, result and errors (tools, or one tool with `tool`), every HTTP endpoint (api), or everything (all). Read topic start once before your first factory run.",
+      "Buildyboy's own manual for agents, as Markdown: how the factory works and the recommended loop (topic start), the operator's guide (operator), every MCP tool with its arguments, result and errors (tools, or one tool with `tool`), every HTTP endpoint (api), or everything (all). Read topic start once before your first factory run.",
     input: z.object({
-      topic: z.enum(DOCS_TOPICS).optional().describe('start (default): concepts, connecting and the workflow; tools: the tool reference; api: the HTTP API; all: everything'),
+      topic: z.enum(DOCS_TOPICS).optional().describe("start (default): concepts, connecting and the workflow; operator: the owner's deputy; tools: the tool reference; api: the HTTP API; all: everything"),
       tool: z.string().max(64).optional().describe('One tool name: only its reference entry'),
     }),
   },

@@ -1,6 +1,6 @@
 // The digest (SPEC §11.5): once a day at a configurable time, and on demand (digest_post), a phone notification with
 // what was integrated, the gates, usage and the decisions that wait. When its packages come from more than one
-// project (§12.1), each line names their project.
+// project (§12.1), each line names their project. Decisions answered by operators (§12.7) are listed with who answered.
 import type { Ctx } from '../context.ts';
 import type { DigestView } from '../../shared/factory.ts';
 import { governor } from './governor.ts';
@@ -23,6 +23,8 @@ export interface DigestData {
   note: string | null;
   /** the project of every package named above that has one */
   projects?: Record<string, string>;
+  /** decisions answered (or cancelled: answer null) by operators in the period (§12.7), oldest first */
+  operatorAnswers?: { id: string; by: string; taskId: string | null; question: string; answer: string | null }[];
 }
 
 export function digestData(ctx: Ctx, now = Date.now(), note: string | null = null): DigestData {
@@ -52,12 +54,17 @@ export function digestData(ctx: Ctx, now = Date.now(), note: string | null = nul
       .all<{ task_id: string; detail_json: string | null }>("SELECT task_id, detail_json FROM task_events WHERE kind = 'warning' AND ts > ? ORDER BY ts", since)
       .map((w) => ({ taskId: w.task_id, message: String((JSON.parse(w.detail_json ?? '{}') as { message?: unknown }).message ?? '') })),
     controlsOpen: n("SELECT COUNT(*) n FROM control_requests WHERE status = 'open'"),
+    operatorAnswers: db
+      .all<{ id: string; answered_by: string; task_id: string | null; question: string; answer: string | null }>(
+        "SELECT id, answered_by, task_id, question, answer FROM decisions WHERE answered_at > ? AND answered_by LIKE 'agent:%' ORDER BY answered_at LIMIT 20", since,
+      )
+      .map((d) => ({ id: d.id, by: d.answered_by.slice('agent:'.length), taskId: d.task_id, question: d.question, answer: d.answer })),
     usage: { fiveHourPct: g.usage.fiveHour?.pct ?? null, sevenDayPct: g.usage.sevenDay?.pct ?? null, canStart: g.canStart, stopAll: g.stopAll, reason: g.reason },
     note,
   };
   const named = [...new Set([
     ...d.integrated.map((t) => t.id), ...d.gates.failed.map((f) => f.taskId), ...d.blocked, ...d.inProgress, ...d.warnings.map((w) => w.taskId),
-    ...d.decisions.flatMap((x) => (x.taskId ? [x.taskId] : [])),
+    ...d.decisions.flatMap((x) => (x.taskId ? [x.taskId] : [])), ...(d.operatorAnswers ?? []).flatMap((x) => (x.taskId ? [x.taskId] : [])),
   ])];
   d.projects = {};
   for (let i = 0; i < named.length; i += 500) {
@@ -105,6 +112,13 @@ export function digestText(d: DigestData): { title: string; body: string } {
   if (d.decisionsPending) {
     lines.push(`Decisions waiting: ${d.decisionsPending}`);
     for (const q of d.decisions ?? []) lines.push(`  · ${q.taskId ? `${one(q.taskId)}, ` : ''}${age(q.ageMs)}: ${q.question.length > 90 ? `${q.question.slice(0, 89)}…` : q.question}`);
+  }
+  if (d.operatorAnswers?.length) {
+    lines.push(`Answered by operators: ${d.operatorAnswers.length}`);
+    const short = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+    for (const a of d.operatorAnswers) {
+      lines.push(`  · ${a.by}${a.taskId ? `, ${one(a.taskId)}` : ''}: ${short(a.question, 70)} → ${a.answer === null ? 'cancelled' : short(a.answer, 50)}`);
+    }
   }
   if (d.controlsOpen) lines.push(`Your stop/revert requests not yet handled: ${d.controlsOpen}`);
   const title = `Factory digest: ${d.integrated.length} integrated${d.decisionsPending ? `, ${d.decisionsPending} decision${d.decisionsPending > 1 ? 's' : ''} waiting` : ''}`;

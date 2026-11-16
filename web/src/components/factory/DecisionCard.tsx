@@ -102,6 +102,12 @@ export function DecisionCard({ d, highlighted, showTask = true }: { d: DecisionV
               · <RelTime ts={d.answeredAt} />
             </span>
           )}
+          {d.answeredBy && d.answeredBy !== 'web' && (
+            <span className="text-sm text-muted [overflow-wrap:anywhere]" data-testid="decision-answered-by">
+              {' '}
+              · {d.status === 'cancelled' ? 'cancelled' : 'answered'} by {d.answeredBy.replace(/^agent:/, '')}
+            </span>
+          )}
         </div>
       )}
     </Card>

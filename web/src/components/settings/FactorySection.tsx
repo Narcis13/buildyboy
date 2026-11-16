@@ -56,7 +56,7 @@ function TokensCard({ publicUrl }: { publicUrl: string }) {
     },
   });
   const setLaunch = useMutation({
-    mutationFn: ({ id, ...patch }: { id: string; launch?: LaunchScope; launchApproval?: boolean }) => api.put<AgentTokenView>(`/api/agent-tokens/${id}`, patch),
+    mutationFn: ({ id, ...patch }: { id: string; launch?: LaunchScope; launchApproval?: boolean; operator?: boolean; inbox?: boolean }) => api.put<AgentTokenView>(`/api/agent-tokens/${id}`, patch),
     onSettled: () => qc.invalidateQueries({ queryKey: ['agent-tokens'] }),
   });
   const line = fresh ? mcpAddLine(publicUrl, fresh.token) : '';
@@ -147,6 +147,18 @@ function TokensCard({ publicUrl }: { publicUrl: string }) {
                         <Toggle on={t.launchApproval} label="Ask me before each launch" disabled={setLaunch.isPending} onChange={(v) => setLaunch.mutate({ id: t.id, launchApproval: v })} />
                       </span>
                     )}
+                  </div>
+                )}
+                {!t.revokedAt && (
+                  <div className="mt-1 grid gap-x-4 gap-y-1 sm:grid-cols-2">
+                    <div data-testid="agent-token-operator">
+                      <Toggle on={t.operator} label="Operator" disabled={setLaunch.isPending} onChange={(v) => setLaunch.mutate({ id: t.id, operator: v })} />
+                      <p className="text-sm text-muted">Acts for you: answers decisions (never its own or a launch), stops or reverts packages, changes projects and autopilot.</p>
+                    </div>
+                    <div data-testid="agent-token-inbox">
+                      <Toggle on={t.inbox} label="Inbox" disabled={setLaunch.isPending} onChange={(v) => setLaunch.mutate({ id: t.id, inbox: v })} />
+                      <p className="text-sm text-muted">Answers the Inbox for you: permissions, questions, plans and replies of sessions in walk mode.</p>
+                    </div>
                   </div>
                 )}
               </div>

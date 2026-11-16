@@ -170,7 +170,7 @@ export const SHAPES: Shape[] = [
   {
     id: 'decision',
     title: 'Decision',
-    intro: 'Returned by decision_ask and decision_get.',
+    intro: 'Returned by decision_ask, decision_get, decision_answer and decision_cancel.',
     fields: [
       ['id', 'string', 'UUID.'],
       ['taskId', 'string | null', 'The package it is tied to.'],
@@ -180,6 +180,49 @@ export const SHAPES: Shape[] = [
       ['answer', 'string | null', 'The human\'s answer.'],
       ['askedBy', 'string', 'agent:<token name>, or factory:rounds for round-limit questions.'],
       ['createdAt · answeredAt', 'number | null', 'Epoch ms.'],
+      ['answeredBy', 'string | null', 'Who answered or cancelled it: web (the owner), agent:<token name> (an operator), a factory: actor; null when unknown.'],
+    ],
+  },
+  {
+    id: 'operator-decision',
+    title: 'Operator decision',
+    intro: 'Returned by decisions_list: every Decision field, plus:',
+    fields: [
+      ['kind', 'enum', 'launch_approval (only the owner answers it), round_limit (§11.7: another round or stop), line (from the conductor: needs attention, integration approval) or question (from an agent: a coordinator, the foreman…).'],
+      ['project', 'string | null', 'The project of its package.'],
+      ['mayAnswer', 'boolean', 'Your token may answer or cancel it now.'],
+      ['why', 'string?', 'Pending but not yours to answer: why.'],
+    ],
+  },
+  {
+    id: 'factory-status',
+    title: 'Factory status',
+    intro: 'Returned by factory_status. Made for small contexts: no bodies, no histories; titles cut to 80 characters, questions to 100, options to 40; ages in minutes; every list capped, with a count of the rest; in list items a field that would be null (or a zero round or priority) is left out. About 6 KB for a busy factory, at most ~20 KB.',
+    fields: [
+      ['at', 'number', 'Epoch ms of the answer.'],
+      ['governor', 'object', '{ canStart, stopAll, reason, waitUntil, fiveHourPct, sevenDayPct, usageAgeMin }.'],
+      ['alerts', 'string[]', 'One line each: the governor holding work, a runner offline, autopilot held (paused, governor, runner), a line file error.'],
+      ['projects', 'object[]', 'Active and paused projects (or the one asked for): { key, name, state, autopilot, machine, runnerOnline, counts } (counts per status, zeros left out).'],
+      ['line · lineMore', 'object[] · integer', 'Up to 20 packages in in_lucru, la_porti or blocata, blocked first then the longest unchanged: { id, project, title, status, stage, round, maxRounds, waits, sinceMin }. waits: worker, gates, decision (one is pending on it), stop request / revert request (open), owner (blocked), or what the line says.'],
+      ['ready · readyMore', 'object[] · integer', 'Up to 10 ready packages in claim order: { id, project, title, priority }.'],
+      ['waiting.decisions · decisionsMore', 'object[] · integer', 'Up to 20 pending decisions, oldest first: { id, kind, taskId, question, options, askedBy, ageMin, mayAnswer }.'],
+      ['waiting.controls · controlsMore', 'object[] · integer', 'Up to 10 open stop/revert requests: { id, taskId, kind, ageMin }.'],
+      ['waiting.inbox', 'integer', 'Pending Inbox actions of sessions in walk mode (inbox_list needs an Inbox token).'],
+    ],
+  },
+  {
+    id: 'inbox-item',
+    title: 'Inbox item',
+    intro: 'Returned by inbox_list (in pending).',
+    fields: [
+      ['id', 'string', 'The action to answer with inbox_answer.'],
+      ['kind', 'enum', 'permission (a tool call waits for approval), question (AskUserQuestion), plan (ExitPlanMode), stop_wait (the turn ended; the session waits for a reply).'],
+      ['sessionId · session · project · machine · cwd · branch', 'string | null', 'Which session asks, and where.'],
+      ['tool', 'string | null', 'The tool that waits.'],
+      ['ageMin · expiresInMin', 'number', 'How long it has waited; when it times out (the session then goes on its own way).'],
+      ['detail', 'string', 'The tool input (permission), the plan, or the last message of the turn, cut to 1 500 characters.'],
+      ['questions', 'object[]?', 'question: { question, options (labels), multiSelect } for each question.'],
+      ['answers', 'string[]', 'The answer types this item takes.'],
     ],
   },
   {
@@ -293,6 +336,7 @@ export const TOOL_GROUPS = [
   { id: 'gates', title: 'Gates and findings' },
   { id: 'launch', title: 'Launching workers and coordinators' },
   { id: 'human', title: 'The human: decisions, controls, digest' },
+  { id: 'operators', title: "Operators: acting for the owner" },
   { id: 'docs', title: 'Documentation' },
 ] as const;
 type ToolGroupId = (typeof TOOL_GROUPS)[number]['id'];
@@ -681,10 +725,123 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
     example: { ack: true },
     notes: ['Buildyboy never runs git on your repositories: a revert request is yours to carry out.'],
   },
+  factory_status: {
+    group: 'operators',
+    use: 'The first call of every operator loop, and whenever you need the whole picture: it fits a small context (titles cut to 80 characters, ages in minutes, lists capped with a count of the rest: 20 on the line, 10 ready, 20 decisions, 10 controls).',
+    args: { project: 'Only this project: its line, ready packages, decisions and controls.' },
+    returns: 'Factory status.',
+    shapes: ['factory-status'],
+    errors: ['404 unknown project <key>'],
+    example: {},
+    notes: ['Any agent token may read it. waiting.decisions[].mayAnswer already says whether your token may answer each one.'],
+  },
+  decisions_list: {
+    group: 'operators',
+    use: 'Read decisions in full (context included) before answering, or look back at what was answered and by whom.',
+    args: { status: 'pending, answered or cancelled (default: all, pending first).', project: "Only those tied to this project's packages.", limit: '1–200, default 20.' },
+    returns: 'Operator decision[]: Decision plus kind, project, mayAnswer and, when you may not answer a pending one, why.',
+    shapes: ['decision', 'operator-decision'],
+    errors: ['404 unknown project <key>'],
+    example: { status: 'pending', limit: 10 },
+  },
+  decision_answer: {
+    group: 'operators',
+    use: 'Answer a pending decision for the owner, when the context you were given lets you judge it. Leave the rest to the owner (docs_get {topic: "operator"}).',
+    args: { id: 'The decision (factory_status or decisions_list).', answer: 'One of its options when it has some (matched ignoring case); free text otherwise.' },
+    returns: 'Decision (status answered, answeredBy agent:<your token name>).',
+    shapes: ['decision'],
+    errors: [
+      '403 this agent token may not answer decisions (turn on “Operator”)', '403 decision <id> is a launch approval', '403 decision <id> was asked by this token',
+      '400 the answer must be one of its options', '404 unknown decision <id>', '409 decision <id> is already answered / cancelled',
+    ],
+    example: { id: '3c0d…', answer: 'Încă o rundă' },
+    notes: ['Audited as agent:<name> and listed in the digest under "Answered by operators".', 'Send an idempotency-key header when you may retry.'],
+  },
+  decision_cancel: {
+    group: 'operators',
+    use: 'Withdraw a question nobody needs answered any more (the package was stopped, or it was asked twice).',
+    args: { id: 'The decision.' },
+    returns: 'Decision (status cancelled).',
+    shapes: ['decision'],
+    errors: ['403 as decision_answer', '404 unknown decision <id>', '409 already answered or cancelled'],
+    example: { id: '3c0d…' },
+  },
+  control_request: {
+    group: 'operators',
+    use: "Stop a package, or ask for its integration to be reverted, as the owner's buttons do. Only when the owner told you to, or a package is clearly running away (say so in the note).",
+    args: { taskId: 'The package.', kind: 'stop or revert.', note: 'Why, for whoever carries it out.' },
+    returns: 'Control request (status open).',
+    shapes: ['control'],
+    errors: ['403 this agent token may not ask for a stop/revert (turn on “Operator”)', '404 unknown task <id>'],
+    example: { taskId: 'P3', kind: 'stop', note: 'the owner asked to pause it until Monday' },
+    notes: ['The coordinator or the conductor carries it out and acknowledges it (control_get {ack: true}).'],
+  },
+  projects_save: {
+    group: 'operators',
+    use: "Put a repo on the factory (a new key creates the project) or change a project's fields. Only the fields you pass change.",
+    args: {
+      key: 'The project key: a lower-case letter, then letters, digits and "-", 2–24 characters. New key: a new project.',
+      name: 'Display name (default: the repo name).',
+      repo: 'owner/name; null clears it. One project per repo.',
+      idPrefix: '"" or e.g. "ED-": the package ids it owns. Fixed once it has packages.',
+      machineId: 'The machine whose runner runs its line (machines_list); null clears it. Security-sensitive: set it only as the owner told you.',
+      checkout: 'The trusted main checkout on that machine; null clears it. Security-sensitive.',
+      lineFile: 'The line file, relative to the checkout (default factory.json). Security-sensitive.',
+      config: 'Overrides, merged key by key (a key set to null is removed): { limits: { workers, rounds }, models: { worker, qa, review, visual, foreman, planner }, integrate: { approval: never | sensitive | always }, legacy }.',
+    },
+    returns: '{ created, project: Project }.',
+    shapes: ['project'],
+    errors: ['403 this agent token may not create or change projects (turn on “Operator”)', '400 invalid key, prefix or config / unknown machine', '409 repo or id prefix belongs to another project / prefix fixed once it has packages'],
+    example: { key: 'shop', name: 'Shop', repo: 'acme/shop', idPrefix: 'SH-' },
+    notes: ['machineId, checkout and lineFile decide what the runner executes: never change them on your own initiative.', 'Audited as agent:<name> (project_create, project_update).'],
+  },
+  projects_set: {
+    group: 'operators',
+    use: "Switch a project's autopilot, pause or resume it, archive or unarchive it.",
+    args: {
+      key: 'The project.',
+      autopilot: 'true: the conductor moves its packages along the line; false: nothing moves unless a coordinator or the owner does it.',
+      state: 'active (resume, or unarchive), paused (nothing new starts; work in flight continues) or archived (it and its packages leave the lists).',
+    },
+    returns: 'Project.',
+    shapes: ['project'],
+    errors: ['403 (turn on “Operator”)', '400 give autopilot, state or both', '404 unknown project', '409 project <key> is archived: unarchive it first (autopilot on an archived project)'],
+    example: { key: 'shop', autopilot: false },
+    notes: ['State changes first, then autopilot. Archiving archives its packages; unarchiving brings back exactly those.'],
+  },
+  inbox_list: {
+    group: 'operators',
+    use: 'See what sessions in walk mode wait for: a permission, a question, a plan to approve, or a reply at the end of a turn. They time out if nobody answers.',
+    args: { limit: '1–50, default 10.' },
+    returns: '{ pending: Inbox item[], more }.',
+    shapes: ['inbox-item'],
+    errors: ['403 this agent token may not read the Inbox (turn on “Inbox”)'],
+    example: {},
+  },
+  inbox_answer: {
+    group: 'operators',
+    use: "Answer one Inbox item the way the owner would in the web Inbox. Allow only what is clearly inside the session's task; deny with a message otherwise.",
+    args: {
+      id: 'The item (inbox_list).',
+      type: "One of the item's answers: allow, deny (permission, plan); answers, deny (question); reply, release (finished turn).",
+      scope: 'allow: once (default) or session (allow this for the rest of the session).',
+      message: 'deny: what Claude is told instead.',
+      interrupt: 'deny: also stop the turn.',
+      answers: 'answers: { [question]: chosen option label }, one entry per question.',
+      text: 'reply: the next instruction for the session.',
+    },
+    returns: '{ ok: true }.',
+    errors: [
+      '403 this agent token may not answer the Inbox (turn on “Inbox”)', '400 a <kind> takes <types>, not <type>', '400 answers / text is required', '404 not found',
+      '409 already answered, timed out or superseded',
+    ],
+    example: { id: '9b1e…', type: 'deny', message: 'Not on production: use the staging database' },
+    notes: ['The same path as POST /api/actions/:id/answer; recorded in the session timeline and the audit log as agent:<name>.'],
+  },
   docs_get: {
     group: 'docs',
-    use: 'Read this manual from inside a session. Topic start once before your first run; tools or api when you need the details.',
-    args: { topic: 'start (default), tools, api or all.', tool: 'One tool\'s entry only, e.g. "tasks_claim".' },
+    use: 'Read this manual from inside a session. Topic start once before your first run; operator if you act for the owner; tools or api when you need the details.',
+    args: { topic: 'start (default), operator, tools, api or all.', tool: 'One tool\'s entry only, e.g. "tasks_claim".' },
     returns: 'Markdown text.',
     errors: ['400 unknown tool'],
     example: { topic: 'start' },
@@ -766,7 +923,7 @@ export const AUTH: Record<Auth, { label: string; desc: string }> = {
     desc: 'The PWA\'s session cookie bb_session (from POST /api/auth/login). Every request other than GET also needs the header x-bb-csrf with the value of the bb_csrf cookie.',
   },
   machine: { label: 'Machine token', desc: '"Authorization: Bearer bbm_…": the token a paired machine keeps in ~/.buildyboy/config.json. Used by the plugin\'s hooks, the statusline bridge, OTEL export and the runner.' },
-  agent: { label: 'Agent token', desc: '"Authorization: Bearer bba_…": created in Settings → Factory → Agent tokens, revocable. Reaches only the agent API, /mcp, /api/governor and /api/usage. It starts workers or coordinators only when the owner allows it for that token.' },
+  agent: { label: 'Agent token', desc: '"Authorization: Bearer bba_…": created in Settings → Factory → Agent tokens, revocable. Reaches only the agent API, /mcp, /api/governor and /api/usage. It starts workers or coordinators, acts for the owner (operator) or answers the Inbox only when the owner allows it for that token.' },
   'web-or-agent': { label: 'Web login or agent token', desc: 'Either one.' },
 };
 
@@ -858,7 +1015,7 @@ export const API_GROUPS: ApiGroup[] = [
       {
         method: 'GET', path: '/docs/agents.md', auth: 'public',
         summary: 'The whole agent guide as one Markdown file: concepts, connecting, the loop, every tool, every endpoint. The best thing to give an agent to read.',
-        query: [f('topic', 'start, tools, api or all (default all).')],
+        query: [f('topic', 'start, operator, tools, api or all (default all).')],
         returns: 'text/markdown.',
       },
       { method: 'GET', path: '/llms.txt', auth: 'public', summary: 'A short llms.txt index pointing agents at the guide and the MCP endpoint.', returns: 'text/markdown.' },
@@ -1090,12 +1247,16 @@ export const API_GROUPS: ApiGroup[] = [
       { method: 'GET', path: '/api/decisions', auth: 'web', summary: 'Decisions.', query: [f('status', 'pending, answered or cancelled.')], returns: 'Decision[].' },
       { method: 'POST', path: '/api/decisions/:id/answer', auth: 'web', summary: 'Answer a decision.', body: [f('answer', 'Free text or one of its options.')], returns: 'Decision.', errors: ['409 not found or already answered'] },
       { method: 'POST', path: '/api/decisions/:id/cancel', auth: 'web', summary: 'Cancel a pending decision.', returns: 'Decision.', errors: ['409 not found or already answered'] },
-      { method: 'GET', path: '/api/agent-tokens', auth: 'web', summary: 'Agent tokens (never the token itself).', returns: '[{ id, name, createdAt, lastUsedAt, revokedAt, launch, launchApproval }].' },
+      { method: 'GET', path: '/api/agent-tokens', auth: 'web', summary: 'Agent tokens (never the token itself).', returns: '[{ id, name, createdAt, lastUsedAt, revokedAt, launch, launchApproval, operator, inbox }].' },
       { method: 'POST', path: '/api/agent-tokens', auth: 'web', summary: 'Create an agent token. The token is in this answer only.', body: [f('name', 'What uses it, e.g. coordinator or claude-desktop.')], returns: '201 { id, name, token (bba_…) }.' },
       {
         method: 'PUT', path: '/api/agent-tokens/:id', auth: 'web',
-        summary: 'What the token may launch with tasks_launch and coordinator_launch, and whether each launch waits for your approval.',
-        body: [f('launch', 'off (default), workers or all (workers and coordinators).'), f('launchApproval', 'true (default): every launch is a decision you answer first.')],
+        summary: 'What the token may launch with tasks_launch and coordinator_launch, whether each launch waits for your approval, and whether it acts for you (operator, inbox). Only the fields given change.',
+        body: [
+          f('launch', 'off (default), workers or all (workers and coordinators).'), f('launchApproval', 'true (default): every launch is a decision you answer first.'),
+          f('operator', 'true: it may answer decisions (never its own, never a launch approval), ask for stop or revert, create and change projects and archive packages. Off by default.'),
+          f('inbox', 'true: it may answer the Inbox (permissions, questions, plans, replies) of sessions in walk mode. Off by default.'),
+        ],
         returns: 'The token, as in GET.',
         errors: ['400 invalid values', '404 not found or revoked'],
       },
@@ -1340,9 +1501,100 @@ curl -X POST ${u}/api/agent/tasks_list -H "Authorization: Bearer bba_…" -H "Co
 
 ## More
 
+- \`docs_get {topic: "operator"}\`: for an agent the owner made an **operator** (their deputy, e.g. a bot on their
+  phone): the status in one call, answering decisions, stop/revert, projects and autopilot, the Inbox.
 - \`docs_get {topic: "tools"}\`: every tool with its arguments, result, errors and an example.
 - \`docs_get {topic: "api"}\`: every HTTP endpoint.
 - The same as one file: ${u}/docs/agents.md · the manual: ${u}/docs/agents
+`;
+}
+
+/** docs_get {topic: 'operator'}: the owner's deputy (§12.7), written for an agent with a small context. */
+function operatorGuide(site: RefSite): string {
+  const u = site.url;
+  return `# Buildyboy: the operator's guide
+
+You are the owner's **deputy**: an agent (often a bot on their phone) whose Buildyboy agent token the owner made an
+**operator**. While they are away you watch the software factory, answer what waits for them when you can judge it,
+and leave the rest to them. Every action you take is recorded as \`agent:<your token name>\` and listed in the daily
+digest under "Answered by operators".
+
+## What you may do, and what you may not
+
+- **Operator** switch (Settings → Factory → Agent tokens): \`decision_answer\`, \`decision_cancel\`,
+  \`control_request\` (stop or revert a package), \`projects_save\`, \`projects_set\` (autopilot, pause, archive),
+  \`tasks_update {archived}\`.
+- **Inbox** switch (separate): \`inbox_list\`, \`inbox_answer\`: the permissions, questions, plans and end-of-turn
+  replies of Claude Code sessions in walk mode.
+- Without the switch, those calls answer 403 and name the switch to ask the owner for. Reads work for every token:
+  \`factory_status\`, \`decisions_list\`, \`tasks_get\`, \`projects_get\`, \`decision_get\`, \`governor_get\`…
+- **Never**: answer a decision your own token asked (403); answer a **launch approval** (only the owner does; they can
+  turn off "Ask me before each launch" for a token instead); launch workers or coordinators unless your token was
+  also allowed to launch; change \`machineId\`, \`checkout\` or \`lineFile\` of a project unless the owner told you
+  the exact values (they decide what runs on their machines).
+
+## The loop
+
+1. \`factory_status\` (or \`{project}\` for one). Read \`alerts\` first, then \`waiting\`.
+2. For each decision in \`waiting.decisions\` with \`mayAnswer: true\`: read it whole if needed
+   (\`decisions_list {status: "pending"}\` has the context; \`tasks_get {id}\` has the package), then answer with
+   \`decision_answer {id, answer}\` (one of its options, when it has some), or leave it.
+3. Adjust only when there is a reason: \`control_request\` to stop a runaway package, \`projects_set\` to pause a project
+   or switch its autopilot, as the owner asked.
+4. With an Inbox token: \`inbox_list\`, then \`inbox_answer\` for what is clearly inside the session's task.
+5. Come back later: every 10–15 minutes while packages are on the line or decisions wait, every hour or two when
+   nothing moves (\`line\` and \`waiting\` empty), and stop when the owner is back. Never poll in a tight loop.
+   Tell the owner what you did when they return (or \`digest_post {note}\`).
+
+## The decisions you will see (\`kind\`)
+
+- **round_limit** (asked by \`factory:rounds\`): a package failed a gate in its last allowed round and is blocked.
+  "Încă o rundă" = one more round of gates (the worker fixes the findings); "Încă o rundă, doar pentru G<n>" = one more
+  round for that gate only; "Oprește pachetul" = stop the package. Allow another round when the findings
+  (\`findings_list {taskId, status: "open"}\`) look fixable and few; stop when it keeps failing the same way.
+- **line** (asked by \`factory:line\`, the conductor): *needs attention* (a step errored twice, the worker stopped
+  without finishing, it is past its time limit): Retry, Ask the foreman, Stop the package, or "I'll take it from here"
+  (the owner drives it by hand). *Integration approval* (before G5 merges a sensitive package or one that touched
+  protected paths): approving lets it merge into the base branch. Leave integration approvals of sensitive packages to
+  the owner unless they told you otherwise.
+- **question** (asked by an agent: a coordinator or the foreman): a technical or scope question about a package.
+  Answer only what the context and the package's spec settle. A question that changes scope, an acceptance
+  criterion, a recorded decision, or touches production goes to the owner.
+- **launch_approval**: never yours (403). Mention it to the owner if it has waited long.
+
+## When to leave it to the owner
+
+- Anything you cannot judge from the context you were given, or that you were not told about.
+- Scope changes, new or dropped acceptance criteria, anything touching production, money, security or data.
+- Reverting an integration (\`control_request {kind: "revert"}\`): only when the owner asked.
+- Answering is not urgent: a decision can wait; the workers go on with what does not depend on it.
+
+## Examples
+
+Over HTTP (the same bearer token as MCP; the answer is \`{ "result": … }\`, a refusal a 4xx with \`{ "error" }\`):
+
+\`\`\`
+curl -X POST ${u}/api/agent/factory_status -H "Authorization: Bearer bba_…" -H "Content-Type: application/json" -d '{}'
+curl -X POST ${u}/api/agent/decision_answer -H "Authorization: Bearer bba_…" -H "Content-Type: application/json" \\
+     -H "idempotency-key: answer-3c0d-1" -d '{"id":"3c0d…","answer":"Încă o rundă"}'
+curl -X POST ${u}/api/agent/control_request -H "Authorization: Bearer bba_…" -H "Content-Type: application/json" \\
+     -d '{"taskId":"P3","kind":"stop","note":"the owner asked to pause it"}'
+\`\`\`
+
+As MCP tool calls (\`${u}/mcp\`, or \`bb mcp\`):
+
+\`\`\`json
+{ "name": "factory_status", "arguments": { "project": "shop" } }
+{ "name": "decision_answer", "arguments": { "id": "3c0d…", "answer": "Oprește pachetul" } }
+{ "name": "projects_set", "arguments": { "key": "shop", "autopilot": false } }
+{ "name": "inbox_answer", "arguments": { "id": "9b1e…", "type": "deny", "message": "Not on production" } }
+\`\`\`
+
+An idempotency-key header (HTTP) makes a retried write safe: the same key returns the first answer and changes nothing.
+
+## More
+
+\`docs_get {tool: "<name>"}\` gives one tool's arguments, result and errors; \`docs_get {topic: "start"}\` the concepts.
 `;
 }
 
@@ -1407,6 +1659,7 @@ export function agentGuide(site: RefSite, topic: DocsTopic = 'all', tool?: strin
   if (!DOCS_TOPICS.includes(topic)) topic = 'all';
   const parts: string[] = [];
   if (topic === 'start' || topic === 'all') parts.push(startGuide(site));
+  if (topic === 'operator' || topic === 'all') parts.push(operatorGuide(site));
   if (topic === 'tools' || topic === 'all') parts.push(toolsMarkdown());
   if (topic === 'api' || topic === 'all') parts.push(apiMarkdown(site));
   return parts.join('\n\n');
@@ -1424,6 +1677,7 @@ Agents connect to the MCP server at ${u}/mcp (Streamable HTTP) with "Authorizati
 
 - [Agent guide (Markdown, everything)](${u}/docs/agents.md): concepts, connecting, the coordinator loop, every MCP tool and every HTTP endpoint
 - [Getting started for agents](${u}/docs/agents.md?topic=start)
+- [The operator's guide: acting for the owner](${u}/docs/agents.md?topic=operator)
 - [MCP tool reference](${u}/docs/agents.md?topic=tools)
 - [HTTP API reference](${u}/docs/agents.md?topic=api)
 - [Human manual](${u}/docs)

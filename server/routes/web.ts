@@ -3,25 +3,18 @@ import { streamSSE } from 'hono/streaming';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Ctx } from '../context.ts';
-import type { ActionAnswer } from '../../shared/types.ts';
 import {
   clientIp, createPairingCode, createWebSession, destroyWebSession, ensureSetupToken, hasPassword, noteFailure, requireWeb, tooManyFailures,
   rotateMachineToken, setPassword, verifyPassword, webUser,
 } from '../auth.ts';
 import { json } from '../db.ts';
 import { attention, listMachines, listSessions, queuedMessages, sessionDetail, timeline } from '../queries.ts';
-import { answerPending, getPending, listPending } from '../control/pending.ts';
+import { answerPending, listPending } from '../control/pending.ts';
 import { wakePaused } from '../control/control.ts';
 import { search } from '../search.ts';
 import { exportMarkdown } from '../export.ts';
-
-const answerSchema: z.ZodType<ActionAnswer> = z.union([
-  z.object({ type: z.literal('allow'), scope: z.enum(['once', 'session']).optional(), updatedInput: z.record(z.string(), z.unknown()).optional() }),
-  z.object({ type: z.literal('deny'), message: z.string().max(4000).optional(), interrupt: z.boolean().optional() }),
-  z.object({ type: z.literal('answers'), answers: z.record(z.string(), z.string()) }),
-  z.object({ type: z.literal('reply'), text: z.string().min(1).max(20000) }),
-  z.object({ type: z.literal('release') }),
-]);
+import { actionAnswerSchema as answerSchema, answerInboxAction } from '../factory/operator.ts';
+import { FactoryError } from '../factory/tasks.ts';
 
 /** Settings readable/writable from the web. Secrets are write-only. */
 const SETTINGS = ['walk_mode', 'pause_all', 'stop_wait_min', 'retention_days', 'redaction_rules', 'budget_session_usd', 'budget_job_usd',
@@ -263,12 +256,13 @@ export function webRoutes(ctx: Ctx) {
     const id = c.req.param('id');
     const parsed = answerSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'invalid answer' }, 400);
-    const p = getPending(ctx, id);
-    if (!p) return c.json({ error: 'not found' }, 404);
-    if (p.status !== 'pending') return c.json({ error: `already ${p.status}` }, 409);
-    const ok = answerPending(ctx, id, parsed.data as Record<string, unknown>, 'web');
-    db.audit('web', 'answer', id, parsed.data);
-    return ok ? c.json({ ok: true }) : c.json({ error: 'already answered' }, 409);
+    // the same path as an inbox token's inbox_answer (§12.7)
+    try {
+      return c.json(answerInboxAction(ctx, id, parsed.data, 'web'));
+    } catch (e) {
+      if (e instanceof FactoryError) return c.json({ error: e.message }, e.status as 404);
+      throw e;
+    }
   });
 
   // ---------- global controls ----------

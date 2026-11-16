@@ -5,7 +5,7 @@ import type { Ctx } from '../context.ts';
 import { requireMachine, requireWeb, webUser } from '../auth.ts';
 import { FINDING_SEVERITIES, FINDING_STATUSES, LAUNCH_SCOPES, TASK_STATUSES, TOOLS, type GateReport, type TaskStatus } from '../../shared/factory.ts';
 import { parseTaskFile, orderByDeps, TaskFileError, taskFileToCreate } from '../../shared/tasks-md.ts';
-import { agentFromToken, callTool, createAgentToken, listAgentTokens, requireAgent, revokeAgentToken, setTokenLaunch } from '../factory/agent.ts';
+import { agentFromToken, callerOf, callTool, createAgentToken, listAgentTokens, requireAgent, revokeAgentToken, setTokenLaunch, type AgentIdentity } from '../factory/agent.ts';
 import { governor, readUsage } from '../factory/governor.ts';
 import { createTask, deleteTask, FactoryError, gateShot, getTask, listTasks, requestControl, updateTask } from '../factory/tasks.ts';
 import { answerDecision, listDecisions } from '../factory/decisions.ts';
@@ -44,7 +44,7 @@ const webPatchSchema = TOOLS.tasks_update.input.omit({ id: true }).extend({
 });
 
 export function factoryRoutes(ctx: Ctx) {
-  const app = new Hono<{ Variables: { agent: { id: string; name: string } } }>();
+  const app = new Hono<{ Variables: { agent: AgentIdentity } }>();
   const web = requireWeb(ctx);
   const agentAuth = requireAgent(ctx);
   const { db } = ctx;
@@ -56,7 +56,7 @@ export function factoryRoutes(ctx: Ctx) {
     const key = c.req.header('idempotency-key')?.trim().slice(0, 200) || null;
     try {
       const agent = c.get('agent');
-      const out = callTool(ctx, c.req.param('tool'), (await c.req.json().catch(() => ({}))) ?? {}, `agent:${agent.name}`, key, { tokenId: agent.id });
+      const out = callTool(ctx, c.req.param('tool'), (await c.req.json().catch(() => ({}))) ?? {}, `agent:${agent.name}`, key, callerOf(agent));
       return c.json(out);
     } catch (e) {
       return fail(c, e);
@@ -266,11 +266,15 @@ export function factoryRoutes(ctx: Ctx) {
   });
 
   app.put('/api/agent-tokens/:id', web, async (c) => {
-    const b = z.object({ launch: z.enum(LAUNCH_SCOPES).optional(), launchApproval: z.boolean().optional() }).safeParse(await c.req.json().catch(() => null));
-    if (!b.success) return c.json({ error: 'launch must be off, workers or all; launchApproval true or false' }, 400);
+    const b = z
+      .object({ launch: z.enum(LAUNCH_SCOPES).optional(), launchApproval: z.boolean().optional(), operator: z.boolean().optional(), inbox: z.boolean().optional() })
+      .safeParse(await c.req.json().catch(() => null));
+    if (!b.success) return c.json({ error: 'launch must be off, workers or all; launchApproval, operator and inbox true or false' }, 400);
     const t = setTokenLaunch(ctx, c.req.param('id'), b.data);
     if (!t) return c.json({ error: 'not found or revoked' }, 404);
-    db.audit('web', 'agent_token_launch', t.id, b.data);
+    const { operator, inbox, ...launch } = b.data;
+    if (Object.keys(launch).length) db.audit('web', 'agent_token_launch', t.id, launch);
+    if (operator !== undefined || inbox !== undefined) db.audit('web', 'agent_token_scopes', t.id, { operator, inbox }); // §12.7
     return c.json(t);
   });
 
