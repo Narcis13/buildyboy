@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api.ts';
 import { Button, Card } from '../ui.tsx';
 import { Field, inputClass } from '../settings/bits.tsx';
+import { ProjectPicker, useFactoryProjects } from './projects.tsx';
 
 const EXAMPLE = `---
 id: P2
@@ -29,14 +30,30 @@ function readFile(f: File): Promise<{ name: string; text: string }> {
   });
 }
 
-/** Bring packages in from Markdown files (or pasted Markdown) and from GitHub issues. */
-export function ImportPanel({ onClose }: { onClose: () => void }) {
+/** "owner/name" → its two parts; null for a bare name. */
+const splitRepo = (r: string | null | undefined) => (r && /^[\w.-]+\/[\w.-]+$/.test(r) ? r.split('/') : null);
+
+/** Bring packages in from Markdown files (or pasted Markdown) and from GitHub issues, into `project` by default. */
+export function ImportPanel({ onClose, project: initialProject = '' }: { onClose: () => void; project?: string }) {
   const qc = useQueryClient();
+  const projects = useFactoryProjects().data;
   const fileRef = useRef<HTMLInputElement>(null);
+  const [project, setProject] = useState(initialProject);
   const [files, setFiles] = useState<File[]>([]);
   const [pasted, setPasted] = useState('');
-  const [owner, setOwner] = useState('');
-  const [repo, setRepo] = useState('');
+  const initialRepo = splitRepo(projects?.find((p) => p.key === initialProject)?.repo);
+  const [owner, setOwner] = useState(initialRepo?.[0] ?? '');
+  const [repo, setRepo] = useState(initialRepo?.[1] ?? '');
+  const prefix = projects?.find((p) => p.key === project)?.idPrefix ?? '';
+  const pickProject = (key: string) => {
+    setProject(key);
+    // the project's own repo is where its issues are, most of the time
+    const r = splitRepo(projects?.find((p) => p.key === key)?.repo);
+    if (r) {
+      setOwner(r[0]);
+      setRepo(r[1]);
+    }
+  };
   const [label, setLabel] = useState('');
   const [done, setDone] = useState<string | null>(null);
 
@@ -48,7 +65,7 @@ export function ImportPanel({ onClose }: { onClose: () => void }) {
     mutationFn: async () => {
       const read = await Promise.all(files.map(readFile));
       if (pasted.trim()) read.push({ name: 'pasted.md', text: pasted });
-      return api.post<Imported>('/api/tasks/import/markdown', { files: read });
+      return api.post<Imported>('/api/tasks/import/markdown', { files: read, ...(project ? { project } : {}) });
     },
     onMutate: () => setDone(null),
     onSuccess: (r) => {
@@ -59,7 +76,7 @@ export function ImportPanel({ onClose }: { onClose: () => void }) {
     },
   });
   const gh = useMutation({
-    mutationFn: () => api.post<Imported>('/api/tasks/import/github', { owner: owner.trim(), repo: repo.trim(), ...(label.trim() ? { label: label.trim() } : {}) }),
+    mutationFn: () => api.post<Imported>('/api/tasks/import/github', { owner: owner.trim(), repo: repo.trim(), ...(label.trim() ? { label: label.trim() } : {}), ...(project ? { project } : {}) }),
     onMutate: () => setDone(null),
     onSuccess: ok,
   });
@@ -71,6 +88,14 @@ export function ImportPanel({ onClose }: { onClose: () => void }) {
         <Button size="sm" onClick={onClose}>Close</Button>
       </div>
       {done && <div className="mt-2 text-working" role="status" data-testid="import-done">{done}</div>}
+      <div className="mt-3 md:max-w-sm">
+        <ProjectPicker
+          id="imp-project"
+          value={project}
+          onChange={pickProject}
+          hint={prefix ? `Imported ids get the prefix ${prefix} (P1 → ${prefix}P1); dependencies resolve inside the project first.` : undefined}
+        />
+      </div>
       <div className="mt-3 grid gap-6 md:grid-cols-2">
         <div className="min-w-0 space-y-3">
           <h3 className="text-[15px] font-semibold">Markdown</h3>

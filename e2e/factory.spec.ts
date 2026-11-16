@@ -268,35 +268,32 @@ test.describe('gate rounds, resources and findings', () => {
     }
   });
 
-  test('saves the factory config from Settings', async ({ loggedIn: page }, info) => {
+  // the per-repo allocation moved from Settings to the project's Setup tab (§12.9)
+  test("saves a migrated project's allocation fields on its Setup tab", async ({ loggedIn: page }) => {
     const errors = trackConsoleErrors(page);
-    const repo = `e2e-cfg-${info.project.name}`;
     const headers = { 'x-bb-csrf': await csrf(page) };
-    const before = (await (await page.request.get('/api/factory/config')).json()) as { maxRounds: number; repos: unknown[] };
+    const before = (await (await page.request.get('/api/factory/projects/billing')).json()) as { config: { legacy: Record<string, unknown> } };
     try {
-      await page.goto('/settings');
-      const card = page.getByTestId('settings-factory-config');
-      await expect(card).toBeVisible();
-      await card.getByTestId('fc-add').click();
-      const r = card.getByTestId('fc-repo-block').last();
-      await r.getByTestId('fc-repo').fill(repo);
-      await r.getByTestId('fc-dbPrefix').fill('bad prefix!');
-      await r.getByTestId('fc-cleanup').fill('drop db {db}\n\nrm -rf {worktree}');
-      await r.locator('input[id$="-portFrom"]').fill('4400');
-      await r.locator('input[id$="-portTo"]').fill('4410');
+      await page.goto('/projects/billing?tab=setup');
+      const legacy = page.getByTestId('setup-legacy');
+      await expect(legacy).toBeVisible();
+      await legacy.getByTestId('ps-db').fill('bad prefix!');
+      await legacy.getByTestId('ps-cleanup').fill('drop db {db}\n\nrm -rf {worktree}');
+      await page.locator('#ps-port-from').fill('4400');
+      await page.locator('#ps-port-to').fill('4410');
       await noHorizontalScroll(page);
-      await card.getByTestId('fc-save').click();
-      await expect(card.getByRole('alert')).toContainText('dbPrefix');
-      await r.getByTestId('fc-dbPrefix').fill('e2e_');
-      await card.getByTestId('fc-save').click();
-      await expect(card.getByRole('status')).toHaveText('Saved');
-      const saved = (await (await page.request.get('/api/factory/config')).json()) as { repos: { repo: string; portFrom: number; cleanup: string[] }[] };
-      expect(saved.repos.find((x) => x.repo === repo)).toMatchObject({ portFrom: 4400, cleanup: ['drop db {db}', 'rm -rf {worktree}'] });
+      await page.getByTestId('ps-save').click();
+      await expect(page.getByTestId('project-setup').getByRole('alert')).toContainText('dbPrefix');
+      await legacy.getByTestId('ps-db').fill('e2e_');
+      await page.getByTestId('ps-save').click();
+      await expect(page.getByTestId('project-setup').getByRole('status').filter({ hasText: 'Saved' })).toBeVisible();
+      const saved = (await (await page.request.get('/api/factory/config')).json()) as { repos: { repo: string; portFrom: number; dbPrefix: string; cleanup: string[] }[] };
+      expect(saved.repos.find((x) => x.repo === 'example/billing')).toMatchObject({ portFrom: 4400, dbPrefix: 'e2e_', cleanup: ['drop db {db}', 'rm -rf {worktree}'] });
       await page.reload();
-      await expect(page.getByTestId('settings-factory-config').locator(`input[value="${repo}"]`)).toHaveCount(1);
+      await expect(page.getByTestId('ps-db')).toHaveValue('e2e_');
       expect(errors.filter((e) => !/400/.test(e))).toEqual([]);
     } finally {
-      await page.request.put('/api/factory/config', { headers, data: before });
+      await page.request.put('/api/factory/projects/billing', { headers, data: { config: { legacy: before.config.legacy } } });
     }
   });
 });
