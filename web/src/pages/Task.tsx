@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ROLE_LABEL, ROLES, STATUS_LABEL, TASK_STATUSES, type ProjectDetail, type TaskDetail, type TaskStatus, type TaskSummary } from '../../../shared/factory.ts';
 import { api, ApiError } from '../lib/api.ts';
@@ -75,6 +75,66 @@ function StatusSelect({ t }: { t: TaskDetail }) {
         ))}
       </select>
       {set.error && <span role="alert" className="text-error">{(set.error as Error).message}</span>}
+    </div>
+  );
+}
+
+/** `YYYY-MM-DDTHH:mm` in the browser's time zone, the value a datetime-local input takes. */
+function localInput(ms: number | null): string {
+  if (ms == null) return '';
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** The package's start time (§11.8): not ready, claimable or launchable before it. The owner sets, changes and clears it here. */
+function StartTime({ t }: { t: TaskDetail }) {
+  const qc = useQueryClient();
+  const [value, setValue] = useState(localInput(t.notBefore));
+  useEffect(() => setValue(localInput(t.notBefore)), [t.notBefore]);
+  const [localErr, setLocalErr] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: (notBefore: string | null) => api.put(`/api/tasks/${encodeURIComponent(t.id)}`, { notBefore }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['task', t.id] });
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+  const waiting = t.notBefore != null && t.notBefore > Date.now();
+  if (t.status === 'integrata' && t.notBefore == null) return null;
+  const submit = () => {
+    const ms = value ? new Date(value).getTime() : NaN;
+    if (Number.isNaN(ms)) return setLocalErr('Pick a date and time first.');
+    setLocalErr(null);
+    save.mutate(new Date(ms).toISOString());
+  };
+  const err = localErr ?? (save.error as Error | null)?.message ?? null;
+  return (
+    <div className="mt-3 max-w-xl rounded-lg bg-panel-2 p-3" data-testid="task-start" data-waiting={waiting ? 'true' : 'false'}>
+      <div className="text-xs uppercase tracking-wider text-muted">Start time</div>
+      <div className={`mt-0.5 text-[15px] [overflow-wrap:anywhere] ${waiting ? 'text-waiting' : ''}`} data-testid="task-start-text">
+        {t.notBeforeText == null ? <span className="text-muted">None: it can start as soon as it is ready.</span> : waiting ? `Starts not before ${t.notBeforeText}` : `Start time ${t.notBeforeText} has passed`}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <label htmlFor="task-start-input" className="sr-only">Start time</label>
+        <input
+          id="task-start-input"
+          type="datetime-local"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          className={`${inputClass} w-auto min-w-[14rem] flex-1`}
+          data-testid="task-start-input"
+        />
+        <Button variant="primary" disabled={save.isPending} onClick={submit} data-testid="task-start-save">
+          Save
+        </Button>
+        {t.notBefore != null && (
+          <Button disabled={save.isPending} onClick={() => { setLocalErr(null); save.mutate(null); }} data-testid="task-start-clear">
+            Clear
+          </Button>
+        )}
+      </div>
+      {err && <div role="alert" className="mt-2 text-error" data-testid="task-start-error">{err}</div>}
     </div>
   );
 }
@@ -187,6 +247,7 @@ export default function Task({ id }: { id: string }) {
           <GateChips gates={t.gates} />
           <ArchiveButton t={t} />
         </div>
+        <StartTime t={t} />
         {(at || t.lineWait) && (
           <div className="mt-3 max-w-xl" data-testid="task-stage" data-stage={at?.stage ?? ''}>
             {at && (

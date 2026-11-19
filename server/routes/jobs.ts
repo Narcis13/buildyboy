@@ -12,6 +12,9 @@ import {
   applyRunnerEvents, createJob, dispatch, doneWhenCommands, JobError, reconcile, runnerInfo, sendToRunner, TERMINAL, under, type NewJob,
 } from '../jobs/core.ts';
 import { nextRun, parseCron } from '../jobs/cron.ts';
+import { CATCH_UP_MINUTES } from '../jobs/scheduler.ts';
+import { cancelScheduled, listScheduled } from '../factory/schedule.ts';
+import { FactoryError } from '../factory/tasks.ts';
 
 type Vars = { Variables: { machineId: string } };
 
@@ -49,6 +52,8 @@ const heartbeatSchema = z.object({
   allowedRoots: z.array(z.string().max(1000)).max(100).optional(),
   concurrency: z.number().int().positive().max(64).optional(),
   claudeVersion: z.string().max(100).nullish(),
+  /** false: a runner started at boot before anyone signed in (Windows session 0), which cannot start hc terminals */
+  interactiveSession: z.boolean().nullish(),
   running: z.array(z.object({ jobId: z.string().max(100), sessionId: z.string().max(100).nullish(), pid: z.number().nullish(), startedAt: z.number().nullish(), cwd: z.string().max(1000).nullish() })).max(200).default([]),
 });
 
@@ -191,13 +196,17 @@ export function jobsRoutes(ctx: Ctx) {
   const detail = (id: string) => {
     const j = jobView(ctx, id);
     if (!j) return null;
-    const extra = db.get<{ output_lines: number; rerun_of: string | null; schedule_id: string | null }>('SELECT output_lines, rerun_of, schedule_id FROM jobs WHERE id = ?', id)!;
+    const extra = db.get<{ output_lines: number; rerun_of: string | null; schedule_id: string | null; caught_up: number }>(
+      'SELECT output_lines, rerun_of, schedule_id, caught_up FROM jobs WHERE id = ?', id,
+    )!;
     const o = j.options as StoredJobOptions;
     return {
       ...j,
       outputLines: extra.output_lines,
       rerunOf: extra.rerun_of,
       scheduleId: extra.schedule_id,
+      /** a cron run fired late, at the first tick after a minute the scheduler missed (§11.8) */
+      caughtUp: extra.caught_up === 1,
       runnerOnline: ctx.runners.has(j.machineId),
       verifyCommands: o.verify?.length ? o.verify : doneWhenCommands(j.promptText),
     };
@@ -342,20 +351,26 @@ export function jobsRoutes(ctx: Ctx) {
   // ---------- schedules ----------
   app.get('/api/schedules', wauth, (c) =>
     c.json(
-      db.all<{ id: string; cron: string; job_template_json: string; enabled: number; last_run_at: number | null; created_at: number }>('SELECT * FROM schedules ORDER BY created_at DESC').map((s) => {
+      db.all<{ id: string; cron: string; job_template_json: string; enabled: number; last_run_at: number | null; created_at: number; catch_up_minutes: number }>(
+        'SELECT * FROM schedules ORDER BY created_at DESC',
+      ).map((s) => {
         let next: number | null = null;
         try {
           next = nextRun(s.cron)?.getTime() ?? null;
         } catch {
           // invalid rows can't be created through the API
         }
-        return { id: s.id, cron: s.cron, enabled: !!s.enabled, lastRunAt: s.last_run_at, createdAt: s.created_at, nextRunAt: next, job: json(s.job_template_json) };
+        return {
+          id: s.id, cron: s.cron, enabled: !!s.enabled, lastRunAt: s.last_run_at, createdAt: s.created_at, nextRunAt: next, catchUpMinutes: s.catch_up_minutes, job: json(s.job_template_json),
+        };
       }),
     ),
   );
 
   app.post('/api/schedules', wauth, async (c) => {
-    const p = z.object({ cron: z.string().min(9).max(200), job: createSchema }).safeParse(await c.req.json().catch(() => null));
+    const p = z
+      .object({ cron: z.string().min(9).max(200), job: createSchema, catchUpMinutes: z.number().int().min(0).max(CATCH_UP_MINUTES.max).optional() })
+      .safeParse(await c.req.json().catch(() => null));
     if (!p.success) return c.json({ error: 'invalid schedule' }, 400);
     try {
       parseCron(p.data.cron);
@@ -371,8 +386,11 @@ export function jobsRoutes(ctx: Ctx) {
     if (!db.get('SELECT 1 FROM machines WHERE id = ?', job.machineId)) return c.json({ error: 'unknown machine' }, 400);
     if (!job.promptId && !job.promptText?.trim()) return c.json({ error: 'promptId or promptText is required' }, 400);
     const id = randomUUID();
-    db.run('INSERT INTO schedules (id, cron, job_template_json, enabled, created_at) VALUES (?, ?, ?, 1, ?)', id, p.data.cron.trim(), JSON.stringify(job), Date.now());
-    db.audit('web', 'schedule_create', id, { cron: p.data.cron, machineId: job.machineId, cwd: job.cwd });
+    const catchUp = p.data.catchUpMinutes ?? CATCH_UP_MINUTES.default;
+    db.run(
+      'INSERT INTO schedules (id, cron, job_template_json, enabled, created_at, catch_up_minutes) VALUES (?, ?, ?, 1, ?, ?)', id, p.data.cron.trim(), JSON.stringify(job), Date.now(), catchUp,
+    );
+    db.audit('web', 'schedule_create', id, { cron: p.data.cron, machineId: job.machineId, cwd: job.cwd, catchUpMinutes: catchUp });
     bus.publish('jobs', 'schedules');
     return c.json({ id });
   });
@@ -384,6 +402,24 @@ export function jobsRoutes(ctx: Ctx) {
     db.audit('web', 'schedule_delete', id);
     bus.publish('jobs', 'schedules');
     return c.json({ ok: true });
+  });
+
+  // ---------- scheduled launches (§11.8): tasks_launch / coordinator_launch with notBefore ----------
+  app.get('/api/scheduled-launches', wauth, (c) => {
+    try {
+      return c.json(listScheduled(ctx, { project: c.req.query('project') || undefined }));
+    } catch (e) {
+      if (e instanceof FactoryError) return c.json({ error: e.message }, e.status as 404);
+      throw e;
+    }
+  });
+  app.post('/api/scheduled-launches/:id/cancel', wauth, (c) => {
+    try {
+      return c.json(cancelScheduled(ctx, c.req.param('id'), 'web'));
+    } catch (e) {
+      if (e instanceof FactoryError) return c.json({ error: e.message }, e.status as 404);
+      throw e;
+    }
   });
 
   // ---------- launch form helpers ----------

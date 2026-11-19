@@ -323,7 +323,11 @@ block content
   h3#schedule-notes Good to know
   ul
     li Times are in the server's time zone.
-    li Runs missed while the server was down are not made up later.
+    li
+      | A run missed while the server was down (a restart in the night, say) is made up once when the server is back,
+      | if the missed minute is not older than the catch-up window. See
+      a(href="#catch-up") Catching up after a restart
+      | .
     li A schedule uses the saved prompt's current version every time it fires, so editing the prompt changes future runs.
     li
       | Schedules cannot be paused or edited. To change one, delete it (press
@@ -331,3 +335,69 @@ block content
       | , then
       strong Tap again to delete
       | ) and create it again.
+
+  h3#catch-up Catching up after a restart
+  p
+    | The server runs on the same PC as everything else, so a restart (Windows Update at 03:15, say) stops it for a
+    | while. A schedule is therefore checked at every tick and once when the server starts. If the most recent minute
+    | that matches its expression is after the schedule's last run, is already past, and is no longer ago than its
+    strong catch-up window
+    | , the schedule runs once, right then. Several missed minutes still make one run, and a minute older than the
+    | window is skipped. A job started this way is marked
+    code caughtUp
+    | in
+    code GET /api/jobs/:id
+    | .
+  ul
+    li
+      | The window is
+      strong 120 minutes
+      | by default. It is set per schedule with
+      code catchUpMinutes
+      | in
+      code POST /api/schedules
+      | (0 turns catching up off for that schedule, 1440 is the most), and every item of
+      code GET /api/schedules
+      | shows it.
+    li A schedule for 02:00 whose server is back at 03:40 runs at 03:40; if the server is back at 05:00 it waits for tomorrow.
+
+  h2#scheduled-launches Scheduled launches of a package
+  p
+    | A schedule repeats a prompt. A
+    strong scheduled launch
+    | is different: it starts one package, once, at a time you choose (for example a factory start at 03:30), and it
+    | survives restarts because it lives in the server, not in a Claude Code session. An agent creates one by giving
+    code notBefore
+    | to
+    code tasks_launch
+    | (a worker) or
+    code coordinator_launch
+    | (a coordinator); see
+    a(href="/docs/coordinator#scheduled") Scheduling a start
+    | . The call answers
+    code scheduled
+    | with an id instead of starting anything. A package's own start time is described under
+    a(href="/docs/backlog#start-time") A start time
+    | .
+  ul
+    li
+      | A server check every 15 seconds, and once when the server starts, starts each due launch at the first chance
+      | after its time. It waits, and says why, while the package is not ready, the machine's runner is offline, a
+      | coordinator with the same title is already running there, the
+      a(href="/docs/coordinator#governor") governor
+      | refuses, or (for a herdr terminal, the
+      code hc
+      | launcher) nobody is signed in to Windows on that machine.
+    li
+      | After its catch-up time (6 hours by default, 24 at most) a launch that never started is
+      strong missed
+      | : it is not started later, you get one notification and an alert, and the daily digest lists it.
+    li
+      code schedules_list
+      | shows the pending ones (and those closed in the last 7 days), and
+      code schedule_cancel
+      | cancels one that has not started. The web API offers the same:
+      code GET /api/scheduled-launches
+      | and
+      code POST /api/scheduled-launches/:id/cancel
+      | .

@@ -6,6 +6,7 @@ import { startJobScheduler } from './jobs/scheduler.ts';
 import { maybeDailyDigest } from './factory/digest.ts';
 import { archiveSweep } from './factory/projects.ts';
 import { conductAll, startConductor } from './factory/line.ts';
+import { fireScheduledLaunches } from './factory/schedule.ts';
 
 /**
  * Periodic jobs: watchers, retention, the factory's digest and archive sweep, the conductor (SPEC §12.5: on bus events and
@@ -30,6 +31,15 @@ export function startBackground(ctx: Ctx): () => void {
   every(5 * 60_000, () => archiveSweep(ctx));
   every(30_000, () => expireOrphans(ctx));
   every(20_000, () => conductAll(ctx));
+  // scheduled launches (§11.8): at the first tick after their time, and right after a restart
+  every(15_000, () => fireScheduledLaunches(ctx));
+  setImmediate(() => {
+    try {
+      fireScheduledLaunches(ctx);
+    } catch (e) {
+      console.error('[background]', e);
+    }
+  });
   every(6 * 3600_000, () => purgeOld(ctx));
 
   const stopJobs = startJobScheduler(ctx);

@@ -15,7 +15,8 @@ import { askDecision, getDecision } from './decisions.ts';
 import { sendDigest } from './digest.ts';
 import { listFindings, updateFindings } from './findings.ts';
 import { gateRunStatus, startGateRun, startStepRun } from './gateruns.ts';
-import { agentLaunch, listMachines } from './launch.ts';
+import { agentLaunch, launchScope, listMachines } from './launch.ts';
+import { cancelScheduled, listScheduled } from './schedule.ts';
 import { getProject, listProjects } from './projects.ts';
 import { requestPlan } from './plan.ts';
 import {
@@ -199,6 +200,12 @@ export const HANDLERS: { [K in ToolName]: Handler<K> } = {
   machines_list: (ctx) => listMachines(ctx),
   tasks_launch: (ctx, a, actor, caller) => agentLaunch(ctx, 'worker', a, actor, caller.tokenId),
   coordinator_launch: (ctx, a, actor, caller) => agentLaunch(ctx, 'coordinator', a, actor, caller.tokenId),
+  schedules_list: (ctx, a) => listScheduled(ctx, a),
+  schedule_cancel: (ctx, a, actor, caller) =>
+    cancelScheduled(ctx, a.id, actor, (kind) => {
+      const { scope } = launchScope(ctx, caller.tokenId);
+      return scope === 'all' || (scope === 'workers' && kind === 'worker') || hasScope(ctx, caller, 'operator');
+    }),
   control_get: (ctx, a, actor) => {
     const open = controls(ctx, { taskId: a.taskId });
     if (!a.ack || !open.length) return { requests: open, acked: false };

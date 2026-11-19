@@ -2,8 +2,9 @@
 // what was integrated, the gates, usage and the decisions that wait. When its packages come from more than one
 // project (§12.1), each line names their project. Decisions answered by operators (§12.7) are listed with who answered.
 import type { Ctx } from '../context.ts';
-import type { DigestView } from '../../shared/factory.ts';
+import { formatStartTime, type DigestView } from '../../shared/factory.ts';
 import { governor } from './governor.ts';
+import { missedSince } from './schedule.ts';
 
 const DAY = 24 * 3600_000;
 
@@ -25,6 +26,8 @@ export interface DigestData {
   projects?: Record<string, string>;
   /** decisions answered (or cancelled: answer null) by operators in the period (§12.7), oldest first */
   operatorAnswers?: { id: string; by: string; taskId: string | null; question: string; answer: string | null }[];
+  /** scheduled launches missed in the period (§11.8) */
+  missedStarts?: { id: string; title: string; notBefore: number; waits: string | null }[];
 }
 
 export function digestData(ctx: Ctx, now = Date.now(), note: string | null = null): DigestData {
@@ -59,6 +62,7 @@ export function digestData(ctx: Ctx, now = Date.now(), note: string | null = nul
         "SELECT id, answered_by, task_id, question, answer FROM decisions WHERE answered_at > ? AND answered_by LIKE 'agent:%' ORDER BY answered_at LIMIT 20", since,
       )
       .map((d) => ({ id: d.id, by: d.answered_by.slice('agent:'.length), taskId: d.task_id, question: d.question, answer: d.answer })),
+    missedStarts: missedSince(ctx, since),
     usage: { fiveHourPct: g.usage.fiveHour?.pct ?? null, sevenDayPct: g.usage.sevenDay?.pct ?? null, canStart: g.canStart, stopAll: g.stopAll, reason: g.reason },
     note,
   };
@@ -119,6 +123,10 @@ export function digestText(d: DigestData): { title: string; body: string } {
     for (const a of d.operatorAnswers) {
       lines.push(`  · ${a.by}${a.taskId ? `, ${one(a.taskId)}` : ''}: ${short(a.question, 70)} → ${a.answer === null ? 'cancelled' : short(a.answer, 50)}`);
     }
+  }
+  if (d.missedStarts?.length) {
+    const short = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+    lines.push(`Missed scheduled starts: ${d.missedStarts.map((m) => `${short(m.title, 60)} (planned ${formatStartTime(m.notBefore)}${m.waits ? `; waited for: ${short(m.waits, 80)}` : ''})`).join(', ')}`);
   }
   if (d.controlsOpen) lines.push(`Your stop/revert requests not yet handled: ${d.controlsOpen}`);
   const title = `Factory digest: ${d.integrated.length} integrated${d.decisionsPending ? `, ${d.decisionsPending} decision${d.decisionsPending > 1 ? 's' : ''} waiting` : ''}`;

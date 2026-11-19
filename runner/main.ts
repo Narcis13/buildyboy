@@ -20,6 +20,22 @@ import { readLine, runGate } from './gate.ts';
 import { checkCwd, pathKey, repoRoot } from './paths.ts';
 import { runVerify } from './proc.ts';
 
+/**
+ * Whether this process runs in a signed-in (interactive) Windows session. A Scheduled Task started at boot, before
+ * anyone signed in, runs in session 0: hc terminals (interactive claude) cannot be started from there, claude -p jobs
+ * can (SPEC §11.8). Null off Windows, or when tasklist cannot tell.
+ */
+export function interactiveSession(pid = process.pid): Promise<boolean | null> {
+  if (process.platform !== 'win32') return Promise.resolve(null);
+  return new Promise((res) => {
+    execFile('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { timeout: 15_000, windowsHide: true }, (e, out) => {
+      // "node.exe","1234","Console","1","50,000 K": the fourth field is the session number
+      const n = e ? null : /^"[^"]*","\d+","[^"]*","(\d+)"/m.exec(String(out))?.[1];
+      res(n == null ? null : Number(n) !== 0);
+    });
+  });
+}
+
 /** 0.2.0: the kit's built-in steps, the line file, checked `hc send`/`hc kill` (SPEC �12.4) */
 export const RUNNER_VERSION = '0.2.0';
 
@@ -50,6 +66,7 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
   const ac = new AbortController();
   const timers: NodeJS.Timeout[] = [];
   let claudeVersion: string | null = null;
+  let interactive: boolean | null = null;
 
   const report = (jobId: string, events: RunnerEvent[]) =>
     api.post(`/api/runner/jobs/${encodeURIComponent(jobId)}/events`, { events }).catch((e) => log(`job ${jobId}: report failed: ${e.message}`));
@@ -212,6 +229,7 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
         allowedRoots: cfg.allowedRoots,
         concurrency: cfg.concurrency,
         claudeVersion,
+        interactiveSession: interactive,
         running: [...jobs.values()].map((j) => ({ jobId: j.id, sessionId: j.sessionId(), pid: j.pid() ?? null, startedAt: j.startedAt, cwd: j.cwd })),
       });
     } catch (e) {
@@ -274,7 +292,10 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
     } catch {
       claudeVersion = null;
     }
+    interactive = await interactiveSession();
+    if (interactive === false) log('no signed-in Windows session (started at boot): hc launches wait until a runner runs in a signed-in session; claude -p jobs run');
     log(`allowed roots: ${cfg.allowedRoots.join(', ')} · concurrency ${cfg.concurrency} · claude ${claudeVersion ?? 'not found'}`);
+    void heartbeat();
     void reportAgents();
     void reportTerminals();
   })();

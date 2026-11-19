@@ -42,6 +42,7 @@ export function LaunchForm({ promptId: initialPrompt, schedule = false }: { prom
 
   const [mode, setMode] = useState<'run' | 'schedule'>(schedule ? 'schedule' : 'run');
   const [cron, setCron] = useState('0 2 * * *');
+  const [catchUp, setCatchUp] = useState('120');
   const [promptId, setPromptId] = useState(initialPrompt ?? '');
   const [promptText, setPromptText] = useState('');
   const [machineId, setMachineId] = useState('');
@@ -124,11 +125,12 @@ export function LaunchForm({ promptId: initialPrompt, schedule = false }: { prom
     e.preventDefault();
     setError(null);
     if (missing || optionError) return setError(missing ?? optionError);
+    if (mode === 'schedule' && catchUp !== '' && !(Number.isInteger(Number(catchUp)) && Number(catchUp) >= 0 && Number(catchUp) <= 1440)) return setError('Catch-up window: a whole number of minutes, 0 to 1440');
     const job = { promptId: promptId || null, promptText: promptId ? null : promptText, machineId, cwd, title: title.trim() || null, options };
     setBusy(true);
     try {
       if (mode === 'schedule') {
-        await api.post('/api/schedules', { cron: cron.trim(), job });
+        await api.post('/api/schedules', { cron: cron.trim(), job, ...(catchUp !== '' ? { catchUpMinutes: Number(catchUp) } : {}) });
         await qc.invalidateQueries({ queryKey: ['jobs'] });
         navigate('/jobs#schedules');
       } else {
@@ -260,6 +262,11 @@ export function LaunchForm({ promptId: initialPrompt, schedule = false }: { prom
           {mode === 'schedule' && (
             <Field label="Cron (minute hour day month weekday, server time)" hint="e.g. 0 2 * * * = every night at 02:00">
               <input aria-label="Cron" className={`${inputCls} font-mono`} value={cron} onChange={(e) => setCron(e.target.value)} />
+            </Field>
+          )}
+          {mode === 'schedule' && (
+            <Field label="Catch-up window (minutes)" hint="If the server was down at the scheduled minute, the run still starts once when it is back within this window. 0 = never.">
+              <input aria-label="Catch-up minutes" className={inputCls} type="number" inputMode="numeric" min="0" max="1440" step="1" value={catchUp} onChange={(e) => setCatchUp(e.target.value)} />
             </Field>
           )}
           {(error || optionError) && (

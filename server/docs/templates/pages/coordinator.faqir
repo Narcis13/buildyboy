@@ -139,7 +139,7 @@ block content
         tr(data-part="tr")
           td(data-part="td")
             code tasks_claim
-          td(data-part="td") Take the next ready package (or a given one, or the next of one project), mark it În lucru and get its port, database and migration range. Refused while the governor says no.
+          td(data-part="td") Take the next ready package (or a given one, or the next of one project), mark it În lucru and get its port, database and migration range. Refused while the governor says no. A package with a start time that has not come is not ready, and claiming it by id is refused.
         tr(data-part="tr")
           td(data-part="td")
             code prompts_render, prompts_lint, prompts_save
@@ -179,7 +179,11 @@ block content
         tr(data-part="tr")
           td(data-part="td")
             code machines_list, tasks_launch, coordinator_launch
-          td(data-part="td") Find a machine and its allowed folders, then start a worker for a package, or another coordinator. Off until you allow it; see Letting agents start agents below.
+          td(data-part="td") Find a machine and its allowed folders, then start a worker for a package, or another coordinator. Off until you allow it; see Letting agents start agents below. With notBefore they schedule the start instead (see Scheduling a start).
+        tr(data-part="tr")
+          td(data-part="td")
+            code schedules_list, schedule_cancel
+          td(data-part="td") The scheduled launches still waiting (and those closed in the last 7 days), with what each waits for; cancel one that has not started.
         tr(data-part="tr")
           td(data-part="td")
             code decisions_list, decision_answer, decision_cancel, control_request, projects_save, projects_set, inbox_list, inbox_answer
@@ -426,6 +430,102 @@ block content
     | The agent finds machines and their allowed folders with
     code machines_list
     | .
+
+  h2#scheduled Scheduling a start
+  p
+    | A session-only timer inside Claude Code dies with the session (and with a Windows Update restart at 03:15), so
+    | a start at a given time belongs in Buildyboy. Both launch tools take an optional
+    code notBefore
+    | (an ISO 8601 time with its offset, or epoch milliseconds) and
+    code catchUpHours
+    | (6 by default, at most 24). Given a
+    code notBefore
+    | , they start nothing: they answer
+    code {"status":"scheduled","scheduleId":…,"notBefore":…,"expiresAt":…}
+    | and the server starts it later. Leaving the arguments out changes nothing: the launch is immediate, as before.
+  ul
+    li
+      strong Same permission, same approval.
+      | The key needs the same
+      strong May launch
+      | setting, and with
+      strong Ask me before each launch
+      | on, the question is asked when you schedule it and names the start time. Answer it once; the start itself then
+      | needs no one.
+    li
+      strong First chance after the time.
+      | Every 15 seconds, and once when the server starts, each due launch is tried. It starts when the package is still
+      | ready (for a worker), the machine's runner is online, no running session or job on that machine has the same
+      | title (for a coordinator), the governor allows it, and, for the
+      code hc
+      | launcher, someone is signed in to Windows there. Otherwise it stays pending and
+      code schedules_list
+      | shows why in
+      code waits
+      | .
+    li
+      strong It can be missed.
+      | The start must happen by
+      code expiresAt
+      | (the time plus
+      code catchUpHours
+      | ). After that it never starts: its status is
+      code missed
+      | , you get one notification and an alert, and the digest lists it. Fixing the cause and scheduling again is up to
+      | you or the agent.
+    li
+      strong Nothing else takes the package.
+      | A scheduled
+      code tasks_launch
+      | sets the package's start time (see
+      a(href="/docs/backlog#start-time") A start time
+      | ) to the same moment, so the package does not become ready before the real start. Cancelling a scheduled launch leaves
+      | that start time; clear it separately.
+  p
+    | Two more tools belong to this:
+    code schedules_list
+    | (optionally for one project) lists pending launches and those closed in the last 7 days, and
+    code schedule_cancel
+    | with an
+    code id
+    | cancels a pending one. The same list is in
+    code factory_status
+    | (the
+    code scheduled
+    | list, pending ones with when they should start, until when, and what they wait for). Each status is one of
+    code pending
+    | ,
+    code starting
+    | ,
+    code started
+    | ,
+    code missed
+    | or
+    code cancelled
+    | .
+  h3#scheduled-stale Starting on stale usage data
+  p
+    | The governor refuses to start anything when its usage data is older than 30 minutes, and at night, when no
+    | session feeds the statusline bridge, it always is. For scheduled launches only, that one reason is not enough to
+    | refuse. The launch may start when, for each window (5-hour and 7-day), either the window has reset since the last
+    | sample, or its last known percentage is at least 10 points under its limit. A window missing from the data keeps
+    | the usual rule. The audit log then says
+    code started on stale usage data
+    | with the numbers. At most one such start happens per 30 minutes: the started session's statusline refreshes
+    | the data, and the next start goes through the normal rule. Unscheduled launches,
+    code tasks_claim
+    | and autopilot keep the old rule.
+  +callout(variant="warning")
+    @content
+      p
+        | After an unattended restart nobody is signed in to Windows. A scheduled launch with the
+        code claude
+        | launcher (a one-shot job) works anyway; one with the
+        code hc
+        | launcher (an interactive herdr terminal) waits with "no signed-in Windows session" until someone signs in, or
+        | is missed when its time runs out. See
+        a(href="/docs/runner#boot") Starting at boot
+        | .
 
   h2#activate Turning it on for this machine
   p The governor needs usage data, and nothing in Buildyboy edits Claude Code's settings for you. On the machine where the coordinator runs:

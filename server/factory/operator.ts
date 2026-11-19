@@ -9,7 +9,7 @@ import type { Ctx } from '../context.ts';
 import { json } from '../db.ts';
 import type { ActionAnswer, PendingActionView } from '../../shared/types.ts';
 import {
-  projectConfigSchema, type DecisionKind, type DecisionView, type FactoryStatus, type InboxAnswerType, type InboxItem, type OperatorDecision, type ProjectView,
+  formatStartTime, projectConfigSchema, type DecisionKind, type DecisionView, type FactoryStatus, type InboxAnswerType, type InboxItem, type OperatorDecision, type ProjectView,
   type TaskStatus, type ToolArgs,
 } from '../../shared/factory.ts';
 import type { Caller } from './agent.ts';
@@ -19,6 +19,7 @@ import { answerDecision, decisionView, type DecisionRow } from './decisions.ts';
 import { governor } from './governor.ts';
 import { autopilotHold, createProject, listProjectRows, projectAction, projectRow, projectView, requireProject, updateProject, type ProjectRow } from './projects.ts';
 import { FactoryError, requestControl } from './tasks.ts';
+import { listScheduled, missedSince } from './schedule.ts';
 
 // ---------- scopes ----------
 
@@ -292,9 +293,21 @@ export function factoryStatus(ctx: Ctx, a: ToolArgs<'factory_status'>, actor: st
         maxRounds: orNull(rounds + t.extra_rounds, t.round > 0), waits, sinceMin: minutes(now - since),
       }) as FactoryStatus['line'][number];
     });
-  const lineTotal = count(`SELECT COUNT(*) n FROM (${lineSql})`, ...sargs);
+  // gata packages whose start time has not come (§11.8): on the line view too, so the operator sees what they wait for
+  const at = Math.floor(now);
+  const laterSql = `SELECT t.id, t.project, t.title, t.not_before, t.updated_at FROM tasks t WHERE t.archived_at IS NULL AND t.status = 'gata' AND t.not_before > ${at} AND ${scope}`;
+  const later = db
+    .all<{ id: string; project: string | null; title: string; not_before: number; updated_at: number }>(
+      `${laterSql} ORDER BY t.not_before, t.id LIMIT ?`, ...sargs, Math.max(0, LIMITS.line - line.length),
+    )
+    .map((t) => lean({
+      id: t.id, project: orNull(t.project), title: cut(t.title, TITLE), status: 'gata' as const, waits: `start time ${formatStartTime(t.not_before)}`, sinceMin: minutes(now - t.updated_at),
+    }) as FactoryStatus['line'][number]);
+  line.push(...later);
+  const lineTotal = count(`SELECT COUNT(*) n FROM (${lineSql})`, ...sargs) + count(`SELECT COUNT(*) n FROM (${laterSql})`, ...sargs);
 
   const readySql = `SELECT t.id, t.project, t.title, t.priority FROM tasks t WHERE t.status = 'gata' AND t.archived_at IS NULL AND ${scope}
+    AND (t.not_before IS NULL OR t.not_before <= ${at})
     AND NOT EXISTS (SELECT 1 FROM task_deps d JOIN tasks x ON x.id = d.depends_on WHERE d.task_id = t.id AND x.status != 'integrata')`;
   const ready = db
     .all<{ id: string; project: string | null; title: string; priority: number }>(`${readySql} ORDER BY t.priority DESC, t.created_at ASC, t.id ASC LIMIT ?`, ...sargs, LIMITS.ready)
@@ -315,6 +328,12 @@ export function factoryStatus(ctx: Ctx, a: ToolArgs<'factory_status'>, actor: st
   });
   if (held.length) alerts.push(`autopilot held: ${held.join(', ')}`);
   for (const p of projects) if (p.line_error) alerts.push(`line file of ${p.key}: ${cut(p.line_error, 120)}`);
+  for (const m of missedSince(ctx, now - 24 * 3600_000)) {
+    alerts.push(`scheduled start missed: ${cut(m.title, 80)} (planned ${formatStartTime(m.notBefore)})${m.waits ? `, it waited for: ${cut(m.waits, 100)}` : ''}`);
+  }
+  const scheduled = listScheduled(ctx, { project: a.project }, now)
+    .filter((s) => s.status === 'pending' || s.status === 'starting')
+    .map((s) => lean({ id: s.id, kind: s.kind, taskId: orNull(s.taskId), title: cut(s.title, TITLE), notBefore: s.notBefore, expiresAt: s.expiresAt, waits: cut(s.waits ?? '', 200) }) as FactoryStatus['scheduled'][number]);
 
   const operator = hasScope(ctx, caller, 'operator');
   const usage = g.usage;
@@ -335,6 +354,7 @@ export function factoryStatus(ctx: Ctx, a: ToolArgs<'factory_status'>, actor: st
     lineMore: Math.max(0, lineTotal - line.length),
     ready,
     readyMore: Math.max(0, readyTotal - ready.length),
+    scheduled,
     waiting: {
       decisions: decisions.map((d) => lean({
         id: d.id, kind: kindOf(d), taskId: d.task_id, question: cut(d.question, QUESTION), options: (json<string[]>(d.options_json, []) ?? []).map((o) => cut(o, 40)),

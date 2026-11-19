@@ -15,7 +15,7 @@ import {
   type ProjectRow,
 } from './projects.ts';
 import {
-  GATES, SHOT_MAX_BYTES, TASK_STATUSES, type ControlRequest, type Gate, type GateResult, type GovernorVerdict, type TaskDetail,
+  formatStartTime, GATES, parseStartTime, SHOT_MAX_BYTES, TASK_STATUSES, type ControlRequest, type Gate, type GateResult, type GovernorVerdict, type TaskDetail,
   type TaskEvent, type TaskResources, type TaskStatus, type TaskSummary, type TaskVars, type ToolArgs, type Verdict,
 } from '../../shared/factory.ts';
 
@@ -35,6 +35,7 @@ export interface TaskRow {
   round: number; extra_rounds: number; res_port: number | null; res_db: string | null; res_mig_from: number | null; res_mig_to: number | null;
   migrations_used_json: string | null;
   project: string | null; archived_at: number | null; stage: string | null; line_json: string | null; plan_id: string | null;
+  not_before: number | null;
 }
 
 const resourcesOf = (r: TaskRow): TaskResources | null =>
@@ -59,6 +60,19 @@ export function taskVars(r: TaskRow, p: ProjectRow | null): TaskVars {
   return { ...base, worktree: worktree ? fill(worktree, base) : '' };
 }
 
+/** A start time from tasks_create, tasks_update or the PWA (§11.8): epoch ms, null to clear, undefined to leave. */
+export function startTimeArg(v: number | string | null | undefined): number | null | undefined {
+  if (v === undefined || v === null) return v;
+  try {
+    return parseStartTime(v);
+  } catch (e) {
+    throw new FactoryError(400, (e as Error).message);
+  }
+}
+
+/** A start time that has not come yet, or null. */
+export const pendingStart = (r: { not_before: number | null }, now = Date.now()): number | null => (r.not_before != null && r.not_before > now ? r.not_before : null);
+
 const publish = (ctx: Ctx, id: string) => ctx.bus.publish('tasks', 'changed', { id });
 
 /** One row of a package's history. */
@@ -73,6 +87,7 @@ const event = taskEvent;
 function summaries(ctx: Ctx, rows: TaskRow[]): TaskSummary[] {
   if (!rows.length) return [];
   const { db } = ctx;
+  const now = Date.now();
   const ids = rows.map((r) => r.id);
   syncTaskSessions(ctx);
   const costs = taskCosts(ctx, ids);
@@ -107,7 +122,9 @@ function summaries(ctx: Ctx, rows: TaskRow[]): TaskSummary[] {
       lineWait: line && typeof line.waiting === 'string' && typeof line.since === 'number' ? { text: line.waiting, since: line.since } : null,
       planId: r.plan_id,
       archivedAt: r.archived_at,
-      ready: r.status === 'gata' && waitingOn.length === 0,
+      ready: r.status === 'gata' && waitingOn.length === 0 && pendingStart(r, now) === null,
+      notBefore: r.not_before,
+      notBeforeText: r.not_before != null ? formatStartTime(r.not_before) : null,
       dependsOn: mine.map((d) => d.depends_on),
       waitingOn,
       repo: r.repo,
@@ -246,6 +263,7 @@ export function createTask(ctx: Ctx, t: NewTask, actor: string): TaskSummary {
     if (t.project) throw new FactoryError(409, `task ${id} belongs to project ${existing.project}`);
     proj = projectRow(ctx, existing.project); // no project named, only a repo: a package keeps its project
   }
+  const notBefore = startTimeArg(t.notBefore);
   if (t.extRef && db.get('SELECT 1 FROM tasks WHERE ext_ref = ? AND id != ?', t.extRef, id)) throw new FactoryError(409, `${t.extRef} already belongs to another task`);
   if (t.dependsOn?.length) t = { ...t, dependsOn: resolveDeps(ctx, proj, t.dependsOn) };
   if (t.fromFindings?.length) {
@@ -266,13 +284,15 @@ export function createTask(ctx: Ctx, t: NewTask, actor: string): TaskSummary {
     }
     const status = t.status ?? 'backlog';
     db.run(
-      `INSERT INTO tasks (id, title, body, acceptance_json, status, repo, branch, priority, sensitive, source, ext_ref, created_at, updated_at, integrated_at, project)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO tasks (id, title, body, acceptance_json, status, repo, branch, priority, sensitive, source, ext_ref, created_at, updated_at, integrated_at, project, not_before)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id, t.title, t.body ?? '', JSON.stringify(t.acceptance ?? []), status, t.repo ?? proj?.repo ?? null, t.branch ?? null, t.priority ?? 0, t.sensitive ? 1 : 0,
-      t.source ?? actor.split(':')[0], t.extRef ?? null, now, now, status === 'integrata' ? now : null, proj?.key ?? null,
+      t.source ?? actor.split(':')[0], t.extRef ?? null, now, now, status === 'integrata' ? now : null, proj?.key ?? null, notBefore ?? null,
     );
     if (t.dependsOn?.length) setDeps(ctx, id, t.dependsOn);
-    event(ctx, id, actor, 'created', null, status, { title: t.title, ...(proj ? { project: proj.key } : {}), ...(t.fromFindings?.length ? { fromFindings: t.fromFindings } : {}) });
+    event(ctx, id, actor, 'created', null, status, {
+      title: t.title, ...(proj ? { project: proj.key } : {}), ...(t.fromFindings?.length ? { fromFindings: t.fromFindings } : {}), ...(notBefore ? { notBefore } : {}),
+    });
   });
   db.audit(actor, existing ? 'task_upsert' : 'task_create', id);
   publish(ctx, id);
@@ -320,6 +340,7 @@ export function updateTask(ctx: Ctx, p: TaskPatch, actor: string, extra: TaskExt
   set('terminal', 'terminal', p.terminal);
   set('session_id', 'sessionId', p.sessionId);
   set('note', 'note', p.note);
+  set('not_before', 'notBefore', startTimeArg(p.notBefore));
   if (p.acceptance) set('acceptance_json', 'acceptance', JSON.stringify(p.acceptance));
   if (p.migrationsUsed) set('migrations_used_json', 'migrationsUsed', JSON.stringify([...new Set(p.migrationsUsed)].sort((a, b) => a - b)));
   const statusChange = p.status && p.status !== cur.status ? p.status : null;
@@ -464,6 +485,10 @@ function allocateResources(ctx: Ctx, t: TaskRow): TaskResources | null {
  * archived project, never an archived package.
  */
 export function claimTask(ctx: Ctx, a: ToolArgs<'tasks_claim'>, actor: string): ClaimResult {
+  // a start time is a readiness condition (§11.8): naming the package does not skip it, force (the governor) neither
+  const named = a.id ? ctx.db.get<TaskRow>('SELECT * FROM tasks WHERE id = ?', a.id) : null;
+  const wait = named && pendingStart(named);
+  if (named && wait) throw new FactoryError(409, `${named.id} has a start time: not before ${formatStartTime(wait)}; clear it (tasks_update {notBefore: null}) to start earlier`);
   const g = governor(ctx);
   if (!g.canStart && !a.force) return { task: null, governor: g, reason: `governor: ${g.reason}` };
   return ctx.db.tx(() => {
