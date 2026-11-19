@@ -29,6 +29,8 @@ export interface RunnerInfo {
   concurrency?: number;
   claudeVersion?: string | null;
   platform?: string;
+  /** false: no signed-in (interactive) session, so no hc launches (§11.8) */
+  interactiveSession?: boolean | null;
   running?: { jobId: string; sessionId: string | null }[];
 }
 

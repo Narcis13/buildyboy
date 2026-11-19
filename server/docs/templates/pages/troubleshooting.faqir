@@ -262,6 +262,58 @@ block content
         a(href="/docs/skills#guard") The guard
         | .
 
+  h2#scheduled-issues Scheduled starts
+  +collapsible(id="scheduled-missed")
+    @trigger A scheduled start did not happen, or is marked missed
+    @content
+      p
+        | Ask
+        code schedules_list
+        | (or
+        code factory_status
+        | ): a pending launch says in
+        code waits
+        | what it is waiting for, and a
+        code missed
+        | one was not started before its catch-up time ran out (6 hours after the start time by default). The usual reasons:
+      ul
+        li
+          | the machine's runner was offline (a restart with no boot runner: see
+          a(href="/docs/runner#boot") Starting at boot
+          | );
+        li
+          | the launcher was
+          code hc
+          | and nobody was signed in to Windows ("no signed-in Windows session"), so schedule night starts with the
+          code claude
+          | launcher;
+        li
+          | the governor refused (a window over its limit, or usage data older than 30 minutes with a window close to its
+          | limit; see
+          a(href="/docs/coordinator#scheduled-stale") Starting on stale usage data
+          | );
+        li the package was no longer ready, or a coordinator with the same title was already running.
+      p
+        | A launch past its time is never started later. Schedule it again, or start the package by hand (clear its start
+        | time first if it has one).
+  +collapsible(id="scheduled-cron")
+    @trigger A cron schedule did not run after the server restarted
+    @content
+      p
+        | A restart makes up one missed run, but only if the missed minute is no older than the schedule's catch-up
+        | window (120 minutes by default). Look at the job list: a job started this way is marked
+        code caughtUp
+        | . For a longer outage the run is skipped until the next matching minute. See
+        a(href="/docs/jobs#catch-up") Catching up after a restart
+        | .
+  +collapsible(id="site-down-after-restart")
+    @trigger The site is down after the PC restarted
+    @content
+      p
+        | The WSL distro that runs the server was not started. Open a WSL terminal, or set up the boot options in
+        a(href="/docs/runner#boot") Starting at boot
+        | so that a task keeps the distro running from boot.
+
   h2#data-issues Numbers and data
   +collapsible
     @trigger The context meter shows a dash

@@ -179,6 +179,41 @@ block content
     | , and the folder must be inside its allowed roots. Launching claims the package at once (it becomes În lucru),
     | so nothing else can hand it to another worker; if the launch fails, it goes back to the status it had.
 
+  h3#start-time A start time
+  p
+    | A package can have a
+    strong start time
+    | (
+    code notBefore
+    | ): not before that moment. It is a condition for being ready, not a trigger. While the time has not come the
+    | package is not ready: the ready list, autopilot, and a coordinator asking for the next package all skip it, and
+    | factory_status lists it with
+    code start time …
+    | as the thing it waits for. When the time passes it is simply ready, with nothing else to do, so a restart in
+    | between only means that it starts at the first chance after the time.
+  ul
+    li
+      | Set it when creating or editing the package (
+      code tasks_create
+      | and
+      code tasks_update
+      | , or the package's edit fields) with a time that carries its offset, such as
+      code 2026-11-20T03:30:00+02:00
+      | (or
+      code Z
+      | ), or as epoch milliseconds.
+      code null
+      | clears it. A time without an offset is refused. Times are shown in the server's time zone, for example
+      code 2026-11-20 03:30 UTC+02:00
+      | .
+    li
+      | Claiming a package that has a start time, or launching it at once, is refused (409) with the time and how to
+      | clear it, so nothing starts it early by accident. To start it earlier, clear the start time first.
+    li
+      | To have Buildyboy itself start a worker or a coordinator at a given time, use a scheduled launch instead (see
+      a(href="/docs/coordinator#scheduled") Scheduling a start
+      | ). It sets the package's start time to the same moment, so nothing else picks the package up before then.
+
   h2#decisions Decisions
   include "partials/shot.faqir" (assets=site.assets file="decisions-desktop.png" alt="The Decisions page: a pending question with its context and one button per option, and answered questions below." caption="A question waiting for you.")
   p

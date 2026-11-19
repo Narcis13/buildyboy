@@ -220,6 +220,70 @@ manual's Connecting agents page; every tool is also `POST /api/agent/<tool>`.
 **Removing a machine.** Run the installer with `--uninstall` (`$env:BB_UNINSTALL='1'`), then revoke the machine on the
 Machines page.
 
+## Scheduled starts, and surviving a restart
+
+The server runs on the same PC as everything else, so a restart (Windows Update at 03:15) stops it. A start planned for
+03:30 inside a Claude Code session dies with that session; Buildyboy keeps it instead:
+
+- **A package's start time** (`notBefore`, an ISO 8601 time with an offset, or epoch ms; `tasks_create`, `tasks_update`,
+  the package page). It is a readiness condition: the package is not ready, for the ready list, `tasks_claim`, the
+  autopilot and `factory_status`, until the time has passed, then it is ready with nothing else to do. Claiming or
+  launching it earlier is refused (409) until the start time is cleared.
+- **Scheduled launches.** `tasks_launch` and `coordinator_launch` take `notBefore` (and `catchUpHours`, default 6, at most
+  24) and answer `{status: "scheduled", scheduleId, notBefore, expiresAt}` instead of starting. Same token permission and
+  same approval, asked when you schedule it. A server check (every 15 s and at server start) starts each due launch at the
+  first chance after its time, once the runner is online, the governor allows it and, for `hc`, someone is signed in to
+  Windows; until then it stays pending with the reason (`schedules_list`, `factory_status.scheduled`). Past `expiresAt` it
+  is **missed**: never started, one notification, an alert and a digest line. `schedule_cancel` cancels a pending one.
+- **Cron catch-up.** A schedule missed during an outage runs once when the server is back if the missed minute is within
+  its `catchUpMinutes` (default 120, 0 = off, max 1440); the job is marked `caughtUp`.
+- **The stale-data rule.** The governor refuses every start when usage data is older than 30 min, which is always true at
+  night. Only for scheduled launches, that one reason is overridden when each window has reset since the last sample or
+  its last known percentage is at least 10 points under its limit; at most one such start per 30 min, logged in the
+  audit as "started on stale usage data". Unscheduled launches, `tasks_claim` and the autopilot keep the old rule.
+
+### Starting at boot (Windows, opt-in)
+
+Out of the box nothing starts the WSL distro at boot, and the runner is a Scheduled Task that starts at logon. After an
+unattended restart the server, and so the scheduled starts, stay down until someone uses WSL. Two switches fix that. They
+register Scheduled Tasks that run "whether the user is logged on or not" (S4U, no stored password), which needs an
+**elevated PowerShell** (Run as administrator), from the checkout:
+
+```powershell
+.\deploy\install.ps1 -BootWsl -BootRunner        # -WslDistro Ubuntu is the default
+Get-ScheduledTask 'Buildyboy*'                   # Buildyboy WSL (boot), Buildyboy Runner (boot), BuildyboyRunner
+wsl -l -v                                        # Ubuntu should say Running
+```
+
+- `-BootWsl` registers **Buildyboy WSL (boot)**: at startup and every 5 minutes it runs
+  `wsl.exe -d Ubuntu --exec sleep infinity` (one instance at a time, no time limit). A running `wsl` process keeps the
+  distro, and so systemd and `buildyboy.service`, up; WSL stops a distro about 15 s after its last process ends, which is
+  why starting it once is not enough. If WSL is shut down (an update, a crash) the repetition brings it back.
+- `-BootRunner` registers **Buildyboy Runner (boot)**: the same `node cli/bb.ts runner` at startup, restarting on
+  failure. It runs in session 0 (no desktop), so `claude -p` jobs work there; the runner reports
+  `interactiveSession: false` (see `machines_list`) and scheduled `hc` launches wait with "no signed-in Windows session".
+  The at-logon `BuildyboyRunner` task is re-registered with a first step that stops the boot task (`Stop-ScheduledTask "Buildyboy Runner (boot)"`, always exiting 0),
+  so the runner of your session takes over when you sign in. Ending the boot runner stops any `claude -p` job it was
+  running; the server marks it lost.
+- Without a checkout, the same through the installer: `$env:BB_BOOT_WSL='1'; $env:BB_BOOT_RUNNER='1'; $env:BB_WSL_DISTRO='Ubuntu'`
+  before the `irm … | iex` command. Nothing changes unless you ask. `BB_UNINSTALL=1` removes both tasks (a keep-alive that
+  is already running keeps WSL up until the next restart).
+
+Limits and trade-offs:
+
+- **Nobody is signed in after an unattended restart.** `claude -p` launches and the server work; `hc` (interactive herdr)
+  launches wait with "no signed-in Windows session" until someone signs in, or until their catch-up window ends, when they
+  are marked missed and you get an alert. Schedule unattended night starts with `launcher: "claude"`, or accept the wait.
+- **Windows auto-logon** would make `hc` work after a restart, but it stores credentials on the PC and leaves an
+  unlocked desktop session: a security decision of yours (Sysinternals Autologon or `netplwiz` are the usual ways).
+  Buildyboy does not set it up.
+- **S4U tasks have no network credentials** (no SMB shares) but have internet. If the WSL task fails under S4U on some WSL
+  versions, the fallback is "Run only when user is logged on" (then it only starts at logon) or storing the password in
+  the task.
+- **Windows Update can still shut WSL down mid-day;** the 5-minute repetition brings it back.
+- Not verified here: that `claude -p` finds its credentials and that `hc` behaves when started in session 0. Test with a
+  restart and a small scheduled `claude` launch before you rely on it.
+
 ## Put a repo on the factory
 
 Once a machine is paired and its runner allows the repo's folder (and the folder next to it, where package worktrees go):

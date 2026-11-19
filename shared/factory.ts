@@ -51,8 +51,12 @@ export interface TaskSummary {
   planId: string | null;
   /** archived packages leave the default lists (§12.2); null when not archived */
   archivedAt: number | null;
-  /** status is `gata` and every dependency is `integrata` */
+  /** status is `gata`, every dependency is `integrata` and its start time (if any) has passed */
   ready: boolean;
+  /** not ready (nor claimable) before this time, epoch ms (§11.8); null when it has none */
+  notBefore: number | null;
+  /** notBefore in the server's time zone, e.g. `2026-11-20 03:30 UTC+02:00` */
+  notBeforeText: string | null;
   dependsOn: string[];
   /** dependencies not yet integrated */
   waitingOn: string[];
@@ -620,12 +624,17 @@ export interface FactoryStatus {
   alerts: string[];
   /** counts per status, zeros left out; machine and runnerOnline only when the project has a machine */
   projects: { key: string; name: string; state: ProjectState; autopilot: boolean; machine?: string; runnerOnline?: boolean; counts: Partial<Record<TaskStatus, number>> }[];
-  /** packages on the line (in_lucru, la_porti) and blocked ones: blocked first, then the longest unchanged */
+  /**
+   * packages on the line (in_lucru, la_porti) and blocked ones: blocked first, then the longest unchanged; then gata
+   * packages whose start time has not come yet (waits `start time …`)
+   */
   line: { id: string; project?: string; title: string; status: TaskStatus; stage?: string; round?: number; maxRounds?: number; waits: string; sinceMin: number }[];
   lineMore: number;
   /** ready packages in claim order */
   ready: { id: string; project?: string; title: string; priority?: number }[];
   readyMore: number;
+  /** scheduled launches not started yet (§11.8), soonest first; `waits` is what each one waits for */
+  scheduled: { id: string; kind: 'worker' | 'coordinator'; taskId?: string; title: string; notBefore: number; expiresAt: number; waits: string }[];
   /** everything waiting on the owner (or an operator) */
   waiting: {
     decisions: { id: string; kind: DecisionKind; taskId?: string; question: string; options: string[]; askedBy: string; ageMin: number; mayAnswer: boolean }[];
@@ -779,10 +788,74 @@ export interface AgentTokenView {
   inbox: boolean;
 }
 
-/** The answer of tasks_launch and coordinator_launch. */
+/** The answer of tasks_launch and coordinator_launch. `scheduled` only with notBefore (§11.8). */
 export type LaunchResult =
   | { status: 'launched'; kind: 'worker' | 'coordinator'; jobId: string; launcher: 'hc' | 'claude'; machineId: string; cwd: string; taskId: string | null; decisionId: string | null }
+  | { status: 'scheduled'; kind: 'worker' | 'coordinator'; scheduleId: string; notBefore: number; expiresAt: number; taskId: string | null; decisionId: string | null }
   | { status: 'pending_approval' | 'refused'; kind: 'worker' | 'coordinator'; decisionId: string; answer: string | null; reason: string };
+
+export const SCHEDULED_STATUSES = ['pending', 'starting', 'started', 'missed', 'cancelled'] as const;
+export type ScheduledStatus = (typeof SCHEDULED_STATUSES)[number];
+
+/** A scheduled launch (§11.8) as schedules_list and GET /api/scheduled-launches return it. Times are epoch ms. */
+export interface ScheduledLaunchView {
+  id: string;
+  kind: 'worker' | 'coordinator';
+  status: ScheduledStatus;
+  taskId: string | null;
+  project: string | null;
+  /** the package's `<id>: <title>`, or the coordinator's session name */
+  title: string;
+  machineId: string;
+  machineName: string | null;
+  cwd: string;
+  launcher: 'hc' | 'claude';
+  notBefore: number;
+  /** notBefore in the server's time zone */
+  notBeforeText: string;
+  /** it never starts after this; it is then `missed` */
+  expiresAt: number;
+  /** what it waits for: its start time, or why it has not started since (runner offline, the governor…) */
+  waits: string | null;
+  jobId: string | null;
+  /** started on stale usage data (the governor's rule for scheduled starts) */
+  staleStart: boolean;
+  decisionId: string | null;
+  actor: string;
+  createdAt: number;
+  closedAt: number | null;
+}
+
+/** Default and longest catch-up window of a scheduled launch, in hours after notBefore. */
+export const CATCH_UP_HOURS = { default: 6, max: 24 } as const;
+
+/** `2026-11-20 03:30 UTC+02:00`: a time in this process's time zone (the server's, when the server formats it). */
+export function formatStartTime(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, '0');
+  const off = -d.getTimezoneOffset();
+  const zone = `UTC${off < 0 ? '-' : '+'}${p(Math.floor(Math.abs(off) / 60))}:${p(Math.abs(off) % 60)}`;
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${zone}`;
+}
+
+/**
+ * A start time from a tool or the PWA: epoch ms, or an ISO 8601 date-time with an offset or Z. A string without an
+ * offset is refused (it would silently depend on the server's time zone). Throws Error with a message for the caller.
+ */
+export function parseStartTime(v: number | string): number {
+  if (typeof v === 'number') {
+    if (!Number.isInteger(v) || v < 1e12 || v > 1e14) throw new Error('notBefore: epoch milliseconds (e.g. 1795141800000), or an ISO 8601 time with an offset or Z');
+    return v;
+  }
+  const s = v.trim();
+  if (/^\d+$/.test(s)) return parseStartTime(Number(s));
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/i.test(s)) {
+    throw new Error(`notBefore ${JSON.stringify(s.slice(0, 40))}: give an ISO 8601 time with an offset or Z (e.g. 2026-11-20T03:30:00+02:00), or epoch ms`);
+  }
+  const t = Date.parse(s);
+  if (Number.isNaN(t)) throw new Error(`notBefore ${JSON.stringify(s.slice(0, 40))} is not a valid time`);
+  return t;
+}
 
 export interface MachineView {
   id: string;
@@ -795,6 +868,11 @@ export interface MachineView {
   runnerSeenAt: number | null;
   /** the version its runner last reported (the line's built-in steps need 0.2.0); null when unknown */
   runnerVersion: string | null;
+  /**
+   * whether its runner runs in a signed-in (interactive) session, which hc launches need: false for a runner started at
+   * boot before anyone signed in on Windows (§11.8); null when the runner did not say
+   */
+  interactiveSession: boolean | null;
 }
 
 export interface TerminalView {
@@ -824,6 +902,8 @@ export interface DigestView {
 // ---------- MCP tools ----------
 
 const id = z.string().trim().min(1).max(64);
+/** a start time (§11.8): epoch ms, or ISO 8601 with an offset or Z (parseStartTime checks it on the server) */
+const startTime = z.union([z.number().int(), z.string().trim().min(1).max(40)]);
 const status = z.enum(TASK_STATUSES);
 const slots = z.record(z.string().max(200), z.string().max(50_000));
 const templateRef = {
@@ -855,7 +935,7 @@ export const QUEUEABLE_TOOLS = ['gates_record', 'tasks_update', 'digest_post', '
 /** Tools that change nothing (MCP `readOnlyHint`). control_get changes state only with ack: true. */
 export const READ_ONLY_TOOLS = [
   'usage_get', 'governor_get', 'sessions_list', 'sessions_get', 'tasks_list', 'tasks_get', 'projects_list', 'projects_get', 'prompts_render', 'prompts_lint',
-  'gates_status', 'findings_list', 'decision_get', 'machines_list', 'factory_status', 'decisions_list', 'inbox_list', 'docs_get',
+  'gates_status', 'findings_list', 'decision_get', 'machines_list', 'factory_status', 'decisions_list', 'inbox_list', 'docs_get', 'schedules_list',
 ] as const;
 
 /** Longest coordinator prompt: it goes on a herdr command line (runner/options.ts HC_PROMPT_MAX). */
@@ -868,6 +948,11 @@ const launchArgs = {
   permissionMode: z.string().max(40).optional().describe('default, acceptEdits, plan, auto, dontAsk or bypassPermissions'),
   maxBudgetUsd: z.number().positive().max(1000).optional().describe('Budget for a claude -p job (default 5)'),
   promptId: z.number().int().positive().optional().describe('A saved prompt to start it with'),
+  notBefore: startTime.optional().describe(
+    'Schedule it instead of starting now: ISO 8601 with an offset or Z (2026-11-20T03:30:00+02:00), or epoch ms. The server starts it at the first chance after this time when the governor and the runner allow it; the approval, if one is needed, is asked now',
+  ),
+  catchUpHours: z.number().positive().max(CATCH_UP_HOURS.max).optional()
+    .describe(`With notBefore: how long after it the start may still happen (default ${CATCH_UP_HOURS.default}, max ${CATCH_UP_HOURS.max}); after that it is missed and the owner is alerted`),
 };
 
 /** docs_get topics. */
@@ -922,6 +1007,7 @@ export const TOOLS = {
       upsert: z.boolean().optional(),
       extRef: z.string().max(300).optional(),
       fromFindings: z.array(z.number().int()).max(200).optional().describe('Finding ids: they make the body and acceptance criteria, and are marked deferred to the new package'),
+      notBefore: startTime.nullable().optional().describe('Start time: not ready nor claimable before it. ISO 8601 with an offset or Z, or epoch ms'),
     }),
   },
   tasks_claim: {
@@ -949,6 +1035,7 @@ export const TOOLS = {
       acceptance: z.array(z.string().max(2000)).max(100).optional(),
       migrationsUsed: z.array(z.number().int().min(0)).max(500).optional().describe('Migration numbers the package uses; checked against the other active packages when it is integrated'),
       archived: z.boolean().optional().describe('Archive (true) or unarchive (false) the package'),
+      notBefore: startTime.nullable().optional().describe('Start time: not ready nor claimable before it. ISO 8601 with an offset or Z, or epoch ms; null clears it (to start earlier)'),
     }),
   },
   projects_list: {
@@ -1044,17 +1131,27 @@ export const TOOLS = {
   },
   tasks_launch: {
     description:
-      "Start a worker for a package on a machine's runner: an interactive claude in a herdr terminal (default) or a claude -p job. Claims the package (in_lucru). Only for tokens the owner allowed to launch; refused while the governor says canStart is false; may first wait for the owner's approval (status pending_approval: call again with the same arguments once decision_get shows the answer).",
+      "Start a worker for a package on a machine's runner: an interactive claude in a herdr terminal (default) or a claude -p job. Claims the package (in_lucru). Only for tokens the owner allowed to launch; refused while the governor says canStart is false; may first wait for the owner's approval (status pending_approval: call again with the same arguments once decision_get shows the answer). With notBefore it is scheduled instead (status scheduled): the package stays gata with that start time until the server starts the worker.",
     input: z.object({ taskId: id, ...launchArgs }),
   },
   coordinator_launch: {
     description:
-      "Start a coordinator on a machine's runner: an interactive claude in a herdr terminal (default) or a claude -p job, with the built-in coordinator prompt or your own. Only for tokens the owner allowed to launch coordinators; refused while the governor says canStart is false; may first wait for the owner's approval like tasks_launch.",
+      "Start a coordinator on a machine's runner: an interactive claude in a herdr terminal (default) or a claude -p job, with the built-in coordinator prompt or your own. Only for tokens the owner allowed to launch coordinators; refused while the governor says canStart is false; may first wait for the owner's approval like tasks_launch. With notBefore it is scheduled instead (status scheduled), kept on the server and started at the first chance after that time.",
     input: z.object({
       ...launchArgs,
       prompt: z.string().trim().min(1).max(LAUNCH_PROMPT_MAX).optional().describe('Its first prompt instead of the built-in coordinator prompt'),
       title: z.string().trim().max(120).optional().describe('Session name (default: Coordinator)'),
     }),
+  },
+  schedules_list: {
+    description:
+      'Scheduled launches (tasks_launch or coordinator_launch with notBefore): the pending ones first, soonest first, with what each waits for; then those started, missed or cancelled in the last 7 days.',
+    input: z.object({ project: projectKey.optional().describe("Only this project's packages (a scheduled coordinator has no project)") }),
+  },
+  schedule_cancel: {
+    description:
+      "Cancel a scheduled launch that has not started. The token must be allowed to launch that kind, or be an operator. A cancelled tasks_launch leaves the package's start time: clear it with tasks_update {notBefore: null}.",
+    input: z.object({ id: z.string().trim().min(1).max(64) }),
   },
   control_get: {
     description: "Narcis's open requests to stop a package or revert its integration. ack: true marks the returned ones as handled.",

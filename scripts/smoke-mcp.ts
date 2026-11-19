@@ -147,6 +147,27 @@ console.log(JSON.stringify({ verdict: 'pass', summary: 'G1 pass: 3 tests', findi
     assert(coord.status === 'pending_approval', 'coordinator_launch waits for approval');
     answerDecision(srv.ctx, launch.decisionId, null, 'web');
     answerDecision(srv.ctx, coord.decisionId, null, 'web');
+    // scheduled starts (SPEC §11.8): a package's start time, and launches scheduled for a time
+    const tomorrow = Date.now() + 24 * 3600_000;
+    const timed = await call('tasks_create', { id: 'P4', title: 'Night start', status: 'gata', repo: 'arond', notBefore: new Date(tomorrow).toISOString() });
+    assert(timed.notBefore === tomorrow && timed.ready === false && typeof timed.notBeforeText === 'string', `tasks_create notBefore (${JSON.stringify(timed)})`);
+    assert((await call('tasks_update', { id: 'P4', notBefore: null })).ready === true, 'tasks_update notBefore: null clears it');
+    assert((await call('tasks_update', { id: 'P4', notBefore: tomorrow })).notBefore === tomorrow, 'tasks_update notBefore as epoch ms');
+    const ask = await call('tasks_launch', { taskId: 'P4', machineId: machine.id, cwd: checkout, launcher: 'claude', notBefore: new Date(tomorrow).toISOString(), catchUpHours: 2 });
+    assert(ask.status === 'pending_approval', 'a scheduled tasks_launch asks for approval now');
+    answerDecision(srv.ctx, ask.decisionId, 'Launch', 'web');
+    const sched = await call('tasks_launch', { taskId: 'P4', machineId: machine.id, cwd: checkout, launcher: 'claude', notBefore: new Date(tomorrow).toISOString(), catchUpHours: 2 });
+    assert(sched.status === 'scheduled' && sched.notBefore === tomorrow && sched.expiresAt === tomorrow + 2 * 3600_000 && sched.taskId === 'P4', `tasks_launch scheduled (${JSON.stringify(sched)})`);
+    const askC = await call('coordinator_launch', { machineId: machine.id, cwd: checkout, title: 'Night coordinator', notBefore: tomorrow, catchUpHours: 1 });
+    answerDecision(srv.ctx, askC.decisionId, 'Launch', 'web');
+    const schedC = await call('coordinator_launch', { machineId: machine.id, cwd: checkout, title: 'Night coordinator', notBefore: tomorrow, catchUpHours: 1 });
+    assert(schedC.status === 'scheduled' && schedC.kind === 'coordinator' && schedC.expiresAt === tomorrow + 3600_000, 'coordinator_launch scheduled');
+    const schedList = await call<any[]>('schedules_list', { project: 'arond' });
+    assert(schedList.length === 1 && schedList[0].id === sched.scheduleId && schedList[0].status === 'pending' && /^start time /.test(schedList[0].waits), `schedules_list (${JSON.stringify(schedList)})`);
+    assert((await call<any[]>('schedules_list')).length === 2, 'schedules_list across projects');
+    for (const id of [sched.scheduleId, schedC.scheduleId]) assert((await call('schedule_cancel', { id })).status === 'cancelled', 'schedule_cancel');
+    await call('tasks_update', { id: 'P4', notBefore: null, status: 'backlog' });
+    log('✔ scheduled starts: notBefore, scheduled launches, schedules_list, schedule_cancel');
     const gate = await call('gates_record', {
       taskId: 'P1', gate: 'G4', verdict: 'pass', summary: 'Desktop and phone look right', screenshots: [{ name: 'desktop', path: shot }],
       findings: [{ severity: 'minor', title: 'Button 2px off on phone', file: 'web/src/x.tsx', line: 4 }],

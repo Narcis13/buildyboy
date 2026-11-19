@@ -172,6 +172,95 @@ block content
       | folder inside an allowed root.
     li Watch it go from queued to running to succeeded on its job page.
 
+  h2#boot Starting at boot (Windows)
+  p
+    | By default the runner is a task that starts when you
+    strong sign in
+    | , and nothing starts the WSL distro (where the Buildyboy server runs) before anyone uses it. After an unattended
+    | restart, such as a Windows Update at night, the server and the runner stay down until you come back. Two options,
+    | both off until you ask for them, fix that. They register Scheduled Tasks, so run them in an
+    strong elevated
+    | PowerShell (Run as administrator), from your copy of the code:
+  pre
+    code
+      | .\deploy\install.ps1 -BootWsl -BootRunner
+  p
+    | Give only the switch you want. Run from a copy of the code, the script only does the boot options. To use them
+    | together with the normal installer instead, set
+    code BB_BOOT_WSL=1
+    | and/or
+    code BB_BOOT_RUNNER=1
+    | (and
+    code BB_WSL_DISTRO
+    | , Ubuntu by default) before the usual
+    code irm … | iex
+    | command. Nothing is changed unless you ask for it, apart from one thing:
+    code -BootRunner
+    | re-registers the sign-in task so that it first ends the boot runner.
+  ul
+    li
+      code -BootWsl
+      | (with
+      code -WslDistro Ubuntu
+      | , the default) registers
+      code Buildyboy WSL (boot)
+      | : at startup, and every 5 minutes after that, it runs
+      code wsl.exe -d Ubuntu --exec sleep infinity
+      | , as you, whether you are signed in or not and without storing your password. A running
+      code wsl.exe
+      | keeps the distro, and so systemd and the Buildyboy service, running. WSL stops a distro about 15 seconds after
+      | its last
+      code wsl
+      | process ends, which is why starting it once is not enough. If WSL is shut down (an update, a crash) the 5-minute
+      | repeat brings it back; while one is running, new ones are ignored.
+    li
+      code -BootRunner
+      | registers
+      code Buildyboy Runner (boot)
+      | : it starts the same runner at startup (and restarts it if it fails), with the same S4U setup. It runs in
+      | the background session with no desktop, so jobs that run
+      code claude -p
+      | work. When you sign in, the sign-in task takes over: its first step ends the boot runner (that stops any
+      | job the boot runner was running, and the server marks it lost), then it starts the normal runner.
+  p Check what was registered and that WSL is up:
+  pre
+    code
+      | Get-ScheduledTask 'Buildyboy*'
+      | wsl -l -v
+  p
+    | Run the installer with
+    code BB_UNINSTALL=1
+    | to remove both tasks. A keep-alive that is already running keeps WSL up until the next restart.
+  h3#boot-limits What the boot options cannot do
+  ul
+    li
+      strong Nobody is signed in.
+      | After an unattended restart there is no Windows session, unless you set up automatic sign-in. Server and
+      code claude -p
+      | jobs work. Jobs launched into a herdr terminal (the
+      code hc
+      | launcher) are treated as needing a signed-in session: the runner reports no interactive session, and a
+      | scheduled launch waits with "no signed-in Windows session" until someone signs in, or is missed when its time
+      | runs out. For unattended night starts, schedule them with the
+      code claude
+      | launcher, or accept the wait.
+    li
+      strong Automatic sign-in is your decision.
+      | It would make
+      code hc
+      | work after a restart, but it stores your credentials on the PC and leaves an unlocked desktop session. The usual
+      | ways are the Sysinternals Autologon tool or
+      code netplwiz
+      | . Buildyboy never sets it up.
+    li
+      strong No network credentials.
+      | A task that runs without a sign-in has no access to network shares (SMB). It does have internet. If Windows
+      | refuses the WSL task this way on your setup, the fallback is to register it as "Run only when user is logged on"
+      | (then it only starts at sign-in) or to store your password in the task.
+    li
+      strong Windows Update can still stop WSL.
+      | An update can shut WSL down during the day; the 5-minute repeat starts it again.
+
   h2#offline When the runner or the server goes away
   ul
     li

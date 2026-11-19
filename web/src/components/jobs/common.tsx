@@ -21,6 +21,8 @@ export interface ScheduleView {
   lastRunAt: number | null;
   createdAt: number;
   nextRunAt: number | null;
+  /** a missed run is still fired when it is at most this old (0 = never) */
+  catchUpMinutes: number;
   job: { promptId?: number | null; promptText?: string | null; machineId: string; cwd: string; title?: string | null; options: StoredJobOptions } | null;
 }
 

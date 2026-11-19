@@ -132,6 +132,25 @@ block content
     code sudo systemctl restart buildyboy
     | .
 
+  h2#restarts After a restart of the PC
+  p
+    | The server lives in a WSL distro, and WSL stops a distro shortly after the last
+    code wsl
+    | process ends. By default nothing starts it at boot, so after a restart you do not control (Windows Update at
+    | night) the site stays down until something starts the distro; the service itself comes back with it. The opt-in
+    | Windows boot options fix this: a task that starts at boot and keeps the distro alive, and optionally one that
+    | starts the runner. They need an elevated PowerShell, and their limits (nobody is signed in after an unattended
+    | restart, no network shares, an update can still stop WSL for a while) are described under
+    a(href="/docs/runner#boot") Starting at boot
+    | .
+  p
+    | On the server side, a restart is also covered: the scheduler runs its checks once when the server starts, so a
+    | cron schedule that was due while the server was down is
+    a(href="/docs/jobs#catch-up") caught up
+    | , and a
+    a(href="/docs/coordinator#scheduled") scheduled launch
+    | whose time passed starts at the first chance, or is marked missed if its time has run out.
+
   h2#backups Backups
   p
     | A timer backs the database up every night at about 03:30 into the
