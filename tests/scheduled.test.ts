@@ -186,18 +186,34 @@ describe('scheduled launches', () => {
     expect(fire()).toEqual([]);
     expect(scheduled(twin.scheduleId).waits).toBe('a session named "Night coordinator" is already live on nightbox');
     await call('launcher', 'schedule_cancel', { id: twin.scheduleId });
+    // a session of that name killed by a restart (no SessionEnd, silent for over an hour) does not block it
+    db().run("UPDATE jobs SET status = 'lost' WHERE title = 'Night coordinator'");
+    db().run("INSERT INTO sessions (id, machine_id, name, started_at, last_event_at) VALUES ('dead-coord', ?, 'Night coordinator', ?, ?)", m.id, Date.now() - 3 * H, Date.now() - 2 * H);
+    const third = await call('launcher', 'coordinator_launch', { machineId: m.id, cwd: tmp, title: 'Night coordinator', notBefore: Date.now(), launcher: 'claude' });
+    expect(fire()).toHaveLength(1);
+    expect(scheduled(third.scheduleId).status).toBe('started');
+    // a start time already past is refused: that would be an immediate launch on the scheduled rules
+    const past = await raw('launcher', 'coordinator_launch', { machineId: m.id, cwd: tmp, notBefore: Date.now() - 5 * 60_000 });
+    expect(past.status).toBe(400);
+    expect(past.error).toMatch(/is in the past/);
   });
 
   it('a scheduled hc launch waits for a signed-in Windows session', async () => {
     db().setSetting('governor_max_age_min', 1_000_000);
     await usage();
-    db().run('UPDATE machines SET runner_info_json = ? WHERE id = ?', JSON.stringify({ version: '0.2.0', concurrency: 20, interactiveSession: false }), m.id);
+    const info = (session: boolean | undefined) =>
+      db().run('UPDATE machines SET runner_info_json = ? WHERE id = ?', JSON.stringify({ version: '0.2.0', concurrency: 20, platform: 'win32', interactiveSession: session }), m.id);
+    info(false);
     expect((await call('launcher', 'machines_list')).find((x: any) => x.id === m.id).interactiveSession).toBe(false);
     connect();
     const r = await call('launcher', 'coordinator_launch', { machineId: m.id, cwd: tmp, title: 'HC coordinator', notBefore: Date.now() - 1000 });
     expect(fire()).toEqual([]);
     expect(scheduled(r.scheduleId).waits).toMatch(/^no signed-in Windows session on nightbox/);
-    db().run('UPDATE machines SET runner_info_json = ? WHERE id = ?', JSON.stringify({ version: '0.2.0', concurrency: 20, interactiveSession: true }), m.id);
+    // a Windows runner that has not said yet (just reconnected): it waits too
+    info(undefined);
+    expect(fire()).toEqual([]);
+    expect(scheduled(r.scheduleId).waits).toMatch(/has not said yet whether it runs in a signed-in Windows session/);
+    info(true);
     expect(fire()).toHaveLength(1);
     expect(scheduled(r.scheduleId).status).toBe('started');
   });

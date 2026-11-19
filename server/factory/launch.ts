@@ -102,7 +102,7 @@ export function planWorker(ctx: Ctx, a: WorkerLaunch, scheduling = false): Plan 
   if (task.status === 'integrata') throw new FactoryError(409, 'this package is already integrated');
   if (task.archivedAt != null) throw new FactoryError(409, 'this package is archived');
   if (scheduling && task.status !== 'gata') throw new FactoryError(409, `only a gata package can be scheduled: ${task.id} is ${task.status}`);
-  if (!scheduling && task.notBefore != null && task.notBefore > Date.now()) {
+  if (!scheduling && (task.status === 'gata' || task.status === 'backlog') && task.notBefore != null && task.notBefore > Date.now()) {
     throw new FactoryError(409, `${task.id} has a start time: not before ${formatStartTime(task.notBefore)}; clear it to start earlier, or schedule the launch with notBefore`);
   }
   const blocked = projectBlocks(projectRow(ctx, task.project)); // §12.1: nothing starts in a paused or archived project
@@ -286,6 +286,8 @@ function scheduleOf(a: ToolArgs<'tasks_launch'> | ToolArgs<'coordinator_launch'>
     return null;
   }
   const notBefore = startTimeArg(a.notBefore)!;
+  // a time already past would make an immediate launch that skips the governor's usual rule
+  if (notBefore < Date.now() - 60_000) throw new FactoryError(400, `notBefore ${formatStartTime(notBefore)} is in the past: launch without notBefore to start now`);
   return { notBefore, expiresAt: notBefore + Math.round((a.catchUpHours ?? CATCH_UP_HOURS.default) * 3600_000) };
 }
 

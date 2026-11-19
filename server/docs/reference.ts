@@ -762,7 +762,7 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
     errors: [
       '403 this agent token may not launch workers', '404 unknown task', '409 this package is already integrated', '409 governor: <reason>',
       "400 cwd is outside the runner's allowed roots", '400 unknown machine / unknown prompt / invalid model',
-      '409 <id> has a start time (without notBefore) · 409 only a gata package can be scheduled · 409 <id> already has a scheduled launch', '400 catchUpHours goes with notBefore',
+      '409 <id> has a start time (without notBefore) · 409 only a gata package can be scheduled · 409 <id> already has a scheduled launch', '400 catchUpHours goes with notBefore', '400 notBefore is in the past',
     ],
     example: { taskId: 'P3', machineId: '6f1c…', cwd: '/home/me/src/arond', launcher: 'hc', permissionMode: 'acceptEdits' },
     notes: [
@@ -792,13 +792,13 @@ export const TOOL_DOCS: Record<ToolName, ToolDoc> = {
     shapes: ['launch'],
     errors: [
       '403 this agent token may not launch coordinators', '409 governor: <reason>', "400 cwd is outside the runner's allowed roots", '400 unknown machine / unknown prompt / invalid model',
-      '400 notBefore without an offset · 400 catchUpHours goes with notBefore',
+      '400 notBefore without an offset or in the past · 400 catchUpHours goes with notBefore',
     ],
     example: { machineId: '6f1c…', cwd: '/home/me/src/arond', prompt: 'Coordinate the arond backlog: packages whose repo is arond only.' },
     notes: [
       'The built-in prompt tells it to read docs_get and run the coordinator loop. The machine needs the buildyboy MCP server registered for Claude Code (user scope) so the new coordinator has the tools.',
       'Governor and approval work as in tasks_launch.',
-      'With notBefore it is scheduled as in tasks_launch; at its time it also waits while a live session or job with the same title runs on that machine.',
+      'With notBefore it is scheduled as in tasks_launch; at its time it also waits while a live session (heard from in the last hour) or job with the same title runs on that machine. A notBefore more than a minute in the past is refused.',
     ],
   },
   schedules_list: {

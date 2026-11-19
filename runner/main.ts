@@ -66,7 +66,8 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
   const ac = new AbortController();
   const timers: NodeJS.Timeout[] = [];
   let claudeVersion: string | null = null;
-  let interactive: boolean | null = null;
+  // known before the first heartbeat: an hc launch must never reach a runner in session 0 for lack of it
+  const interactive = interactiveSession();
 
   const report = (jobId: string, events: RunnerEvent[]) =>
     api.post(`/api/runner/jobs/${encodeURIComponent(jobId)}/events`, { events }).catch((e) => log(`job ${jobId}: report failed: ${e.message}`));
@@ -229,7 +230,7 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
         allowedRoots: cfg.allowedRoots,
         concurrency: cfg.concurrency,
         claudeVersion,
-        interactiveSession: interactive,
+        interactiveSession: await interactive,
         running: [...jobs.values()].map((j) => ({ jobId: j.id, sessionId: j.sessionId(), pid: j.pid() ?? null, startedAt: j.startedAt, cwd: j.cwd })),
       });
     } catch (e) {
@@ -292,8 +293,7 @@ export function startRunner(opts: { configPath?: string; log?: (s: string) => vo
     } catch {
       claudeVersion = null;
     }
-    interactive = await interactiveSession();
-    if (interactive === false) log('no signed-in Windows session (started at boot): hc launches wait until a runner runs in a signed-in session; claude -p jobs run');
+    if ((await interactive) === false) log('no signed-in Windows session (started at boot): hc launches wait until a runner runs in a signed-in session; claude -p jobs run');
     log(`allowed roots: ${cfg.allowedRoots.join(', ')} · concurrency ${cfg.concurrency} · claude ${claudeVersion ?? 'not found'}`);
     void heartbeat();
     void reportAgents();

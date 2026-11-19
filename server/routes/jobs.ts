@@ -93,7 +93,9 @@ export function jobsRoutes(ctx: Ctx) {
         wake?.();
       };
       ctx.runners.set(machineId, send); // a newer connection from the same runner replaces the old one
+      // a reconnect may be a new process (e.g. the boot runner after a restart): its session is unknown until it says
       db.run('UPDATE machines SET runner_online = 1, runner_seen_at = ? WHERE id = ?', Date.now(), machineId);
+      db.run("UPDATE machines SET runner_info_json = json_remove(runner_info_json, '$.interactiveSession') WHERE id = ? AND json_valid(runner_info_json)", machineId);
       bus.publish('machines', 'changed');
       stream.onAbort(() => {
         if (ctx.runners.get(machineId) === send) {

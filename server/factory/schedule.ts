@@ -65,7 +65,10 @@ export function cancelScheduled(ctx: Ctx, id: string, actor: string, may: (kind:
 }
 
 /** Why a due launch cannot start now, or null. */
-function blocker(ctx: Ctx, r: Row): string | null {
+/** A coordinator session with the same name blocks a scheduled one only when it was heard from this recently. */
+export const LIVE_SESSION_MS = 60 * 60_000;
+
+function blocker(ctx: Ctx, r: Row, now: number): string | null {
   const name = machineName(ctx, r.machine_id) ?? r.machine_id;
   if (r.kind === 'worker') {
     const t = ctx.db.get<{ status: string; archived_at: number | null }>('SELECT status, archived_at FROM tasks WHERE id = ?', r.task_id);
@@ -75,13 +78,18 @@ function blocker(ctx: Ctx, r: Row): string | null {
   }
   if (!ctx.runners.has(r.machine_id)) return `runner offline on ${name}`;
   // hc starts an interactive terminal: a runner started at boot, before anyone signed in, cannot (§11.8)
-  const info = runnerInfo(ctx, r.machine_id) as { interactiveSession?: unknown } | null;
-  if (r.launcher === 'hc' && info?.interactiveSession === false) return `no signed-in Windows session on ${name} (an hc launch needs one; launcher claude does not)`;
+  const info = runnerInfo(ctx, r.machine_id) as { interactiveSession?: unknown; platform?: unknown } | null;
+  if (r.launcher === 'hc' && info?.platform === 'win32' && info.interactiveSession !== true) {
+    return info.interactiveSession === false
+      ? `no signed-in Windows session on ${name} (an hc launch needs one; launcher claude does not)`
+      : `the runner on ${name} has not said yet whether it runs in a signed-in Windows session (an hc launch needs one)`;
+  }
   if (r.kind === 'coordinator') {
+    // a session killed by a restart never sends SessionEnd: only one heard from in the last hour counts as live
     const live = ctx.db.get(
-      `SELECT 1 FROM sessions WHERE machine_id = ? AND name = ? AND ended_at IS NULL
+      `SELECT 1 FROM sessions WHERE machine_id = ? AND name = ? AND ended_at IS NULL AND last_event_at > ?
        UNION ALL SELECT 1 FROM jobs WHERE machine_id = ? AND title = ? AND status IN ('queued', 'starting', 'running') LIMIT 1`,
-      r.machine_id, r.title, r.machine_id, r.title,
+      r.machine_id, r.title, now - LIVE_SESSION_MS, r.machine_id, r.title,
     );
     if (live) return `a session named "${r.title}" is already live on ${name}`;
   }
@@ -120,7 +128,7 @@ export function fireScheduledLaunches(ctx: Ctx, now = Date.now()): string[] {
         missed(ctx, r, now);
         continue;
       }
-      const why = blocker(ctx, r);
+      const why = blocker(ctx, r, now);
       if (why) {
         setWaits(ctx, r, why, now);
         continue;
@@ -131,11 +139,13 @@ export function fireScheduledLaunches(ctx: Ctx, now = Date.now()): string[] {
         continue;
       }
       const stale = g.reason.startsWith('started on stale usage data');
-      const jobId = ctx.db.tx(() => {
-        if (ctx.db.run("UPDATE scheduled_launches SET status = 'starting', updated_at = ? WHERE id = ? AND status = 'pending'", now, r.id).changes !== 1) return null;
-        try {
-          const args = json<WorkerLaunch & CoordinatorLaunch>(r.args_json, null)!;
-          const p = r.kind === 'worker' ? planWorker(ctx, args) : planCoordinator(ctx, args, r.actor);
+      let jobId: string | null = null;
+      try {
+        // the launch's own checks (cwd, options, project paused…) first, then one transaction: claimed, started, recorded
+        const args = json<WorkerLaunch & CoordinatorLaunch>(r.args_json, null)!;
+        const p = r.kind === 'worker' ? planWorker(ctx, args) : planCoordinator(ctx, args, r.actor);
+        jobId = ctx.db.tx(() => {
+          if (ctx.db.run("UPDATE scheduled_launches SET status = 'starting', updated_at = ? WHERE id = ? AND status = 'pending'", now, r.id).changes !== 1) return null;
           const id = start(ctx, p, r.actor, r.decision_id);
           ctx.db.run(
             "UPDATE scheduled_launches SET status = 'started', job_id = ?, waits = NULL, stale_start = ?, closed_at = ?, updated_at = ? WHERE id = ?",
@@ -144,13 +154,12 @@ export function fireScheduledLaunches(ctx: Ctx, now = Date.now()): string[] {
           ctx.db.audit(SCHEDULE_ACTOR, 'launch_schedule_started', r.task_id ?? r.id, { id: r.id, jobId: id, kind: r.kind, governor: g.reason });
           if (stale) ctx.db.audit(SCHEDULE_ACTOR, 'governor_stale_start', r.task_id ?? r.id, { id: r.id, jobId: id, reason: g.reason });
           return id;
-        } catch (e) {
-          if (!(e instanceof FactoryError)) throw e;
-          // the launch's own checks (cwd, options, project paused…): it waits, and is missed if that never changes
-          ctx.db.run("UPDATE scheduled_launches SET status = 'pending', waits = ?, updated_at = ? WHERE id = ?", e.message.slice(0, 500), now, r.id);
-          return null;
-        }
-      });
+        });
+      } catch (e) {
+        if (!(e instanceof FactoryError)) throw e;
+        // nothing was kept (the transaction rolled back): it waits, and is missed if that never changes
+        setWaits(ctx, r, e.message.slice(0, 500), now);
+      }
       ctx.bus.publish('jobs', 'scheduled', { id: r.id });
       if (jobId) out.push(jobId);
     } catch (e) {
